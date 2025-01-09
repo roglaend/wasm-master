@@ -1,0 +1,31 @@
+[package]
+name = "calculator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wit-bindgen-rt = { version = "0.36.0", features = ["bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"
+debug = false
+strip = true
+lto = true
+
+[package.metadata.component]
+package = "docs:calculator"
+
+
+[package.metadata.component.target.dependencies]
+"docs:adder" = { path = "../wit/adder" }
+"docs:subtracter" = { path = "../wit/subtracter" }
+
+[package.metadata.component.target]
+path = "../wit/calculator"
+world = "calculator"
+
+[package.metadata.component.dependencies]
