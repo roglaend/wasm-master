@@ -1,10 +1,11 @@
-package simple-paxos-demo:learner;
-
-interface learner {
-    learn: func(proposal_id: u64, value: string);
-}
+package paxos:learner@0.1.0
 
 world learner {
-    export learner;
-    import simple-paxos-demo:acceptor/acceptor;
+    import acceptor {
+        highest-accepted: func() -> (proposal_id: u64, value: string)
+    }
+
+    export learn {
+        learn: func(proposal_id: u64, value: string)
+    }
 }

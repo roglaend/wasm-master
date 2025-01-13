@@ -4,4 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Add dependencies as needed
+log = "0.4"
+env_logger = "0.10"
+wasmtime = "28.0.0"
+
+[features]
+default = ["wasm"]
+rust = []
+wasm = []
+
+[package.metadata.scripts]
+build-wasm = "bash ./scripts/build_all_wasm.sh"

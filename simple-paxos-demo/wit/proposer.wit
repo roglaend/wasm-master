@@ -1,11 +1,12 @@
-package simple-paxos-demo:proposer;
-
-interface proposer {
-    prepare: func(proposal_id: u64) -> bool;
-    propose: func(proposal_id: u64, value: string) -> bool;
-}
+package paxos:proposer@0.1.0
 
 world proposer {
-    export proposer;
-    import paxos:acceptor/acceptor@0.1.0;
+    import acceptor {
+        prepare: func(proposal_id: u64) -> bool
+        accept: func(proposal_id: u64, value: string) -> bool
+    }
+
+    export propose {
+        propose: func(proposal_id: u64, value: string) -> bool
+    }
 }
