@@ -1,0 +1,10 @@
+package simple-paxos-demo:client;
+
+interface client {
+    request: func(value: string);
+}
+
+world client {
+    export client;
+    import paxos:proposer/proposer;
+}

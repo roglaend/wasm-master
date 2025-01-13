@@ -1,0 +1,8 @@
+package simple-paxos-demo:system;
+
+world paxos-system {
+    import paxos:client/client;
+    import paxos:proposer/proposer;
+    import paxos:acceptor/acceptor;
+    import paxos:learner/learner;
+}
