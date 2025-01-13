@@ -1,0 +1,12 @@
+package simple-paxos-demo:coordinator;
+
+interface coordinator {
+    coordinate: func();
+}
+
+world coordinator {
+    export coordinator;
+    import paxos:proposer/proposer@0.1.0;
+    import paxos:acceptor/acceptor@0.1.0;
+    import paxos:learner/learner@0.1.0;
+}

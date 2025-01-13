@@ -1,0 +1,11 @@
+package simple-paxos-demo:acceptor;
+
+interface acceptor {
+    prepare: func(proposal_id: u64) -> bool;
+    accept: func(proposal_id: u64, value: string) -> bool;
+    highest-accepted: func() -> (proposal_id: u64, value: string);
+}
+
+world acceptor {
+    export acceptor;
+}

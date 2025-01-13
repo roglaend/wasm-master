@@ -1,0 +1,10 @@
+package simple-paxos-demo:learner;
+
+interface learner {
+    learn: func(proposal_id: u64, value: string);
+}
+
+world learner {
+    export learner;
+    import simple-paxos-demo:acceptor/acceptor;
+}
