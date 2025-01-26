@@ -1,0 +1,26 @@
+[package]
+name = "adder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wit-bindgen-rt = { version = "0.36.0", features = ["bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"
+debug = false
+strip = true
+lto = true
+
+[package.metadata.component]
+package = "docs:adder"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target]
+path = "../wit/adder"
+world = "adder"
