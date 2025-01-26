@@ -1,0 +1,5 @@
+package wasm-examples:host;
+
+world host {
+//    import wasi-mindmap:interfaced-adder/add;
+}
