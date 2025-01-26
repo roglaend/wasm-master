@@ -1,9 +1,0 @@
-package docs:subtracter@0.1.0;
-
-interface sub {
-    sub: func(a: u32, b: u32) -> u32;
-}
-
-world subtracter {
-    export sub;
-}
