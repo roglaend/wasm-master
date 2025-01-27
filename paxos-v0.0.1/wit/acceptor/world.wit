@@ -1,0 +1,11 @@
+package paxos:acceptor@0.1.0;
+
+interface funcs {
+    handleprepare: func(id: u32, pnum: u32) -> tuple<bool, option<string>>;
+    handleaccept: func(id: u32, pnum: u32, value: string) -> bool;
+} 
+
+
+world acceptor {
+    export funcs;
+}

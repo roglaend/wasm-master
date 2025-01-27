@@ -1,0 +1,14 @@
+package paxos:proposer@0.1.0;
+
+interface propose {
+    propose: func(value: string) -> string;
+}
+
+world proposer {
+    export propose;
+    import paxos:acceptor/funcs@0.1.0;
+}
+
+world app {
+    import propose;
+}
