@@ -1,17 +1,9 @@
-[package]
-name = "simple-paxos-demo"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-log = "0.4"
-env_logger = "0.10"
-wasmtime = "28.0.0"
-
-[features]
-default = ["wasm"]
-rust = []
-wasm = []
-
-[package.metadata.scripts]
-build-wasm = "bash ./scripts/build_all_wasm.sh"
+[workspace]
+resolver = "2"
+members = [
+    # "paxos-rust",
+    "paxos-wasm",
+    # "paxos-wasm/proposer",
+    # "paxos-wasm/acceptor",
+    # "paxos-wasm/learner",
+]

@@ -1,0 +1,13 @@
+[package]
+name = "host-kv-store-rs"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+guest-kv-store-rs = { path = "../guest-kv-store-rs" }
+anyhow = "1.0"
+wasmtime = "29.0"
+wasmtime-wasi = "29.0"
+futures = { version = "0.3", features = ["executor"] }
+clap = { version = "4.0", features = ["derive"] }
+#async-trait = "0.1" # before wasmtime 29.0, this is needed
