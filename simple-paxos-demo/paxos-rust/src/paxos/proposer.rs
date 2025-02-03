@@ -1,16 +1,20 @@
-use crate::paxos::acceptor::Acceptor;
 use log::{info, warn};
 
-pub struct Proposer {
+use crate::paxos::{AcceptorTrait, ProposerTrait};
+
+/// A basic Paxos proposer.
+pub struct BasicProposer {
     proposal_id: u64,
 }
 
-impl Proposer {
+impl BasicProposer {
     pub fn new() -> Self {
-        Proposer { proposal_id: 0 }
+        BasicProposer { proposal_id: 0 }
     }
+}
 
-    pub fn propose(&mut self, acceptors: &mut [Acceptor], value: String) -> bool {
+impl ProposerTrait for BasicProposer {
+    fn propose(&mut self, acceptors: &mut [Box<dyn AcceptorTrait>], value: String) -> bool {
         self.proposal_id += 1;
         info!(
             "Proposer: Initiating proposal ID {} with value '{}'",
@@ -30,7 +34,7 @@ impl Proposer {
             acceptors.len()
         );
 
-        // Ensure quorum for accept phase
+        // Require a quorum for the Accept Phase.
         if prepare_success_count > acceptors.len() / 2 {
             let mut accept_success_count = 0;
             for acceptor in acceptors.iter_mut() {

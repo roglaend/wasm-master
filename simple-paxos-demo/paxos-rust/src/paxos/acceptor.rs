@@ -1,21 +1,27 @@
 use log::{info, warn};
 
-pub struct Acceptor {
+use crate::paxos::AcceptorTrait;
+
+/// A basic implementation of a Paxos acceptor.
+pub struct BasicAcceptor {
     promised_id: Option<u64>,
     accepted_id: Option<u64>,
     accepted_value: Option<String>,
 }
 
-impl Acceptor {
+impl BasicAcceptor {
     pub fn new() -> Self {
-        Acceptor {
+        BasicAcceptor {
             promised_id: None,
             accepted_id: None,
             accepted_value: None,
         }
     }
+}
 
-    pub fn prepare(&mut self, proposal_id: u64) -> bool {
+impl AcceptorTrait for BasicAcceptor {
+    fn prepare(&mut self, proposal_id: u64) -> bool {
+        // Grant a promise if we have not yet promised or if the new proposal id is higher.
         if self.promised_id.is_none() || proposal_id > self.promised_id.unwrap() {
             self.promised_id = Some(proposal_id);
             info!("Acceptor: Promised proposal ID {}", proposal_id);
@@ -30,7 +36,8 @@ impl Acceptor {
         }
     }
 
-    pub fn accept(&mut self, proposal_id: u64, value: String) -> bool {
+    fn accept(&mut self, proposal_id: u64, value: String) -> bool {
+        // Only accept if the proposal id is the one we last promised.
         if self.promised_id == Some(proposal_id) {
             self.accepted_id = Some(proposal_id);
             self.accepted_value = Some(value.clone());
@@ -48,7 +55,7 @@ impl Acceptor {
         }
     }
 
-    pub fn get_accepted_value(&self) -> Option<(u64, String)> {
+    fn get_accepted_value(&self) -> Option<(u64, String)> {
         if let (Some(id), Some(value)) = (self.accepted_id, self.accepted_value.clone()) {
             Some((id, value))
         } else {

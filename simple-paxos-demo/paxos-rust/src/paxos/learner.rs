@@ -1,12 +1,21 @@
-use crate::paxos::acceptor::Acceptor;
+use crate::paxos::{AcceptorTrait, LearnerTrait};
 use log::{info, warn};
+use std::collections::HashMap;
 
-pub struct Learner;
+/// A basic Paxos learner.
+pub struct BasicLearner;
 
-impl Learner {
-    pub fn learn(acceptors: &[Acceptor]) -> Option<(u64, String)> {
+impl BasicLearner {
+    pub fn new() -> Self {
+        BasicLearner
+    }
+}
+
+impl LearnerTrait for BasicLearner {
+    fn learn(acceptors: &[Box<dyn AcceptorTrait>]) -> Option<(u64, String)> {
         let mut accepted_values = vec![];
 
+        // Collect accepted proposals from all acceptors.
         for acceptor in acceptors {
             if let Some(accepted) = acceptor.get_accepted_value() {
                 accepted_values.push(accepted);
@@ -18,26 +27,18 @@ impl Learner {
             return None;
         }
 
-        let mut consensus_value = None;
-        let mut highest_id = 0;
-        let mut count_map = std::collections::HashMap::new();
-
+        // Tally the accepted values.
+        let mut count_map: HashMap<String, (usize, u64)> = HashMap::new();
         for (id, value) in accepted_values {
-            let count = count_map.entry(value.clone()).or_insert(0);
-            *count += 1;
-
-            if *count > acceptors.len() / 2 {
-                consensus_value = Some((id, value.clone()));
-                highest_id = id;
+            let entry = count_map.entry(value.clone()).or_insert((0, id));
+            entry.0 += 1;
+            if entry.0 > (acceptors.len() / 2) {
+                info!(
+                    "Learner: Reached consensus on proposal ID {} with value '{}'",
+                    entry.1, value
+                );
+                return Some((entry.1, value));
             }
-        }
-
-        if let Some(value) = consensus_value {
-            info!(
-                "Learner: Reached consensus on proposal ID {} with value '{}'",
-                highest_id, value.1
-            );
-            return Some((highest_id, value.1));
         }
 
         warn!("Learner: No consensus reached.");

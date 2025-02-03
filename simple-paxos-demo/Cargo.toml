@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    # "paxos-rust",
-    "paxos-wasm",
+    "paxos-rust",
+    # "paxos-wasm",
     # "paxos-wasm/proposer",
     # "paxos-wasm/acceptor",
     # "paxos-wasm/learner",

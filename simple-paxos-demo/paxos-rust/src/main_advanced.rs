@@ -1,83 +1,64 @@
-use log::warn;
-use paxos::{acceptor::Acceptor, learner::Learner, proposer::Proposer};
-use paxos_rust::paxos;
-use rand::Rng;
-use std::{thread, time::Duration};
+use std::{
+    sync::{mpsc, Arc},
+    thread,
+};
+
+use paxos_rust::network::simulation::{acceptor_node, proposer_node, PaxosMessage};
 
 pub fn run() {
-    env_logger::init();
-    println!("Running Paxos using pure Rust...");
+    println!("Running advanced Paxos simulation with network messaging...");
 
-    let mut rng = rand::rng();
+    // Create channels for each node.
+    println!("Creating channels for nodes...");
+    let (tx0, rx0) = mpsc::channel::<PaxosMessage>(); // Proposer node (ID 0)
+    let (tx1, rx1) = mpsc::channel::<PaxosMessage>(); // Acceptor node 1
+    let (tx2, rx2) = mpsc::channel::<PaxosMessage>(); // Acceptor node 2
+    let (tx3, rx3) = mpsc::channel::<PaxosMessage>(); // Acceptor node 3
 
-    // Simulating a distributed network of 5 acceptors
-    let mut acceptors = vec![
-        Acceptor::new(),
-        Acceptor::new(),
-        Acceptor::new(),
-        Acceptor::new(),
-        Acceptor::new(),
-    ];
+    // Build a network vector (each node’s sender is stored by index).
+    println!("Building network vector with 4 nodes...");
+    let network = Arc::new(vec![tx0, tx1, tx2, tx3]);
 
-    // Multiple proposers (simulating independent clients making proposals)
-    let mut proposers = vec![Proposer::new(), Proposer::new()];
+    // Spawn acceptor nodes (IDs 1, 2, 3).
+    println!("Spawning acceptor nodes...");
+    let net_for_node1 = Arc::clone(&network);
+    let handle1 = thread::spawn(move || {
+        println!("Starting acceptor node 1...");
+        acceptor_node(1, rx1, net_for_node1);
+        println!("Acceptor node 1 finished.");
+    });
+    let net_for_node2 = Arc::clone(&network);
+    let handle2 = thread::spawn(move || {
+        println!("Starting acceptor node 2...");
+        acceptor_node(2, rx2, net_for_node2);
+        println!("Acceptor node 2 finished.");
+    });
+    let net_for_node3 = Arc::clone(&network);
+    let handle3 = thread::spawn(move || {
+        println!("Starting acceptor node 3...");
+        acceptor_node(3, rx3, net_for_node3);
+        println!("Acceptor node 3 finished.");
+    });
 
-    // Values proposed from different "clients"
-    let values_to_propose = vec![
-        "Value A".to_string(),
-        "Value B".to_string(),
-        "Value C".to_string(),
-        "Value D".to_string(),
-    ];
+    // Spawn the proposer node (ID 0).
+    println!("Spawning proposer node 0...");
+    let net_for_proposer = Arc::clone(&network);
+    let handle0 = thread::spawn(move || {
+        println!("Starting proposer node 0...");
+        proposer_node(rx0, net_for_proposer);
+        println!("Proposer node 0 finished.");
+    });
 
-    // Tracking learned values
-    let mut learned_values = vec![];
+    // Wait for all nodes to finish.
+    println!("Waiting for all nodes to finish...");
+    handle0.join().expect("Proposer thread panicked");
+    println!("Proposer node has terminated.");
+    handle1.join().expect("Acceptor node 1 panicked");
+    println!("Acceptor node 1 has terminated.");
+    handle2.join().expect("Acceptor node 2 panicked");
+    println!("Acceptor node 2 has terminated.");
+    handle3.join().expect("Acceptor node 3 panicked");
+    println!("Acceptor node 3 has terminated.");
 
-    for value in values_to_propose {
-        let proposer_index = rng.random_range(0..proposers.len()); // Random proposer selection
-        let proposer = &mut proposers[proposer_index];
-
-        println!(
-            "Proposer {} is proposing value: '{}'",
-            proposer_index, value
-        );
-
-        // Simulating network delay
-        let delay = rng.random_range(100..500);
-        thread::sleep(Duration::from_millis(delay));
-
-        // Introduce artificial failure probability (30% chance of failure)
-        if rng.random_bool(0.3) {
-            warn!(
-                "Proposer {} encountered network failure! Proposal '{}' aborted.",
-                proposer_index, value
-            );
-            continue; // Skip this proposal
-        }
-
-        let success = proposer.propose(&mut acceptors, value.clone());
-
-        if success {
-            println!("Proposal '{}' was accepted by a majority!", value);
-        } else {
-            warn!("Proposal '{}' failed to reach consensus.", value);
-            continue;
-        }
-
-        // The Learner attempts to determine the latest consensus value
-        if let Some((proposal_id, learned_value)) = Learner::learn(&acceptors) {
-            println!(
-                "Learner confirmed consensus: Proposal ID: {}, Value: '{}'",
-                proposal_id, learned_value
-            );
-            learned_values.push(learned_value);
-        } else {
-            warn!("Learner failed to reach consensus.");
-        }
-
-        println!("--------------------------------------");
-    }
-
-    // Final summary of learned values
-    println!("Final Learned Values: {:?}", learned_values);
+    println!("Advanced Paxos simulation completed.");
 }

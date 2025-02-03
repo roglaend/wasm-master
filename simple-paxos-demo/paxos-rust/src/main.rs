@@ -1,13 +1,29 @@
-#[cfg(feature = "advanced")]
+#[cfg(feature = "distributed")]
+mod main_distributed;
+
+#[cfg(all(not(feature = "distributed"), feature = "advanced"))]
 mod main_advanced;
 
-#[cfg(not(feature = "advanced"))]
+#[cfg(all(not(feature = "distributed"), not(feature = "advanced")))]
 mod main_basic;
 
 fn main() {
-    #[cfg(feature = "advanced")]
-    main_advanced::run();
+    // Initialize logger (for example, to see info and warning messages)
+    env_logger::init();
 
-    #[cfg(not(feature = "advanced"))]
-    main_basic::run();
+    // Dispatch to the appropriate run() function.
+    #[cfg(feature = "distributed")]
+    {
+        let _ = main_distributed::run();
+    }
+
+    #[cfg(all(not(feature = "distributed"), feature = "advanced"))]
+    {
+        main_advanced::run();
+    }
+
+    #[cfg(all(not(feature = "distributed"), not(feature = "advanced")))]
+    {
+        main_basic::run();
+    }
 }
