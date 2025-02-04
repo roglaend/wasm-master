@@ -1,7 +1,9 @@
-[package]
-name = "simple-paxos-demo"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-# Add dependencies as needed
+[workspace]
+resolver = "2"
+members = [
+    "paxos-rust",
+    # "paxos-wasm",
+    # "paxos-wasm/proposer",
+    # "paxos-wasm/acceptor",
+    # "paxos-wasm/learner",
+]

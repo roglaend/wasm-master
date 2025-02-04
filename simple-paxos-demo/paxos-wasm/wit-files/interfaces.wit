@@ -1,0 +1,19 @@
+package paxos:interfaces@0.1.0
+
+interface acceptor {
+    prepare: func(proposal-id: u64) -> bool;
+    accept: func(proposal-id: u64, value: string) -> bool;
+    highest-accepted: func() -> option<(proposal-id: u64, value: string)>;
+}
+
+interface proposer {
+    resource proposer {
+        constructor();
+        set-num-acceptors: func(num: u64);
+        propose: func(proposal-id: u64, value: string) -> bool;
+    }
+}
+
+interface learner {
+    learn: func() -> option<(proposal-id: u64, value: string)>;
+}

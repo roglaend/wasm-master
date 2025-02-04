@@ -1,12 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    # "guest-adder-rs",
-    # "guest-interfaced-adder-rs",
-    "guest-kv-store-rs",
-    # "host-command-component",
-    "host-rs",
-]
+members = ["guest-kv-store-rs", "host-kv-store-rs"]
 
 [workspace.dependencies]
-wit-bindgen = "0.37.0"
+wit-bindgen = "0.38.0"
