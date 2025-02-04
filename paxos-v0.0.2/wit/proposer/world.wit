@@ -1,0 +1,62 @@
+package paxos:proposer@0.1.0;
+
+interface types {
+    record proposer {
+        id: u32,
+        crnd: u32,
+        nummodes: u32,
+        // promises: list<tuple<u32, promise>>,
+        // values: list<tuple<u32, value>>,
+        // receivedpromises: list<u32>
+    }
+
+    record promise {
+        to: u32,
+        %from: u32,
+        rnd: u32,
+        vrnd: u32,
+        vval: string
+    }
+
+    record accept {
+        %from: u32,
+        rnd: u32,
+        val: string
+    }
+
+    record prepare {
+        %from: u32,
+        crnd: u32,
+    }
+}
+
+// interface proposerstate {
+//     resource proposerstruct {
+//         constructor(id: u32, numnodes: u32);
+//         get-id: func() -> u32;
+//     }
+// }
+
+interface proposerinterface {
+    use types.{promise, accept, prepare, proposer};
+
+    resource proposerresource {
+        constructor(id: u32, nummodes: u32);
+        printhi: func() -> string;
+        increasecrnd: func();
+        makeprepare: func() -> prepare;
+        handlepromise: func(promise: promise) -> accept;
+        getnumpromises: func() -> u32;
+        requestvalue: func(value: u32);
+    }
+}
+
+world proposerworld {
+    export proposerinterface;
+    export types;
+}
+
+world app {
+    import proposerinterface;
+    // import paxos:acceptor/funcs@0.1.0;
+}

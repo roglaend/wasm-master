@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package paxos;
+
+service Acceptor {
+  rpc HandlePrepare (PrepareRequest) returns (PrepareReply);
+
+  rpc HandleAccept (AcceptRequest) returns (AcceptReply);
+}
+
+message PrepareRequest {
+  uint32 from = 1;  // The proposal ID (or "proposal number")
+  uint32 crnd = 2;
+}
+
+message PrepareReply {
+    uint32 to = 1;
+    uint32 from = 2;
+    uint32 rnd = 3;
+    uint32 vrnd = 4;
+    string vval = 5;
+}
+
+message AcceptRequest {
+    uint32 from = 1;
+    uint32 rnd = 2;
+    string val = 3;
+}
+
+message AcceptReply {
+    uint32 from = 1;
+    uint32 rnd = 2;
+    string val = 3;
+}
