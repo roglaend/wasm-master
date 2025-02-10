@@ -1,0 +1,18 @@
+package paxos:learner;
+
+interface learner {
+
+    record learner-state {
+        learned-value: option<string>,
+    }
+
+    resource learner-resource {
+        constructor();
+        get-state: func() -> learner-state;
+        learn: func(value: string);
+    }
+}
+
+world learner-world {
+    export learner;
+}

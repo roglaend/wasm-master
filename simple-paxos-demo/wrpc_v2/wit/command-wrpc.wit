@@ -1,0 +1,3 @@
+world command-wrpc-world {
+    import proposer-wrpc;
+}

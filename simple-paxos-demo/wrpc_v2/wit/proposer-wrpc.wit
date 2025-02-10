@@ -1,0 +1,4 @@
+world proposer-wrpc-world {
+    // import acceptor-wrpc;
+    export proposer-wrpc;
+}

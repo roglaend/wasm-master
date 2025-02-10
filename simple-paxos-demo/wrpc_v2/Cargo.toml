@@ -1,0 +1,19 @@
+[package]
+name = "paxos-wasm-wrpc-v2"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+log = "0.4.25"
+wit-bindgen = "0.39.0"
+wit-bindgen-wrpc = "0.9.0"
+wrpc = "0.14.0"
+
+utils-wrpc_v2 = { path = "./utils" }
+
+# proposer-wrpc-v2-native = { path = "./proposer", package = "proposer-wrpc-v2-native" }
+# acceptor-wrpc-v2-native = { path = "./acceptor", package = "acceptor-wrpc-v2-native" }
+# learner-wrpc-v2-native = { path = "./learner", package = "learner-wrpc-v2-native" }
