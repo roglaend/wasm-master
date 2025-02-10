@@ -1,0 +1,94 @@
+package paxos:wrpc;
+
+interface proposer {
+
+    record proposer-state {
+        proposal-id: u64,
+        last-value: option<string>,
+        num-acceptors: u64,
+    }
+
+    resource proposer-resource {
+        constructor(num-acceptors: u64);
+        get-state: func() -> proposer-state;
+        propose: func(proposal-id: u64, value: string) -> bool;
+    }
+}
+
+interface acceptor {
+
+    record acceptor-state {
+        promised-id: u64,
+        accepted-id: option<u64>,
+        accepted-value: option<string>,
+    }
+
+    resource acceptor-resource {
+        constructor();
+        get-state: func() -> acceptor-state;
+        prepare: func(proposal-id: u64) -> bool;
+        accept: func(proposal-id: u64, value: string) -> bool;
+    }
+}
+
+interface learner {
+
+    record learner-state {
+        learned-value: option<string>,
+    }
+
+    resource learner-resource {
+        constructor();
+        get-state: func() -> learner-state;
+        learn: func(value: string);
+    }
+}
+
+
+interface paxos-coordinator {
+    resource paxos-coordinator-resource {
+        // constructor();
+        
+    }
+    proposer-propose-proxy: func(proposal-id: u64) -> bool;
+    acceptor-prepare-proxy: func(proposal-id: u64) -> bool;
+    acceptor-accept-proxy: func(proposal-id: u64, value: string) -> bool;
+    create-nodes-paxos-coordinator-resource: func(); 
+    get-nodes-paxos-coordinator-resource: func() -> paxos-coordinator-resource;
+
+//     /// Create a new proposer resource (returning the handle).
+//     create-proposer: func(num-acceptors: u64) -> proposer/proposer-resource
+
+//     /// Example of a direct "send_prepare" call 
+//     /// that coordinates a proposer and acceptor:
+//     send-prepare: func(
+//         proposer: proposer/proposer-resource,
+//         acceptor: acceptor/acceptor-resource,
+//         proposal-id: u64
+//     ) -> bool
+
+//     /// Example of "send_accept"
+//     send-accept: func(
+//         proposer: proposer/proposer-resource,
+//         acceptor: acceptor/acceptor-resource,
+//         proposal-id: u64,
+//         value: string
+//     ) -> bool
+
+//     /// Example: let the acceptor tell the learner
+//     /// that a value is learned (or you pass the value).
+//     notify-learn: func(
+//         acceptor: acceptor/acceptor-resource,
+//         learner: learner/learner-resource
+//     )
+
+//     // ... any other orchestration or convenience calls ...
+}
+
+world paxos-world {
+    import proposer;
+    import acceptor;
+    import learner;
+
+    // export paxos-coordinator;
+}

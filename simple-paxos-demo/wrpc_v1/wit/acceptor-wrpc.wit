@@ -1,0 +1,4 @@
+
+world acceptor-wrpc-world {
+    export acceptor-wrpc;
+}

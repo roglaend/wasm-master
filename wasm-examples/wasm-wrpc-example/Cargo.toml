@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "hello-component-client",
+    "hello-component-server",
+    "wasi-keyvalue-component-client",
+    "wasi-keyvalue-component-server",
+]
+
+[workspace.dependencies]
+wit-bindgen = "0.36.0"
+anyhow = "1"

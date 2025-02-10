@@ -1,0 +1,16 @@
+[package]
+name = "paxos-wrpc-v2"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+wit-bindgen = "0.39.0"
+wit-bindgen-wrpc = "0.9.0"
+anyhow = "1"
+wrpc = "0.14.0"
+wrpc-transport = "0.28.3"
+tracing-subscriber = "0.3.19"
+clap = "4.5.28"
+
+utils-wrpc_v2 = { path = "../utils" }

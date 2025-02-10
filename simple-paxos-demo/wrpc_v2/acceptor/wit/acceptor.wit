@@ -1,0 +1,22 @@
+package paxos:wrpc;
+
+interface acceptor {
+
+    record acceptor-state {
+        promised-id: u64,
+        accepted-id: option<u64>,
+        accepted-value: option<string>,
+    }
+
+    resource acceptor-resource {
+        constructor();
+        get-state: func() -> acceptor-state;
+        prepare: func(proposal-id: u64) -> bool;
+        accept: func(proposal-id: u64, value: string) -> bool;
+    }
+}
+
+
+world acceptor-world {
+    export acceptor;
+}
