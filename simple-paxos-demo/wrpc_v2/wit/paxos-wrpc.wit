@@ -1,0 +1,53 @@
+package paxos:wrpc;
+
+interface proposer-wrpc {
+
+    record proposer-state {
+        proposal-id: u64,
+        last-value: option<string>,
+        num-acceptors: u64,
+    }
+
+    resource proposer-resource {
+        constructor(num-acceptors: u64);
+        get-state: func() -> proposer-state;
+        propose: func(proposal-id: u64, value: string) -> bool;
+    }
+
+    hello: func() -> string;
+}
+
+interface acceptor-wrpc {
+
+    record acceptor-state {
+        promised-id: u64,
+        accepted-id: option<u64>,
+        accepted-value: option<string>,
+    }
+
+    resource acceptor-resource {
+        constructor();
+        get-state: func() -> acceptor-state;
+        prepare: func(proposal-id: u64) -> bool;
+        accept: func(proposal-id: u64, value: string) -> bool;
+    }
+}
+
+interface learner-wrpc {
+
+    record learner-state {
+        learned-value: option<string>,
+    }
+
+    resource learner-resource {
+        constructor();
+        get-state: func() -> learner-state;
+        learn: func(value: string);
+    }
+}
+
+world paxos-world {
+    import proposer-wrpc;
+    import acceptor-wrpc;
+    import learner-wrpc;
+}

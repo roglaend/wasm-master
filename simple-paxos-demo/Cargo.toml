@@ -1,9 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "paxos-rust",
-    # "paxos-wasm",
-    # "paxos-wasm/proposer",
+    # "paxos-rust",
+    "paxos-wasm",
+    "paxos-wasm/proposer",
     # "paxos-wasm/acceptor",
     # "paxos-wasm/learner",
+
+    "wrpc_v1",
+    "wrpc_v1/proposer-wrpc",
+    "wrpc_v1/acceptor-wrpc",
+    #/wrpc_v1/learner-wrpc",
+    "wrpc_v1/command-wrpc",
+
+    "wrpc_v2",
+    "wrpc_v2/proposer-wrpc",
+    "wrpc_v2/acceptor-wrpc",
+    # "wrpc_v2/learner-wrpc",
+    "wrpc_v2/paxos-wrpc",
+    "wrpc_v2/proposer",
+    "wrpc_v2/acceptor",
+    # "wrpc_v2/learner",
 ]
