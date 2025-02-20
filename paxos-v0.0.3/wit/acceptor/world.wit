@@ -1,0 +1,82 @@
+package paxos:acceptor@0.1.0;
+
+interface types {
+    // record proposer {
+    //     id: u32,
+    //     crnd: u32,
+    //     nummodes: u32,
+    //     // promises: list<tuple<u32, promise>>,
+    //     // values: list<tuple<u32, value>>,
+    //     // receivedpromises: list<u32>
+    // }
+
+    record promise {
+        to: u32,
+        %from: u32,
+        rnd: u32,
+        vrnd: u32,
+        vval: string
+    }
+
+    record accept {
+        %from: u32,
+        rnd: u32,
+        val: string
+    }
+
+    record prepare {
+        %from: u32,
+        crnd: u32,
+    }
+
+    record learn {
+        %from: u32,
+        rnd: u32,
+        val: string
+    }
+    
+
+    // variant request {
+    //     value(string),
+    //     prepare(prepare),
+    //     accept(accept)
+    // }
+
+    // variant response-request {
+    //     test(string),
+    //     promise(promise),
+    //     learn(learn)
+    // }
+
+    // enum action {
+    //     return,
+    //     call-all-learners,
+    // }
+
+    // record response {
+    //     action: action,
+    //     response: response-request
+    // }
+
+    
+}
+
+interface acceptorinterface {
+    use types.{promise, accept, prepare, learn};
+
+    resource acceptorresource {
+        constructor(id: u32);
+        handleprepare: func(prepare: prepare) -> promise;
+        handleaccept: func(accept: accept) -> learn;
+    }
+
+    // handle-request: func(v: borrow<acceptorresource>, request: request) -> response;
+
+    handle-request: func(v: borrow<acceptorresource>, request: string) -> tuple<string, string>;
+} 
+
+
+world acceptorworld {
+    export acceptorinterface;
+    export types;
+}
