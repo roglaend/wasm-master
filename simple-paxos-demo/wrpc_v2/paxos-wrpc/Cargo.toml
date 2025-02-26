@@ -14,3 +14,7 @@ tracing-subscriber = "0.3.19"
 clap = "4.5.28"
 
 utils-wrpc_v2 = { path = "../utils" }
+
+# proposer-wrpc-v2-native = { path = "../../wrpc_v1/proposer-wrpc", package = "proposer-wrpc" }
+# acceptor-wrpc-v2-native = { path = "../../wrpc_v1/acceptor-wrpc", package = "acceptor-wrpc" }
+# learner-wrpc-v2-native = { path = "../../wrpc_v1/learner-wrpc", package = "learner-wrpc" }

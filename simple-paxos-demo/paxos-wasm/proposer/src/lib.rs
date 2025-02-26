@@ -7,7 +7,7 @@ wit_bindgen::generate!({
 
 use crate::exports::paxos::proposer::proposer::{Guest, GuestProposerResource, ProposerState};
 
-struct MyProposer;
+struct MyProposer {}
 
 impl Guest for MyProposer {
     type ProposerResource = MyProposerResource;

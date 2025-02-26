@@ -13,12 +13,10 @@ members = [
     #/wrpc_v1/learner-wrpc",
     "wrpc_v1/command-wrpc",
 
-    "wrpc_v2",
-    "wrpc_v2/proposer-wrpc",
-    "wrpc_v2/acceptor-wrpc",
+    # "wrpc_v2",
+    # "wrpc_v2/command-wrpc",
+    # "wrpc_v2/proposer-wrpc",
+    # "wrpc_v2/acceptor-wrpc",
     # "wrpc_v2/learner-wrpc",
-    "wrpc_v2/paxos-wrpc",
-    "wrpc_v2/proposer",
-    "wrpc_v2/acceptor",
-    # "wrpc_v2/learner",
+    # "wrpc_v2/paxos-wrpc",
 ]

@@ -1,21 +1,24 @@
-package paxos:proposer;
+package paxos:wrpc;
 
 interface proposer {
 
     record proposer-state {
         proposal-id: u64,
         last-value: option<string>,
+        self-address: string,
         num-acceptors: u64,
+        // num-learners: u64,
     }
-    
+
+    get-test-value: func() -> string;
+
     resource proposer-resource {
-        constructor(num-acceptors: u64);
+        constructor(self-address: string, acceptor-addresses: list<string>);
         get-state: func() -> proposer-state;
         propose: func(proposal-id: u64, value: string) -> bool;
     }
-
 }
 
-world proposer-world {
-    export proposer;
+world command-world {
+    import proposer;
 }

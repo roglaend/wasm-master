@@ -5,11 +5,16 @@ interface proposer {
     record proposer-state {
         proposal-id: u64,
         last-value: option<string>,
+        self-address: string,
         num-acceptors: u64,
+        // num-learners: u64,
     }
 
+    get-test-value: func() -> string;
+    get-shared-resource: func() -> proposer-resource;
+
     resource proposer-resource {
-        constructor(num-acceptors: u64);
+        constructor(self-address: string, acceptor-addresses: list<string>);
         get-state: func() -> proposer-state;
         propose: func(proposal-id: u64, value: string) -> bool;
     }
@@ -21,10 +26,13 @@ interface acceptor {
         promised-id: u64,
         accepted-id: option<u64>,
         accepted-value: option<string>,
+        self-address: string,
+        // num-acceptors: u64,
+        num-learners: u64,
     }
 
     resource acceptor-resource {
-        constructor();
+        constructor(self-address: string, learner-addresses: list<string>);
         get-state: func() -> acceptor-state;
         prepare: func(proposal-id: u64) -> bool;
         accept: func(proposal-id: u64, value: string) -> bool;

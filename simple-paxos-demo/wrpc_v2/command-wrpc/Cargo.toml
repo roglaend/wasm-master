@@ -1,0 +1,27 @@
+[package]
+name = "command-wrpc-v2"
+version = "0.1.0"
+edition = "2021"
+
+# [lib]
+# crate-type = ["cdylib"]
+
+[[bin]]
+name = "command-wrpc-v2"
+path = "src/main.rs"
+
+[dependencies]
+log = "0.4"
+# tokio = { version = "1.43", default-features = false, features = [
+#     "sync",
+#     "rt",
+#     "macros",
+#     "io-util",
+#     "time",
+# ] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "net"] }
+
+wrpc-transport = "0.28.3"
+# wit-bindgen = "0.38.0"
+wit-bindgen-wrpc = "0.9.0"
+anyhow = { version = "1", features = ["std"] }
