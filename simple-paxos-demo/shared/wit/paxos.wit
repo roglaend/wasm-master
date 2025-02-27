@@ -1,0 +1,121 @@
+package paxos:default;
+
+interface proposer {
+    record proposal {
+        slot: u64,
+        value: string,
+    }
+
+    record proposer-state {
+        current-ballot: u64,
+        last-proposal: option<proposal>,
+        num-acceptors: u64,
+        is-leader: bool,
+    }
+
+    record propose-result {
+        ballot: u64,
+        slot: u64,
+        accepted: bool,
+    }
+
+    resource proposer-resource {
+        /// TODO: Needs to make both these dynamic, move it to the paxos-coordinator?
+        constructor(num-acceptors: u64, is-leader: bool);
+        get-state: func() -> proposer-state;
+        propose: func(proposal: proposal) -> propose-result;
+        become-leader: func() -> bool;
+        resign-leader: func() -> bool;
+    }
+}
+
+interface acceptor {
+    record accepted-entry {
+        slot: u64,
+        ballot: u64,
+        value: string,
+    }
+
+    record acceptor-state {
+        promised-ballot: u64,
+        accepted: list<accepted-entry>,
+    }
+
+    resource acceptor-resource {
+        constructor();
+        get-state: func() -> acceptor-state;
+        prepare: func(ballot: u64) -> bool;
+        accept: func(accepted-entry: accepted-entry) -> bool;
+    }
+}
+
+interface learner {
+    record learned-entry {
+        slot: u64,
+        value: string,
+    }
+
+    record learner-state {
+        learned: list<learned-entry>,
+    }
+
+    resource learner-resource {
+        constructor();
+        get-state: func() -> learner-state;
+        learn: func(slot: u64, value: string);
+    }
+}
+
+interface kv-store {
+    resource kv-store-resource {
+        constructor();
+        get: func(key: string) -> option<string>;
+        set: func(key: string, value: string);
+        remove: func(key: string) -> option<string>;
+        clear: func();
+    }
+}
+
+interface paxos-coordinator {
+    resource paxos-coordinator-resource {
+        constructor();
+        propose: func(value: string) -> bool;
+        get: func() -> option<string>;
+    }
+}
+
+interface client {
+    send-request: func(value: string) -> bool;
+    get-response: func() -> option<string>;
+}
+
+world proposer-world {
+    export proposer;
+}
+
+world acceptor-world {
+    export acceptor;
+}
+
+world learner-world {
+    export learner;
+}
+
+world kv-store-world {
+    export kv-store;
+}
+
+world paxos-world {
+    import proposer;
+    import acceptor;
+    import learner;
+    import kv-store;
+
+    export paxos-coordinator;
+}
+
+world paxos-client-world {
+    import paxos-coordinator;
+
+    export client;
+}

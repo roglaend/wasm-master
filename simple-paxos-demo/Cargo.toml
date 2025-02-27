@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "shared/utils",
+
     # "paxos-rust",
     "paxos-wasm",
     "paxos-wasm/proposer",
@@ -19,4 +21,13 @@ members = [
     # "wrpc_v2/acceptor-wrpc",
     # "wrpc_v2/learner-wrpc",
     # "wrpc_v2/paxos-wrpc",
+
+    "grpc",
+    "grpc/paxos-grpc",
+    "grpc/proposer-grpc",
+    "grpc/acceptor-grpc",
+    "grpc/learner-grpc",
+    "grpc/command-grpc",
+    "grpc/kv-store-grpc",
+
 ]

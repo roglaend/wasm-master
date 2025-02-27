@@ -1,0 +1,15 @@
+[package]
+name = "grpc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tonic = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+prost = "0.11"
+prost-types = "0.11"
+wasmtime = "30"
+wasmtime-wasi = "30"
+
+[build-dependencies]
+tonic-build = "0.9"
