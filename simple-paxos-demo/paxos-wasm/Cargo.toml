@@ -13,11 +13,11 @@ edition = "2021"
 [dependencies]
 log = "0.4"
 env_logger = "0.10"
-wit-bindgen = "0.39.0"
-wasmtime = "29.0.1"
-wasmtime-wasi = "29.0.1"
-anyhow = "1.0.95"
-simple-paxos-wasm-utils = { path = "./utils" }
+wit-bindgen = "0.39"
+wasmtime = "30"
+wasmtime-wasi = "30"
+anyhow = "1"
+shared-utils = { path = "../shared/utils" }
 
 # Comment out or remove these dependencies since they are precompiled as Wasm components
 # proposer = { path = "proposer" }
