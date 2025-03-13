@@ -3,7 +3,7 @@
 use log::{info, warn};
 use std::cell::{Cell, RefCell};
 
-mod bindings {
+pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit/paxos.wit",
         world: "acceptor-world",
@@ -35,7 +35,7 @@ impl From<AcceptedEntryRust> for AcceptedEntry {
     }
 }
 
-struct MyAcceptor;
+pub struct MyAcceptor;
 
 impl Guest for MyAcceptor {
     type AcceptorResource = MyAcceptorResource;
@@ -44,7 +44,7 @@ impl Guest for MyAcceptor {
 /// The acceptor tracks:
 /// - `promised_ballot`: the highest ballot number it has promised,
 /// - `accepted`: a list of proposals accepted (keyed by slot).
-struct MyAcceptorResource {
+pub struct MyAcceptorResource {
     promised_ballot: Cell<u64>,
     accepted: RefCell<Vec<AcceptedEntryRust>>,
 }

@@ -1,8 +1,10 @@
 #![allow(unsafe_op_in_unsafe_fn)]
+
+use bindings::exports::paxos::default::proposer::ClientProposal;
 use log::{info, warn};
 use std::cell::{Cell, RefCell};
 
-mod bindings {
+pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit/paxos.wit",
         world: "proposer-world",
@@ -15,24 +17,27 @@ use crate::bindings::exports::paxos::default::proposer::{
     Guest, GuestProposerResource, Proposal, ProposeResult, ProposerState,
 };
 
-struct MyProposer;
+pub struct MyProposer;
 
 impl Guest for MyProposer {
     type ProposerResource = MyProposerResource;
 }
 
-struct MyProposerResource {
+pub struct MyProposerResource {
     current_ballot: Cell<u64>,
+    current_slot: Cell<u64>,
     last_proposal: RefCell<Option<Proposal>>,
     num_acceptors: u64,
     is_leader: Cell<bool>,
 }
 
 impl GuestProposerResource for MyProposerResource {
-    /// Constructor: Initialize with the number of acceptors and whether it starts as leader.
-    fn new(num_acceptors: u64, is_leader: bool) -> Self {
+    /// Constructor: Initialize with the initial ballot, the number of acceptors,
+    /// and whether it starts as leader.
+    fn new(init_ballot: u64, num_acceptors: u64, is_leader: bool) -> Self {
         Self {
-            current_ballot: Cell::new(0),
+            current_ballot: Cell::new(init_ballot),
+            current_slot: Cell::new(0),
             last_proposal: RefCell::new(None),
             num_acceptors,
             is_leader: Cell::new(is_leader),
@@ -43,40 +48,47 @@ impl GuestProposerResource for MyProposerResource {
     fn get_state(&self) -> ProposerState {
         ProposerState {
             current_ballot: self.current_ballot.get(),
+            current_slot: self.current_slot.get(),
             last_proposal: self.last_proposal.borrow().clone(),
             num_acceptors: self.num_acceptors,
             is_leader: self.is_leader.get(),
         }
     }
 
-    /// Propose a new value for a given slot.
+    /// Propose a new value.
     /// If not leader, the proposal is rejected.
-    fn propose(&self, prop: Proposal) -> ProposeResult {
+    /// When leader, the proposer assigns the next available slot.
+    fn propose(&self, client_prop: ClientProposal) -> ProposeResult {
+        let proposal = Proposal {
+            ballot: self.current_ballot.get(),
+            slot: self.current_slot.get(),
+            client_proposal: client_prop,
+        };
+
         if !self.is_leader.get() {
-            warn!(
-                "Proposer: Not leader—proposal for slot {} rejected.",
-                prop.slot
-            );
+            warn!("Proposer: Not leader—proposal rejected.");
             return ProposeResult {
-                ballot: self.current_ballot.get(),
-                slot: prop.slot,
+                proposal,
                 accepted: false,
             };
         }
-        // Increment the ballot for every new proposal.
-        let new_ballot = self.current_ballot.get() + 1;
-        self.current_ballot.set(new_ballot);
-        *self.last_proposal.borrow_mut() = Some(prop.clone());
+        // Assign the next available slot internally.
+        let slot = self.current_slot.get();
+        self.current_slot.set(slot + 1);
+
+        // Store the proposal value.
+        *self.last_proposal.borrow_mut() = Some(proposal.clone());
 
         info!(
-            "Proposer: Proposing value '{}' for slot {} with new ballot {}",
-            prop.value, prop.slot, new_ballot
+            "Proposer: Proposing value '{}' for slot {} with ballot {}",
+            proposal.client_proposal.value,
+            slot,
+            self.current_ballot.get()
         );
-        ProposeResult {
-            ballot: new_ballot,
-            slot: prop.slot,
+        return ProposeResult {
+            proposal,
             accepted: true,
-        }
+        };
     }
 
     /// Transition this proposer into leader mode.

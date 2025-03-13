@@ -5,18 +5,18 @@ edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/paxos-grpc.rs"
 
 [dependencies]
 log = "0.4"
 env_logger = "0.11"
 wit-bindgen = "0.39"
-wasmtime = "30"
-wasmtime-wasi = "30"
-anyhow = "1"
-tokio = "1"
+# wasmtime = "30"
+# wasmtime-wasi = "30"
+# anyhow = "1"
+# tokio = "1"
+futures = "0.3"
 
-shared-utils = { path = "../../shared/utils" }
+# shared-utils = { path = "../../shared/utils" }
 
 [package.metadata]
 # cargo.build-disabled = true  # Custom flag to indicate this shouldn't be built by default

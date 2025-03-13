@@ -1,10 +1,9 @@
 [package]
-name = "shared-utils"
+name = "shared-wasmtime-utils"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "src/utils.rs"
 
 [dependencies]
 log = "0.4"

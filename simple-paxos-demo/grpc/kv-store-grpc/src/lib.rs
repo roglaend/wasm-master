@@ -4,7 +4,7 @@ use log::info;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-mod bindings {
+pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit/paxos.wit",
         world: "kv-store-world",
@@ -15,14 +15,14 @@ bindings::export!(MyKvStore with_types_in bindings);
 
 use crate::bindings::exports::paxos::default::kv_store::{Guest, GuestKvStoreResource};
 
-struct MyKvStore;
+pub struct MyKvStore;
 
 impl Guest for MyKvStore {
     type KvStoreResource = MyKvStoreResource;
 }
 
 /// The kv–store maintains an in–memory hash map for key/value storage.
-struct MyKvStoreResource {
+pub struct MyKvStoreResource {
     store: RefCell<HashMap<String, String>>,
 }
 

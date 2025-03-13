@@ -13,8 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true) // Generate server stub
         .build_client(true) // Generate client stub
         .compile(
-            &["./proto-grpc/src/paxos.proto"], // Path to your .proto file(s)
-            &["./proto-grpc/src"],             // Path to the directory containing .proto
+            &["./src/paxos.proto"], // Path to your .proto file(s)
+            &["./src"],             // Path to the directory containing .proto
         )?;
     Ok(())
 }

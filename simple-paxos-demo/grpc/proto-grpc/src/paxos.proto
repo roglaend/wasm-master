@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package paxos;
+
+// The Paxos service defines RPCs that the coordinator exposes.
+service Paxos {
+  // Propose a new value.
+  rpc ProposeValue (ProposeRequest) returns (ProposeResponse);
+  // Deliver a network message from a remote coordinator.
+  rpc DeliverMessage (DeliverMessageRequest) returns (DeliverMessageResponse);
+  // Retrieve the currently learned value.
+  rpc GetValue (Empty) returns (GetValueResponse);
+}
+
+message ProposeRequest {
+  string value = 1;
+}
+
+message ProposeResponse {
+  bool success = 1;
+}
+
+message DeliverMessageRequest {
+  string message = 1;
+}
+
+message DeliverMessageResponse {
+  bool success = 1;
+}
+
+message Empty {}
+
+message GetValueResponse {
+  // For simplicity, we return a string value if one is learned.
+  string value = 1;
+}

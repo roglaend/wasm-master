@@ -28,7 +28,7 @@ impl WasiView for ComponentRunStates {
 impl ComponentRunStates {
     pub fn new() -> Self {
         ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new().build(),
+            wasi_ctx: WasiCtxBuilder::new().inherit_stdio().build(),
             resource_table: ResourceTable::new(),
         }
     }

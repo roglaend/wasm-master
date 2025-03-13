@@ -1,29 +1,35 @@
 package paxos:default;
 
 interface proposer {
-    record proposal {
-        slot: u64,
+    record client-proposal {
+        // slot: u64, // tracked by the proposer internally instead
         value: string,
+        // ...add more?
     }
 
     record proposer-state {
         current-ballot: u64,
+        current-slot: u64,
         last-proposal: option<proposal>,
         num-acceptors: u64,
         is-leader: bool,
     }
 
-    record propose-result {
+    record proposal {
         ballot: u64,
         slot: u64,
+        client-proposal: client-proposal,
+    }
+
+    record propose-result {
+        proposal: proposal,
         accepted: bool,
     }
 
     resource proposer-resource {
-        /// TODO: Needs to make both these dynamic, move it to the paxos-coordinator?
-        constructor(num-acceptors: u64, is-leader: bool);
+        constructor(init-ballot: u64, num-acceptors: u64, is-leader: bool);
         get-state: func() -> proposer-state;
-        propose: func(proposal: proposal) -> propose-result;
+        propose: func(proposal: client-proposal) -> propose-result;
         become-leader: func() -> bool;
         resign-leader: func() -> bool;
     }
@@ -44,7 +50,7 @@ interface acceptor {
     resource acceptor-resource {
         constructor();
         get-state: func() -> acceptor-state;
-        prepare: func(ballot: u64) -> bool;
+        prepare: func(slot: u64) -> bool;
         accept: func(accepted-entry: accepted-entry) -> bool;
     }
 }
@@ -76,11 +82,141 @@ interface kv-store {
     }
 }
 
+interface network {
+    enum network-message-kind {
+        prepare,    // Phase 1a: Sent by a proposer to request promises.
+        promise,    // Phase 1b: Response from an acceptor with its promise.
+        accept,     // Phase 2a: Sent by the proposer to request acceptance.
+        accepted,   // Phase 2b: Response from an acceptor acknowledging acceptance.
+        commit,     // Phase 3: Broadcast from the leader indicating the chosen value.
+        heartbeat,  // Optional: Used for failure detection and leader keep-alive.
+        deliver,    // General-purpose message delivery.
+    }
+
+    enum status-kind {
+        success,
+        failure,
+    }
+
+    record prepare-payload {
+        slot: u64,
+        ballot: u64,
+    }
+
+    record promise-payload {
+        slot: u64,
+        ballot: u64,
+        accepted-ballot: u64,         // 0 if none was accepted.
+        accepted-value: option<string>, // Previously accepted value (if any).
+    }
+
+    record accept-payload {
+        slot: u64,
+        ballot: u64,
+        proposal: string,
+    }
+
+    record accepted-payload {
+        slot: u64,
+        ballot: u64,
+        accepted: bool,
+    }
+
+    record commit-payload {
+        slot: u64,
+        value: string,
+    }
+
+    record heartbeat-payload {
+        timestamp: u64,
+    }
+
+    record deliver-payload {
+        data: string,
+    }
+
+    variant message-payload {
+        prepare(prepare-payload),
+        promise(promise-payload),
+        accept(accept-payload),
+        accepted(accepted-payload),
+        commit(commit-payload),
+        heartbeat(heartbeat-payload),
+        deliver(deliver-payload),
+    }
+
+    record network-message {
+        kind: network-message-kind,
+        payload: message-payload,
+    }
+
+    record network-response {
+        kind: network-message-kind,
+        status: status-kind,
+    }
+
+    record node {
+        id: u64,
+        address: string,
+    }
+
+    send-hello: func() -> string;
+    send-message: func(nodes: list<node>, message: network-message) -> list<network-response>;
+}
+
+
 interface paxos-coordinator {
+    use network.{node};
+
+    record promise-result {
+        ballot: u64,
+        accepted-ballot: u64,         // 0 if none was accepted.
+        accepted-value: option<string>, // Previously accepted value (if any).
+        quorum: u64,
+    }
+
+    record accepted-result {
+        accepted-count: u64,
+        quorum: u64,
+    }
+
+    record learn-result {
+        learned-value: string,
+        quorum: u64,
+    }
+
+    record election-result {
+        leader: node,
+        quorum: u64,
+    }
+
     resource paxos-coordinator-resource {
-        constructor();
-        propose: func(value: string) -> bool;
-        get: func() -> option<string>;
+        constructor(node-id: u64, nodes: list<node>);
+
+        /// Optionally, elects a leader.
+        elect-leader: func() -> election-result;
+
+        // TODO: Define a propose-phase?
+
+        /// Phase 1: Executes the prepare phase by sending a prepare request (with a structured payload)
+        /// and collecting promise messages from acceptors.
+        prepare-phase: func(ballot: u64, slot: u64) -> promise-result;
+        
+        /// Phase 2: Executes the accept phase by sending an accept request (with its payload)
+        /// and collecting acceptances.
+        accept-phase: func(proposal-value: string, slot: u64, ballot: u64) -> accepted-result;
+        
+        /// Phase 3: Commits the proposal locally and broadcasts the chosen value.
+        commit-phase: func(slot: u64) -> option<learn-result>;
+
+        /// Called by the host to deliver a network message from a remote coordinator.
+        deliver-message: func(message: string) -> bool;
+
+        /// Retrieves the currently learned value.
+        get-learned-value: func() -> option<string>;
+
+        /// Orchestrates the entire Paxos protocol.
+        run-paxos: func(value: string) -> bool;
     }
 }
 
@@ -111,11 +247,17 @@ world paxos-world {
     import learner;
     import kv-store;
 
+    /// Needs to be implemented by host
+    import network;
+
     export paxos-coordinator;
 }
 
 world paxos-client-world {
     import paxos-coordinator;
-
     export client;
+}
+
+world command-client-world {
+    import client;
 }

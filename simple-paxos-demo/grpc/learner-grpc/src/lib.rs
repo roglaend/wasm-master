@@ -3,7 +3,7 @@
 use log::info;
 use std::cell::RefCell;
 
-mod bindings {
+pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit/paxos.wit",
         world: "learner-world",
@@ -33,14 +33,14 @@ impl From<LearnedEntryRust> for LearnedEntry {
     }
 }
 
-struct MyLearner;
+pub struct MyLearner;
 
 impl Guest for MyLearner {
     type LearnerResource = MyLearnerResource;
 }
 
 /// Our learner keeps a vector of learned entries.
-struct MyLearnerResource {
+pub struct MyLearnerResource {
     learned: RefCell<Vec<LearnedEntryRust>>,
 }
 
@@ -72,5 +72,6 @@ impl GuestLearnerResource for MyLearnerResource {
         self.learned
             .borrow_mut()
             .push(LearnedEntryRust { slot, value });
+        // TODO: Maybe return the newest learn or all learns?
     }
 }

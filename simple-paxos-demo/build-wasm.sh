@@ -11,7 +11,10 @@ TARGET_DIR="target/wasm32-wasip2/release"
 # Define the WASM component directories inside paxos-wasm
 # COMPONENTS=("proposer" "acceptor" "learner")
 # COMPONENTS=("proposer-wrpc")
-COMPONENTS=("command-wrpc")
+# COMPONENTS=("proposer-grpc" "acceptor-grpc" "learner-grpc" "kv-store-grpc")
+# COMPONENTS=("paxos-grpc")
+COMPONENTS=("proposer-grpc" "acceptor-grpc" "learner-grpc" "kv-store-grpc" "paxos-grpc")
+
 
 echo "Building WASM components..."
 
