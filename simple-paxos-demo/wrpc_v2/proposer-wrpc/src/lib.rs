@@ -150,12 +150,8 @@ impl<Ctx: Send> HandlerProposerResource<Ctx> for MyProposer {
             let acceptor_resource_handle = self.acceptor_resource_handles.get(addr);
             prepare_tasks.spawn(async move {
                 let wrpc = Client::from(addr.clone());
-                let result = Acceptor::AcceptorResource::prepare(
-                    &wrpc,
-                    (),
-                    &acceptor_resource_handle,
-                    pid,
-                );
+                let result =
+                    Acceptor::AcceptorResource::prepare(&wrpc, (), &acceptor_resource_handle, pid);
             });
         }
 

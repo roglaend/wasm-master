@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use log::{info, warn};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -13,27 +13,9 @@ pub mod bindings {
 bindings::export!(MyAcceptor with_types_in bindings);
 
 use crate::bindings::exports::paxos::default::acceptor::{
-    AcceptedEntry, AcceptorState, Guest, GuestAcceptorResource,
+    AcceptedEntry, AcceptorState, Guest, GuestAcceptorResource, PromiseEntry,
 };
-
-/// A local Rust structure for accepted proposals.
-#[derive(Clone)]
-struct AcceptedEntryRust {
-    slot: u64,
-    ballot: u64,
-    value: String,
-}
-
-/// Convert our local accepted entry to the WIT-generated `accepted_entry` record.
-impl From<AcceptedEntryRust> for AcceptedEntry {
-    fn from(entry: AcceptedEntryRust) -> AcceptedEntry {
-        AcceptedEntry {
-            slot: entry.slot,
-            ballot: entry.ballot,
-            value: entry.value,
-        }
-    }
-}
+use crate::bindings::paxos::default::logger;
 
 pub struct MyAcceptor;
 
@@ -41,78 +23,99 @@ impl Guest for MyAcceptor {
     type AcceptorResource = MyAcceptorResource;
 }
 
-/// The acceptor tracks:
-/// - `promised_ballot`: the highest ballot number it has promised,
-/// - `accepted`: a list of proposals accepted (keyed by slot).
+/// The acceptor resource now maintains per-slot promises and accepted proposals.
 pub struct MyAcceptorResource {
-    promised_ballot: Cell<u64>,
-    accepted: RefCell<Vec<AcceptedEntryRust>>,
+    // Map from slot to the highest promised ballot for that slot.
+    promises: RefCell<HashMap<u64, u64>>,
+    // Map from slot to the accepted proposal (if any).
+    accepted: RefCell<HashMap<u64, AcceptedEntry>>,
 }
 
 impl GuestAcceptorResource for MyAcceptorResource {
-    /// Constructor: Initialize with a zero promised ballot and no accepted proposals.
+    /// Constructor: Initialize with empty promise and accepted maps.
     fn new() -> Self {
         Self {
-            promised_ballot: Cell::new(0),
-            accepted: RefCell::new(Vec::new()),
+            promises: RefCell::new(HashMap::new()),
+            accepted: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Return the current state of the acceptor.
+    /// Returns the current state of the acceptor.
+    /// This includes a list of promise entries (one per slot) and the accepted proposals.
     fn get_state(&self) -> AcceptorState {
-        let accepted_list = self
-            .accepted
+        // Build a list of promise entries from the promises map.
+        let promises_list: Vec<PromiseEntry> = self
+            .promises
             .borrow()
             .iter()
+            .map(|(&slot, &ballot)| PromiseEntry { slot, ballot })
+            .collect();
+
+        // Build a list of accepted proposals from the accepted map.
+        let accepted_list: Vec<AcceptedEntry> = self
+            .accepted
+            .borrow()
+            .values()
             .cloned()
             .map(Into::into)
             .collect();
+
         AcceptorState {
-            promised_ballot: self.promised_ballot.get(),
+            promises: promises_list,
             accepted: accepted_list,
         }
     }
 
-    /// Handle a prepare request.
-    /// If the incoming ballot is higher than the current promised ballot, update it.
-    fn prepare(&self, ballot: u64) -> bool {
-        if ballot > self.promised_ballot.get() {
-            self.promised_ballot.set(ballot);
-            info!("Acceptor: Promised new ballot {}", ballot);
+    /// Handle a prepare request for a given slot and ballot.
+    ///
+    /// The acceptor will promise not to accept proposals with a lower ballot for this slot.
+    /// Returns true if the incoming ballot is higher than the current promise for the slot.
+    fn prepare(&self, slot: u64, ballot: u64) -> bool {
+        let mut promises = self.promises.borrow_mut();
+        let current_promise = promises.get(&slot).cloned().unwrap_or(0);
+        if ballot > current_promise {
+            promises.insert(slot, ballot);
+            logger::log_info(&format!(
+                "Acceptor: For slot {}, updated promise to ballot {} (was {})",
+                slot, ballot, current_promise
+            ));
             true
         } else {
-            warn!(
-                "Acceptor: Rejected prepare for ballot {} (current promise is {})",
-                ballot,
-                self.promised_ballot.get()
-            );
+            logger::log_warn(&format!(
+                "Acceptor: For slot {}, rejected prepare with ballot {} (current promise is {})",
+                slot, ballot, current_promise
+            ));
             false
         }
     }
 
     /// Handle an accept request.
-    /// Accept the proposal only if its ballot matches the current promised ballot.
+    ///
+    /// A proposal is accepted only if its ballot matches the promised ballot for that slot.
+    /// When accepted, the proposal is recorded (overwriting any previous proposal for the slot).
     fn accept(&self, entry: AcceptedEntry) -> bool {
-        if entry.ballot == self.promised_ballot.get() {
-            // Remove any previously accepted proposal for the same slot.
-            self.accepted.borrow_mut().retain(|e| e.slot != entry.slot);
-            self.accepted.borrow_mut().push(AcceptedEntryRust {
-                slot: entry.slot,
-                ballot: entry.ballot,
-                value: entry.value.clone(),
-            });
-            info!(
-                "Acceptor: Accepted proposal for slot {} with ballot {} and value '{}'",
-                entry.slot, entry.ballot, entry.value
+        let slot = entry.slot;
+        let promised_ballot = self.promises.borrow().get(&slot).cloned().unwrap_or(0);
+        if entry.ballot == promised_ballot {
+            // Accept the proposal by storing it for this slot.
+            self.accepted.borrow_mut().insert(
+                slot,
+                AcceptedEntry {
+                    slot,
+                    ballot: entry.ballot,
+                    value: entry.value.clone(),
+                },
             );
+            logger::log_info(&format!(
+                "Acceptor: Accepted proposal for slot {} with ballot {} and value '{}'",
+                slot, entry.ballot, entry.value
+            ));
             true
         } else {
-            warn!(
-                "Acceptor: Rejected accept for slot {} with ballot {} (current promise is {})",
-                entry.slot,
-                entry.ballot,
-                self.promised_ballot.get()
-            );
+            logger::log_warn(&format!(
+                "Acceptor: For slot {}, rejected accept request with ballot {} (expected ballot {})",
+                slot, entry.ballot, promised_ballot
+            ));
             false
         }
     }

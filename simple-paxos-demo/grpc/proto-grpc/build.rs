@@ -1,20 +1,27 @@
+use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_owned();
+    // Assume this build.rs is in proto-grpc/
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Create a fixed output directory inside src/generated
+    let out_dir = manifest_dir.join("src").join("generated");
+    fs::create_dir_all(&out_dir)?;
 
-    println!("Workspace Dir: {}", workspace_dir.to_str().unwrap());
+    let proto_dir = manifest_dir.join("proto");
+    let proto_file = proto_dir.join("paxos.proto");
+    println!("Generating gRPC stubs into: {}", out_dir.display());
 
-    println!("GRPC Build Script Is Running!");
     tonic_build::configure()
-        .build_server(true) // Generate server stub
-        .build_client(true) // Generate client stub
+        .out_dir(&out_dir)
+        .build_server(true)
+        .build_client(true)
         .compile(
-            &["./src/paxos.proto"], // Path to your .proto file(s)
-            &["./src"],             // Path to the directory containing .proto
+            &[proto_file.to_str().unwrap()],
+            &[proto_dir.to_str().unwrap()],
         )?;
+
+    println!("cargo:rerun-if-changed={}", proto_file.display());
     Ok(())
 }

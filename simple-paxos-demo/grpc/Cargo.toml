@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-utils = { path = "../shared/utils", package = "shared-wasmtime-utils" }
 proto = { path = "../grpc/proto-grpc", package = "proto-grpc" }
 
 tonic = "0.9"
@@ -13,10 +12,13 @@ prost = "0.11"
 prost-types = "0.11"
 wasmtime = "30"
 wasmtime-wasi = "30"
-log = "0.4"
-env_logger = "0.11"
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
+tempfile = "3"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 
 [build-dependencies]
 tonic-build = "0.9"

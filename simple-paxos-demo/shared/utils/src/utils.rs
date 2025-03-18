@@ -7,6 +7,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 // reference: https://docs.rs/wasmtime/latest/wasmtime/component/bindgen_examples/_0_hello_world/index.html
 // reference: https://docs.wasmtime.dev/examples-rust-wasi.html
 
+//* Copy paste this if you need to add more to ComponentRunStates */
 pub struct ComponentRunStates {
     // These two are required basically as a standard way to enable the impl of WasiView
     pub wasi_ctx: WasiCtx,
@@ -28,7 +29,7 @@ impl WasiView for ComponentRunStates {
 impl ComponentRunStates {
     pub fn new() -> Self {
         ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new().inherit_stdio().build(),
+            wasi_ctx: WasiCtxBuilder::new().inherit_stdio().inherit_env().inherit_args().build(),
             resource_table: ResourceTable::new(),
         }
     }

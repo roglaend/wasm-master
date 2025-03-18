@@ -1,7 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use bindings::exports::paxos::default::proposer::ClientProposal;
-use log::{info, warn};
 use std::cell::{Cell, RefCell};
 
 pub mod bindings {
@@ -16,6 +15,7 @@ bindings::export!(MyProposer with_types_in bindings);
 use crate::bindings::exports::paxos::default::proposer::{
     Guest, GuestProposerResource, Proposal, ProposeResult, ProposerState,
 };
+use crate::bindings::paxos::default::logger;
 
 pub struct MyProposer;
 
@@ -66,7 +66,7 @@ impl GuestProposerResource for MyProposerResource {
         };
 
         if !self.is_leader.get() {
-            warn!("Proposer: Not leader—proposal rejected.");
+            logger::log_warn("Proposer: Not leader—proposal rejected.");
             return ProposeResult {
                 proposal,
                 accepted: false,
@@ -79,12 +79,12 @@ impl GuestProposerResource for MyProposerResource {
         // Store the proposal value.
         *self.last_proposal.borrow_mut() = Some(proposal.clone());
 
-        info!(
+        logger::log_info(&format!(
             "Proposer: Proposing value '{}' for slot {} with ballot {}",
             proposal.client_proposal.value,
             slot,
             self.current_ballot.get()
-        );
+        ));
         return ProposeResult {
             proposal,
             accepted: true,
@@ -97,7 +97,10 @@ impl GuestProposerResource for MyProposerResource {
         let new_ballot = self.current_ballot.get() + 1;
         self.current_ballot.set(new_ballot);
         self.is_leader.set(true);
-        info!("Proposer: Became leader with ballot {}", new_ballot);
+        logger::log_info(&format!(
+            "Proposer: Became leader with ballot {}",
+            new_ballot
+        ));
         true
     }
 
@@ -105,10 +108,10 @@ impl GuestProposerResource for MyProposerResource {
     fn resign_leader(&self) -> bool {
         if self.is_leader.get() {
             self.is_leader.set(false);
-            info!("Proposer: Resigned leadership.");
+            logger::log_info("Proposer: Resigned leadership.");
             true
         } else {
-            warn!("Proposer: Already not leader.");
+            logger::log_warn("Proposer: Already not leader.");
             false
         }
     }

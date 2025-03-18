@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package paxos;
+
+// Network message payloads.
+message PreparePayload {
+  uint64 slot = 1;
+  uint64 ballot = 2;
+}
+
+message PromisePayload {
+  uint64 slot = 1;
+  uint64 ballot = 2;
+  uint64 accepted_ballot = 3;         // 0 if none was accepted.
+  string accepted_value = 4;          // Empty if none.
+}
+
+message AcceptPayload {
+  uint64 slot = 1;
+  uint64 ballot = 2;
+  string proposal = 3;
+}
+
+message AcceptedPayload {
+  uint64 slot = 1;
+  uint64 ballot = 2;
+  bool accepted = 3;
+}
+
+message CommitPayload {
+  uint64 slot = 1;
+  string value = 2;
+}
+
+message HeartbeatPayload {
+  uint64 timestamp = 1;
+}
+
+// Top-level network message.
+message NetworkMessage {
+  enum NetworkMessageKind {
+    PREPARE = 0;
+    PROMISE = 1;
+    ACCEPT = 2;
+    ACCEPTED = 3;
+    COMMIT = 4;
+    HEARTBEAT = 5;
+  }
+  NetworkMessageKind kind = 1;
+  oneof payload {
+    PreparePayload prepare = 2;
+    PromisePayload promise = 3;
+    AcceptPayload accept = 4;
+    AcceptedPayload accepted = 5;
+    CommitPayload commit = 6;
+    HeartbeatPayload heartbeat = 7;
+  }
+}
+
+// Learned entry and KV-pair (for state reporting).
+message LearnedEntry {
+  uint64 slot = 1;
+  string value = 2;
+}
+
+message KvPair {
+  string key = 1;
+  string value = 2;
+}
+
+message PaxosState {
+  repeated LearnedEntry learned = 1;
+  repeated KvPair kv_state = 2;
+}
+
+// RPC service definitions.
+service Paxos {
+  // Propose a new value.
+  rpc ProposeValue (ProposeRequest) returns (ProposeResponse);
+  // Deliver a network message from a remote coordinator.
+  rpc DeliverMessage (NetworkMessage) returns (DeliverMessageResponse);
+  // Retrieve the currently learned value.
+  rpc GetValue (Empty) returns (GetValueResponse);
+  // Retrieve the complete Paxos state.
+  rpc GetState (Empty) returns (PaxosState);
+  // Retrieve logs incrementally.
+  rpc GetLogs (GetLogsRequest) returns (GetLogsResponse);
+}
+
+message ProposeRequest {
+  string value = 1;
+}
+
+message ProposeResponse {
+  bool success = 1;
+}
+
+message DeliverMessageResponse {
+  bool success = 1;
+}
+
+message Empty {}
+
+message GetValueResponse {
+  string value = 1;
+}
+
+message GetLogsRequest {
+  uint64 last_offset = 1;
+}
+
+message LogEntry {
+  uint64 offset = 1;
+  string message = 2;
+}
+
+message GetLogsResponse {
+  repeated LogEntry entries = 1;
+  uint64 new_offset = 2;
+}

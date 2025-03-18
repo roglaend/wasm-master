@@ -42,16 +42,22 @@ interface acceptor {
         value: string,
     }
 
+    // This record holds the highest ballot promised for a given slot.
+    record promise-entry {
+        slot: u64,
+        ballot: u64,
+    }
+
     record acceptor-state {
-        promised-ballot: u64,
+        promises: list<promise-entry>,
         accepted: list<accepted-entry>,
     }
 
     resource acceptor-resource {
         constructor();
         get-state: func() -> acceptor-state;
-        prepare: func(slot: u64) -> bool;
-        accept: func(accepted-entry: accepted-entry) -> bool;
+        prepare: func(slot: u64, ballot: u64) -> bool;
+        accept: func(entry: accepted-entry) -> bool;
     }
 }
 
@@ -69,17 +75,48 @@ interface learner {
         constructor();
         get-state: func() -> learner-state;
         learn: func(slot: u64, value: string);
+        get-learned: func(slot: u64) -> option<learned-entry>;
     }
 }
 
+
 interface kv-store {
-    resource kv-store-resource {
-        constructor();
-        get: func(key: string) -> option<string>;
-        set: func(key: string, value: string);
-        remove: func(key: string) -> option<string>;
-        clear: func();
-    }
+  type key = string;
+  type value = string;
+
+  record kv-pair {
+    key: key,
+    value: value,
+  }
+
+  // Define an operation that can be recorded in the history.
+ variant operation {
+    set(kv-pair),
+    remove(key),
+    clear,
+  }
+
+  resource kv-store-resource {
+    constructor();
+
+    // Get the value for a key.
+    get: func(key: key) -> option<value>;
+
+    // Set a key to a value.
+    set: func(key: key, value: value);
+
+    // Remove a key.
+    remove: func(key: key) -> option<value>;
+
+    // Clear all keys.
+    clear: func();
+
+    // Return the current state as a list of key/value pairs.
+    get-state: func() -> list<kv-pair>;
+
+    // Return the history as a list of operations.
+    get-history: func() -> list<operation>;
+  }
 }
 
 interface network {
@@ -90,7 +127,6 @@ interface network {
         accepted,   // Phase 2b: Response from an acceptor acknowledging acceptance.
         commit,     // Phase 3: Broadcast from the leader indicating the chosen value.
         heartbeat,  // Optional: Used for failure detection and leader keep-alive.
-        deliver,    // General-purpose message delivery.
     }
 
     enum status-kind {
@@ -130,11 +166,7 @@ interface network {
     record heartbeat-payload {
         timestamp: u64,
     }
-
-    record deliver-payload {
-        data: string,
-    }
-
+    
     variant message-payload {
         prepare(prepare-payload),
         promise(promise-payload),
@@ -142,7 +174,6 @@ interface network {
         accepted(accepted-payload),
         commit(commit-payload),
         heartbeat(heartbeat-payload),
-        deliver(deliver-payload),
     }
 
     record network-message {
@@ -166,7 +197,9 @@ interface network {
 
 
 interface paxos-coordinator {
-    use network.{node};
+    use network.{node, network-message, network-response};
+    use learner.{learned-entry};
+    use kv-store.{kv-pair};
 
     record promise-result {
         ballot: u64,
@@ -190,34 +223,53 @@ interface paxos-coordinator {
         quorum: u64,
     }
 
+    record paxos-state {
+        learned: list<learned-entry>,
+        kv-state: list<kv-pair>,
+    }
+
     resource paxos-coordinator-resource {
         constructor(node-id: u64, nodes: list<node>);
 
         /// Optionally, elects a leader.
         elect-leader: func() -> election-result;
 
-        // TODO: Define a propose-phase?
-
-        /// Phase 1: Executes the prepare phase by sending a prepare request (with a structured payload)
-        /// and collecting promise messages from acceptors.
+        /// Phase 1: Prepare Phase.
         prepare-phase: func(ballot: u64, slot: u64) -> promise-result;
         
-        /// Phase 2: Executes the accept phase by sending an accept request (with its payload)
-        /// and collecting acceptances.
+        /// Phase 2: Accept Phase.
         accept-phase: func(proposal-value: string, slot: u64, ballot: u64) -> accepted-result;
         
-        /// Phase 3: Commits the proposal locally and broadcasts the chosen value.
+        /// Phase 3: Commit Phase.
         commit-phase: func(slot: u64) -> option<learn-result>;
 
-        /// Called by the host to deliver a network message from a remote coordinator.
-        deliver-message: func(message: string) -> bool;
+        /// Handles network messages.
+        handle-message: func(message: network-message) -> network-response;
 
         /// Retrieves the currently learned value.
         get-learned-value: func() -> option<string>;
 
         /// Orchestrates the entire Paxos protocol.
         run-paxos: func(value: string) -> bool;
+
+        /// Expose the current Paxos state (learned results and kv-store).
+        get-state: func() -> paxos-state;
+    } 
+}
+
+interface logger {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
     }
+    // log: func(level: level, msg: string); 
+
+    log-debug: func(msg: string);
+    log-info: func(msg: string);
+    log-warn: func(msg: string);
+    log-error: func(msg: string);
 }
 
 interface client {
@@ -226,18 +278,26 @@ interface client {
 }
 
 world proposer-world {
+    import logger;
+
     export proposer;
 }
 
 world acceptor-world {
+    import logger;
+
     export acceptor;
 }
 
 world learner-world {
+    import logger;
+
     export learner;
 }
 
 world kv-store-world {
+    import logger;
+
     export kv-store;
 }
 
@@ -249,6 +309,7 @@ world paxos-world {
 
     /// Needs to be implemented by host
     import network;
+    import logger; 
 
     export paxos-coordinator;
 }

@@ -1,8 +1,8 @@
-use crate::paxos_wasm::paxos_bindings::paxos::default::network::Node;
+use crate::paxos_bindings::paxos::default::network::Node;
 
 /// Shared configuration values for all nodes.
 pub struct SharedConfig {
-    // The leader is always node 1.
+    // The leader is by default node 1, but can be set dynamically.
     pub leader_id: u64,
     // All endpoints in the cluster.
     pub endpoints: Vec<String>,
@@ -10,14 +10,35 @@ pub struct SharedConfig {
 
 impl SharedConfig {
     pub fn load() -> Self {
+        // Number of nodes to run. Defaults to 3 if NUM_NODES is not provided.
+        let num_nodes: usize = std::env::var("NUM_NODES")
+            .unwrap_or_else(|_| "3".to_string())
+            .parse()
+            .expect("NUM_NODES must be an integer");
+
+        // Base port for the first node. Defaults to 50051.
+        let base_port: u16 = std::env::var("BASE_PORT")
+            .unwrap_or_else(|_| "50051".to_string())
+            .parse()
+            .expect("BASE_PORT must be a valid port number");
+
+        // Base IP address. Defaults to 127.0.0.1.
+        let base_ip = std::env::var("BASE_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+
+        // Dynamically generate endpoints based on the number of nodes.
+        let endpoints: Vec<String> = (0..num_nodes)
+            .map(|i| format!("{}:{}", base_ip, base_port + i as u16))
+            .collect();
+
+        // Leader ID. Defaults to 1 if not provided.
+        let leader_id: u64 = std::env::var("LEADER_ID")
+            .unwrap_or_else(|_| "1".to_string())
+            .parse()
+            .expect("LEADER_ID must be an integer");
+
         Self {
-            leader_id: 1, // TODO: Make this dynamic
-            // Define all endpoints here.
-            endpoints: vec![
-                "127.0.0.1:50051".to_string(),
-                "127.0.0.1:50052".to_string(),
-                // "127.0.0.1:50053".to_string(),
-            ],
+            leader_id,
+            endpoints,
         }
     }
 }
@@ -49,7 +70,7 @@ impl Config {
         // Our bind address is the endpoint corresponding to our node_id (1-indexed).
         let bind_addr = shared.endpoints[(node_id - 1) as usize].clone();
 
-        // Create a Node for every endpoint that is not the bind address.
+        // Create a Node for every endpoint that is not our bind address.
         let remote_nodes: Vec<Node> = shared
             .endpoints
             .iter()
