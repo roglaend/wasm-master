@@ -5,13 +5,16 @@ set -e  # Exit immediately if a command fails
 # Define the root directory of the workspace
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # WASM_DIR="$ROOT_DIR/paxos-wasm"
-WASM_DIR="$ROOT_DIR/wrpc_v2"
+WASM_DIR="$ROOT_DIR/grpc"
 TARGET_DIR="target/wasm32-wasip2/release"
 
 # Define the WASM component directories inside paxos-wasm
 # COMPONENTS=("proposer" "acceptor" "learner")
 # COMPONENTS=("proposer-wrpc")
-COMPONENTS=("command-wrpc")
+# COMPONENTS=("proposer-grpc" "acceptor-grpc" "learner-grpc" "kv-store-grpc")
+# COMPONENTS=("paxos-grpc")
+COMPONENTS=("proposer-grpc" "acceptor-grpc" "learner-grpc" "kv-store-grpc" "paxos-grpc")
+
 
 echo "Building WASM components..."
 

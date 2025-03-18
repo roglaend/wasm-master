@@ -1,0 +1,65 @@
+digraph "Paxos Architecture" {
+	dpi=300 nodesep=3.5 rankdir=TB ranksep=5.0 size="20,20" splines=polyline
+	subgraph cluster_host {
+		color=lightgray fontsize=14 label="Rust Host (Wasmtime)
+Runs Paxos-Coordinator & gRPC" style=filled
+		subgraph cluster_paxos {
+			color=lightgreen fontsize=14 label="Paxos-Coordinator (WASM)
+Handles Paxos Algorithm" style=filled
+			proposer [label="Proposer (WASM)
+Initiates Paxos rounds" fillcolor=lightblue fontsize=12 height=1.0 shape=box style=filled width=3.0]
+			acceptor [label="Acceptor (WASM)
+Validates proposals" fillcolor=lightblue fontsize=12 height=1.0 shape=box style=filled width=3.0]
+			learner [label="Learner (WASM)
+Learns final value" fillcolor=lightblue fontsize=12 height=1.0 shape=box style=filled width=3.0]
+			kv_store [label="KV Store (WASM)
+Stores consensus data" fillcolor=lightyellow fontsize=12 height=1.0 shape=box style=filled width=3.0]
+		}
+		wasi_interface [label="WASI Interface
+(network.send_message())
+Facilitates communication" fillcolor=orange fontsize=12 height=1.2 shape=box style=filled width=4.0]
+		grpc_server [label="gRPC Client / Server (Rust)
+Handles Paxos messaging" fillcolor=gray fontsize=12 height=1.2 shape=box style=filled width=4.0]
+	}
+	grpc_network [label="gRPC Network
+Relays Paxos messages" fillcolor=lightgray fontsize=12 height=1.2 shape=ellipse style=filled width=4.5]
+	other_nodes [label="Other Paxos Nodes
+(Same Architecture)" fillcolor=lightgray fontsize=12 height=1.2 shape=box style=filled width=4.5]
+	proposer -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 1:
+start_paxos_round(value)"]
+	paxos_coordinator -> wasi_interface [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 2:
+network.send_message(Prepare)"]
+	wasi_interface -> grpc_server [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 3:
+send_paxos_message(Prepare)"]
+	grpc_server -> grpc_network [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 4:
+gRPC: Prepare Message"]
+	grpc_network -> other_nodes [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 5:
+Deliver Prepare(proposal_id)"]
+	other_nodes -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 6:
+handle_paxos_message(Prepare)"]
+	acceptor -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 7:
+handle_prepare() → Promise"]
+	paxos_coordinator -> wasi_interface [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 8:
+network.send_message(Promise)"]
+	grpc_network -> proposer [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 9:
+Deliver Promise(proposal_id)"]
+	proposer -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 10:
+collect_promises()"]
+	paxos_coordinator -> wasi_interface [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 11:
+network.send_message(Accept)"]
+	grpc_network -> other_nodes [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 12:
+Deliver Accept(proposal_id, value)"]
+	acceptor -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 13:
+handle_accept() → Accepted"]
+	paxos_coordinator -> wasi_interface [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 14:
+network.send_message(Accepted)"]
+	grpc_network -> proposer [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 15:
+Deliver Accepted(proposal_id, value)"]
+	proposer -> learner [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 16:
+notify_learners(value)"]
+	learner -> kv_store [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 17:
+store_value(value)"]
+	kv_store -> paxos_coordinator [arrowsize=1.2 fontsize=10 penwidth=3 xlabel="Phase 18:
+Consensus Reached!"]
+	dpi=600
+}

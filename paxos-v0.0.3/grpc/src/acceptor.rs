@@ -125,7 +125,6 @@ impl Handler for MyAcceptor {
             // println!("Responses: {:?}", responses);
         }
 
-    
         let resp = HostResponse {
             data: response,
         };
@@ -133,7 +132,6 @@ impl Handler for MyAcceptor {
         Ok(tonic::Response::new(resp))
     }
 }
-
 
 
 #[tokio::main]

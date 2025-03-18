@@ -20,8 +20,6 @@ tokio = { version = "1.43", features = [
     "signal",
 ] }
 
-wrpc-runtime-wasmtime = "0.25.0"
-
 utils-wrpc_v2 = { path = "../utils" }
 
 # [[bin]]

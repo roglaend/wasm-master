@@ -150,12 +150,8 @@ impl<Ctx: Send> HandlerProposerResource<Ctx> for MyProposer {
             let acceptor_resource_handle = self.acceptor_resource_handles.get(addr);
             prepare_tasks.spawn(async move {
                 let wrpc = Client::from(addr.clone());
-                let result = Acceptor::AcceptorResource::prepare(
-                    &wrpc,
-                    (),
-                    &acceptor_resource_handle,
-                    pid,
-                );
+                let result =
+                    Acceptor::AcceptorResource::prepare(&wrpc, (), &acceptor_resource_handle, pid);
             });
         }
 
@@ -231,92 +227,92 @@ pub async fn run_proposer_wrpc_exports(addr: &str) -> anyhow::Result<()> {
 }
 
 // Run the proposer component and keep serving until a shutdown signal is received.
-// pub async fn run_proposer_wrpc_exports(addr: &str) -> anyhow::Result<()> {
-//     // Initialize logging.
-//     tracing_subscriber::fmt::init();
+pub async fn run_proposer_wrpc_exports(addr: &str) -> anyhow::Result<()> {
+    // Initialize logging.
+    tracing_subscriber::fmt::init();
 
-//     // Bind a TCP listener on the specified address.
-//     let lis = TcpListener::bind(&addr)
-//         .await
-//         .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
+    // Bind a TCP listener on the specified address.
+    let lis = TcpListener::bind(&addr)
+        .await
+        .with_context(|| format!("failed to bind TCP listener on `{addr}`"))?;
 
-//     // Create the wRPC server instance.
-//     let srv = Arc::new(wrpc_transport::Server::default());
+    // Create the wRPC server instance.
+    let srv = Arc::new(wrpc_transport::Server::default());
 
-//     // Spawn a task to continuously accept incoming TCP connections.
-//     let accept_handle = {
-//         let srv = Arc::clone(&srv);
-//         tokio::spawn(async move {
-//             loop {
-//                 if let Err(err) = srv.accept(&lis).await {
-//                     error!(?err, "failed to accept TCP connection");
-//                 }
-//             }
-//         })
-//     };
+    // Spawn a task to continuously accept incoming TCP connections.
+    let accept_handle = {
+        let srv = Arc::clone(&srv);
+        tokio::spawn(async move {
+            loop {
+                if let Err(err) = srv.accept(&lis).await {
+                    error!(?err, "failed to accept TCP connection");
+                }
+            }
+        })
+    };
 
-//     info!("Proposer component is now serving exports on {addr}");
+    info!("Proposer component is now serving exports on {addr}");
 
-//     // Use the generated bindings to serve exports.
-//     let invocations = bindings::serve(srv.as_ref(), MyProposer::default())
-//         .await
-//         .context("failed to serve proposer exports")?;
+    // Use the generated bindings to serve exports.
+    let invocations = bindings::serve(srv.as_ref(), MyProposer::default())
+        .await
+        .context("failed to serve proposer exports")?;
 
-//     // Conflate all invocation streams into one unified stream.
-//     let mut invocations: SelectAll<_> = invocations
-//         .into_iter()
-//         .map(|(instance, name, stream)| {
-//             info!("serving {instance} {name}");
-//             stream.map(move |res| (instance, name, res))
-//         })
-//         .collect();
+    // Conflate all invocation streams into one unified stream.
+    let mut invocations: SelectAll<_> = invocations
+        .into_iter()
+        .map(|(instance, name, stream)| {
+            info!("serving {instance} {name}");
+            stream.map(move |res| (instance, name, res))
+        })
+        .collect();
 
-//     // Prepare a join set to handle spawned tasks.
-//     let mut tasks = JoinSet::new();
-//     // Prepare the shutdown signal.
-//     let shutdown = signal::ctrl_c();
-//     pin!(shutdown);
+    // Prepare a join set to handle spawned tasks.
+    let mut tasks = JoinSet::new();
+    // Prepare the shutdown signal.
+    let shutdown = signal::ctrl_c();
+    pin!(shutdown);
 
-//     loop {
-//         select! {
-//             // Process incoming invocations.
-//             Some((instance, name, res)) = invocations.next() => {
-//                 match res {
-//                     Ok(fut) => {
-//                         debug!(?instance, ?name, "invocation accepted");
-//                         tasks.spawn(async move {
-//                             if let Err(err) = fut.await {
-//                                 warn!(?err, "failed to handle invocation");
-//                             } else {
-//                                 info!(?instance, ?name, "invocation successfully handled");
-//                             }
-//                         });
-//                     },
-//                     Err(err) => {
-//                         warn!(?err, ?instance, ?name, "failed to accept invocation");
-//                     },
-//                 }
-//             },
-//             // Process completed tasks.
-//             Some(task_res) = tasks.join_next() => {
-//                 if let Err(err) = task_res {
-//                     error!(?err, "failed to join task");
-//                 }
-//             },
-//             // Shutdown signal received.
-//             _ = &mut shutdown => {
-//                 info!("Shutdown signal received. Aborting accept loop and waiting for tasks...");
-//                 accept_handle.abort();
-//                 // Wait for all spawned tasks to complete.
-//                 while let Some(task_res) = tasks.join_next().await {
-//                     if let Err(err) = task_res {
-//                         error!(?err, "failed to join task");
-//                     }
-//                 }
-//                 break;
-//             }
-//         }
-//     }
+    loop {
+        select! {
+            // Process incoming invocations.
+            Some((instance, name, res)) = invocations.next() => {
+                match res {
+                    Ok(fut) => {
+                        debug!(?instance, ?name, "invocation accepted");
+                        tasks.spawn(async move {
+                            if let Err(err) = fut.await {
+                                warn!(?err, "failed to handle invocation");
+                            } else {
+                                info!(?instance, ?name, "invocation successfully handled");
+                            }
+                        });
+                    },
+                    Err(err) => {
+                        warn!(?err, ?instance, ?name, "failed to accept invocation");
+                    },
+                }
+            },
+            // Process completed tasks.
+            Some(task_res) = tasks.join_next() => {
+                if let Err(err) = task_res {
+                    error!(?err, "failed to join task");
+                }
+            },
+            // Shutdown signal received.
+            _ = &mut shutdown => {
+                info!("Shutdown signal received. Aborting accept loop and waiting for tasks...");
+                accept_handle.abort();
+                // Wait for all spawned tasks to complete.
+                while let Some(task_res) = tasks.join_next().await {
+                    if let Err(err) = task_res {
+                        error!(?err, "failed to join task");
+                    }
+                }
+                break;
+            }
+        }
+    }
 
-//     Ok(())
-// }
+    Ok(())
+}

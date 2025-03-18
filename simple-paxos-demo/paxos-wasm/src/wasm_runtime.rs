@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use exports::paxos::proposer::proposer::ProposerState;
-use simple_paxos_wasm_utils::{
+use shared_utils::{
     bind_interfaces_needed_by_guest_rust_std, get_component_linker_store, ComponentRunStates,
 };
 use std::path::PathBuf;
@@ -35,11 +35,8 @@ impl PaxosWasmRuntime {
         let proposer_path = target_dir.join("proposer.wasm");
 
         // Load the component and create the linker/store
-        let (component, mut linker, mut store) = get_component_linker_store(
-            engine,
-            proposer_path.to_str().context("Invalid proposer path")?,
-            "",
-        )?;
+        let (component, mut linker, mut store) =
+            get_component_linker_store(engine, proposer_path.to_str().unwrap(), "")?;
 
         // Bind WASI interfaces for std support
         bind_interfaces_needed_by_guest_rust_std(&mut linker);
