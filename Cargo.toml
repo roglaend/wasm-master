@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+
+members = [
+    "paxos-rust",
+
+    # "paxos-wasm",
+
+    "paxos-wasm/core",
+    "paxos-wasm/core/proposer",
+    "paxos-wasm/core/acceptor",
+    "paxos-wasm/core/learner",
+    "paxos-wasm/core/kv-store",
+    "paxos-wasm/core/proto",
+
+    "paxos-wasm/composed-grpc",
+    "paxos-wasm/composed-grpc/client",
+    "paxos-wasm/composed-grpc/command",
+    "paxos-wasm/composed-grpc/paxos-coordinator",
+
+    "paxos-wasm/shared/utils",
+
+    # ---------------------------------- #
+
+    "archive/shared/utils",
+
+    "archive/paxos-v0.0.1/proposer",
+    "archive/paxos-v0.0.1/acceptor",
+    "archive/paxos-v0.0.1/command",
+
+    # "archive/paxos-v0.0.2/proposer", Doesn't compile
+    "archive/paxos-v0.0.2/acceptor",
+    "archive/paxos-v0.0.2/command",
+    "archive/paxos-v0.0.2/grpc",
+
+    "archive/paxos-v0.0.3/proposer",
+    "archive/paxos-v0.0.3/acceptor",
+    "archive/paxos-v0.0.3/grpc",
+
+    "archive/simple-paxos-wasm",
+    "archive/simple-paxos-wasm/proposer",
+    "archive/simple-paxos-wasm/acceptor",
+    "archive/simple-paxos-wasm/learner",
+
+    "archive/wrpc_v1",
+    "archive/wrpc_v1/proposer-wrpc",
+    "archive/wrpc_v1/acceptor-wrpc",
+    "archive/wrpc_v1/learner-wrpc",
+    "archive/wrpc_v1/command-wrpc",
+
+    "archive/wrpc_v2",
+    "archive/wrpc_v2/command-wrpc",
+    # "archive/wrpc_v2/proposer-wrpc", Doesn't compile
+    "archive/wrpc_v2/acceptor-wrpc",
+    "archive/wrpc_v2/learner-wrpc",
+    "archive/wrpc_v2/paxos-wrpc",
+
+    # "wasm-examples.../"
+]

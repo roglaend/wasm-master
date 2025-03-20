@@ -1,27 +1,22 @@
 [package]
-name = "hosttest"
+name = "paxos_v0_0_3_acceptor"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# wit-bindgen = "0.38.0"
 wit-bindgen-rt = { version = "0.38.0", features = ["bitflags"] }
+lazy_static = "1.4"
+# wit-bindgen.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
-# [profile.release]
-# codegen-units = 1
-# opt-level = "s"
-# debug = false
-# strip = true
-# lto = true
-
 [package.metadata.component]
-package = "paxos:hosttest"
+package = "paxos:acceptor"
 
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target]
-path = "../wit/hosttest"
-world = "hosttest"
-
+path = "../wit/acceptor"
+world = "acceptorworld"
