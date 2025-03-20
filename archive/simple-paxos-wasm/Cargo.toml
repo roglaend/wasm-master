@@ -1,0 +1,25 @@
+[package]
+name = "simple-paxos-wasm"
+version = "0.1.0"
+edition = "2021"
+
+# [[bin]]
+# name = "paxos-wasm"
+# path = "src/main.rs"
+
+# [lib]
+# crate-type = ["cdylib"]
+
+[dependencies]
+shared-wasmtime-utils = { path = "../shared/utils" }
+
+log = "0.4"
+env_logger = "0.10"
+wasmtime = "30"
+wasmtime-wasi = "30"
+anyhow = "1"
+
+# Comment out or remove these dependencies since they are precompiled as Wasm components
+# proposer = { path = "proposer" }
+# acceptor = { path = "acceptor" }
+# learner = { path = "learner" }

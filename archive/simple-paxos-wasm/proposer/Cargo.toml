@@ -1,0 +1,15 @@
+[package]
+name = "simple_paxos_wasm_proposer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "simple_paxos_proposer"
+crate-type = ["cdylib"]
+
+[dependencies]
+log = "0.4"
+wit-bindgen = "0.38.0"
+
+[package.metadata]
+# cargo.build-disabled = true  # Custom flag to indicate this shouldn't be built by default

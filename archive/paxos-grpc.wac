@@ -1,0 +1,22 @@
+// TODO: doesn't work
+
+package paxos:composition;
+
+// Instantiate the components that provide the coordinators required imports.
+let p = new paxos:proposer {};
+let a = new paxos:acceptor {};
+let l = new paxos:learner {};
+let k = new paxos:kv-store {};
+
+// Instantiate the coordinator component by plugging its imports
+// with the corresponding exports from the above instances.
+// Note: for "kv-store", which contains a hyphen, we use a named access expression.
+let c = new paxos:paxos-coordinator {
+  proposer: p.proposer,
+  acceptor: a.acceptor,
+  learner: l.learner,
+  "kv-store": k["kv-store"],
+};
+
+// Export the coordinators export so that the composite component only exposes that.
+export c.paxos-coordinator;

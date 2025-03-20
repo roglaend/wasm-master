@@ -1,0 +1,3 @@
+Tanken e å legga inn faktisk kjørende proof-of-concept greier her som ikkje e direkte kobla te hoved koden
+
+Også et sted for å testa ting

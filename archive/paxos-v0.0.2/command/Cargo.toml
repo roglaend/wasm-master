@@ -1,13 +1,12 @@
 [package]
-name = "hosttest"
+name = "paxos_v0_0_2_command"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
 wit-bindgen-rt = { version = "0.38.0", features = ["bitflags"] }
-
-[lib]
-crate-type = ["cdylib"]
+clap = { version = "4.3.19", features = ["derive"] }
 
 # [profile.release]
 # codegen-units = 1
@@ -16,12 +15,9 @@ crate-type = ["cdylib"]
 # strip = true
 # lto = true
 
-[package.metadata.component]
-package = "paxos:hosttest"
-
-[package.metadata.component.dependencies]
-
 [package.metadata.component.target]
-path = "../wit/hosttest"
-world = "hosttest"
+path = "../wit/proposer"
+world = "app"
 
+[package.metadata.component.target.dependencies]
+"paxos:acceptor" = { path = "../wit/acceptor" }
