@@ -19,6 +19,14 @@ members = [
     "paxos-wasm/composed-grpc/paxos-coordinator",
 
     "paxos-wasm/shared/utils",
+"paxos-wasm/shared/grpc",
+    "paxos-wasm/shared/proto",
+
+    "pocs/tcp-server-polling-test",
+    "pocs/tcp-server-polling-test/server",
+    "pocs/tcp-server-polling-test/client",
+    "pocs/tcp-server-polling-test/handler",
+
 
     # ---------------------------------- #
 

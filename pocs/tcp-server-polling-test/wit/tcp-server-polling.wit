@@ -1,0 +1,21 @@
+package poc:tcp-server-polling;
+
+interface handler {
+  handle: func(msg: string, should-sleep: bool) -> string;
+}
+
+interface tcp-server {
+  run: func();
+}
+
+
+world handler-world {
+  export handler;
+}
+
+world tcp-server-world {
+  import handler;
+
+  export tcp-server;
+}
+
