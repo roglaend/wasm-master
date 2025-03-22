@@ -1,0 +1,12 @@
+[package]
+name = "tcp-server-polling-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+
+tokio = { version = "1.44.1", features = ["macros", "rt"] }
+
+wasmtime = "30"
+wasmtime-wasi = "30"
