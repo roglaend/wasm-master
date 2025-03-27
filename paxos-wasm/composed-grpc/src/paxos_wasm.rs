@@ -1,6 +1,8 @@
+use crate::grpc_service::create_clients;
 use crate::host_logger::HostLogger;
 use crate::host_messenger::HostMessenger;
 use crate::paxos_bindings;
+use futures::future::{join, join_all};
 use proto::paxos_proto;
 use std::error::Error;
 use std::path::PathBuf;
@@ -114,6 +116,39 @@ impl PaxosWasmtime {
 impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
     async fn send_hello(&mut self) -> String {
         "Hello".to_string()
+    }
+
+    
+    // Wasm proposer for prepare/accept messages to be sent to acceptors.
+    async fn send_message_forget(
+        &mut self,
+        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
+        message: paxos_bindings::paxos::default::network::NetworkMessage
+    ) -> () {
+        tokio::spawn(async move {
+            let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
+            let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
+            let clients_arc = create_clients(endpoints.clone()).await;
+            let clients: Vec<_> = {
+                let guard = clients_arc.lock();
+                guard.unwrap().clone()
+            };
+            let send_futures = clients.into_iter().map(|mut client| {
+                let req = tonic::Request::new(proto_msg.clone());
+                async move { client.deliver_message(req).await }
+            });
+            join_all(send_futures).await;
+        });
+        ()    
+    }   
+    
+    // For acceptors to send promise/accept messages back to proposer.
+    async  fn send_message_to_forget(
+        &mut self, 
+        node: paxos_bindings::paxos::default::network::Node, 
+        message: paxos_bindings::paxos::default::network::NetworkMessage
+    ) -> () {
+        todo!()
     }
 
     async fn send_message(
