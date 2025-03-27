@@ -16,9 +16,9 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
             x if x == NetworkMessageKind::Accept as i32 => network::NetworkMessageKind::Accept,
             x if x == NetworkMessageKind::Accepted as i32 => network::NetworkMessageKind::Accepted,
             x if x == NetworkMessageKind::Commit as i32 => network::NetworkMessageKind::Commit,
-            x if x == NetworkMessageKind::Heartbeat as i32 => {
-                network::NetworkMessageKind::Heartbeat
-            }
+            x if x == NetworkMessageKind::Heartbeat as i32 => network::NetworkMessageKind::Heartbeat,
+            // x if x == NetworkMessageKind::Election as i32 => network::NetworkMessageKind::Election,
+            // x if x == NetworkMessageKind::Leader as i32 => network::NetworkMessageKind::Leader,
             _ => return Err("Unknown network message kind".to_string()),
         };
 
@@ -86,13 +86,34 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
             x if x == NetworkMessageKind::Heartbeat as i32 => {
                 if let Some(Payload::Heartbeat(hb)) = proto_msg.payload {
                     network::MessagePayload::Heartbeat(network::HeartbeatPayload {
-                        timestamp: hb.timestamp,
+                        nodeid: hb.nodeid,
                     })
                 } else {
                     return Err("Missing Heartbeat payload".to_string());
                 }
             }
+            // x if x == NetworkMessageKind::Election as i32 => {
+            //     if let Some(Payload::Election(el )) = proto_msg.payload {
+            //         network::MessagePayload::Election(network::ElectionPayload {
+            //             candidate_id: el.candidate_id,
+            //         })
+            //     } else {
+            //         return Err("Missing Election payload".to_string());
+            //     }
+            // }
+            // x if x == NetworkMessageKind::Leader as i32 => {
+            //     if let Some(Payload::Leader(l )) = proto_msg.payload {
+            //         network::MessagePayload::Leader(network::LeaderPayload {
+            //             leader_id: l.leader_id,
+            //         })
+            //     } else {
+            //         return Err("Missing Election payload".to_string());
+            //     }
+            // }
+
             _ => return Err("Unknown network message kind".to_string()),
+
+            
         };
 
         Ok(network::NetworkMessage { kind, payload })
@@ -110,6 +131,8 @@ impl From<network::NetworkMessage> for paxos_proto::NetworkMessage {
             network::NetworkMessageKind::Accepted => NetworkMessageKind::Accepted as i32,
             network::NetworkMessageKind::Commit => NetworkMessageKind::Commit as i32,
             network::NetworkMessageKind::Heartbeat => NetworkMessageKind::Heartbeat as i32,
+        //     network::NetworkMessageKind::Election => NetworkMessageKind::Election as i32,
+        //     network::NetworkMessageKind::Leader => NetworkMessageKind::Leader as i32,
         };
 
         let payload = match wit_msg.payload {
@@ -149,9 +172,19 @@ impl From<network::NetworkMessage> for paxos_proto::NetworkMessage {
             }
             network::MessagePayload::Heartbeat(hb) => {
                 Some(Payload::Heartbeat(paxos_proto::HeartbeatPayload {
-                    timestamp: hb.timestamp,
+                    nodeid: hb.nodeid,
                 }))
             }
+            // network::MessagePayload::Election(el) => {
+            //     Some(Payload::Election(paxos_proto::ElectionPayload {
+            //         candidate_id: el.candidate_id,
+            //     }))
+            // }
+            // network::MessagePayload::Leader(l) => {
+            //     Some(Payload::Leader(paxos_proto::LeaderPayload {
+            //         leader_id: l.leader_id,
+            //     }))
+            // }
         };
 
         paxos_proto::NetworkMessage { kind, payload }

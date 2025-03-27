@@ -44,6 +44,7 @@ impl SharedConfig {
 }
 
 /// Complete configuration including both shared and node-specific values.
+#[derive(Clone)]
 pub struct Config {
     pub node_id: u64,
     pub bind_addr: String,

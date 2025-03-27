@@ -33,8 +33,17 @@ message CommitPayload {
 }
 
 message HeartbeatPayload {
-  uint64 timestamp = 1;
+  uint64 nodeid = 1;
 }
+
+
+// message ElectionPayload {
+//   uint64 candidate_id = 1;
+// }
+
+// message LeaderPayload {
+//     uint64 leader_id = 1;
+// }
 
 // Top-level network message.
 message NetworkMessage {
@@ -45,6 +54,8 @@ message NetworkMessage {
     ACCEPTED = 3;
     COMMIT = 4;
     HEARTBEAT = 5;
+    ELECTION = 6;
+    LEADER = 7;
   }
   NetworkMessageKind kind = 1;
   oneof payload {
@@ -54,6 +65,8 @@ message NetworkMessage {
     AcceptedPayload accepted = 5;
     CommitPayload commit = 6;
     HeartbeatPayload heartbeat = 7;
+    // ElectionPayload election = 8;
+    // LeaderPayload leader = 9;
   }
 }
 

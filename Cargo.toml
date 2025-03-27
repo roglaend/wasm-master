@@ -12,6 +12,8 @@ members = [
     "paxos-wasm/core/learner",
     "paxos-wasm/core/kv-store",
     "paxos-wasm/core/proto",
+    "paxos-wasm/core/leader-detector",
+    "paxos-wasm/core/failure-detector",
 
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
@@ -20,6 +22,11 @@ members = [
 
     "paxos-wasm/shared/utils",
 
+    # ---------------------------------- #
+
+    "pocs/network-component/tcp-client",
+    "pocs/network-component/tcp-server",
+    
     # ---------------------------------- #
 
     "archive/shared/utils",
