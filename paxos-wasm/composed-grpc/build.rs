@@ -70,14 +70,35 @@ fn main() {
         .join("release")
         .join("composed_paxos_coordinator.wasm");
 
+
+    let failure_detector = target_dir.join("release").join("failure_detector.wasm");
+    let leader_detector = target_dir.join("release").join("leader_detector.wasm");
+    let failure_service = target_dir.join("release").join("failure_service.wasm");
+
     // Ensure all the required WASM files exist.
-    for path in [&proposer, &acceptor, &learner, &kv_store, &paxos] {
+    for path in [&proposer, &acceptor, &learner, &kv_store, &paxos, &failure_detector, &leader_detector] {
         assert!(
             path.exists(),
             "Required WASM module not found: {}",
             path.display()
         );
     }
+
+
+    // First plug failure and leader together
+    let failure_service_status = Command::new("wac")
+        .args([
+            "plug",
+            "--plug",
+            leader_detector.to_str().unwrap(),
+            failure_detector.to_str().unwrap(),
+            "-o",
+            failure_service.to_str().unwrap(),
+        ])
+        .status()
+        .expect("Failed to run wac plug for failure service command");
+
+    assert!(failure_service_status.success(), "wac plug command for failure service failed");
 
     println!("Running wac plug to create composite WASM module...");
 
@@ -93,6 +114,8 @@ fn main() {
             learner.to_str().unwrap(),
             "--plug",
             kv_store.to_str().unwrap(),
+            "--plug",
+            failure_service.to_str().unwrap(),
             paxos.to_str().unwrap(), // The socket component.
             "-o",
             output.to_str().unwrap(),

@@ -8,13 +8,15 @@ fn main() {
         .expect("Failed to find workspace root")
         .to_owned();
 
-    let component_names = ["proposer", "acceptor", "learner", "kv-store"];
+    let component_names = ["proposer", "acceptor", "learner", "kv-store", "failure-detector", "leader-detector"];
 
     let component_module_names = [
         "proposer.wasm",
         "acceptor.wasm",
         "learner.wasm",
         "kv_store.wasm",
+        "failure_detector.wasm",
+        "leader_detector.wasm",
     ];
 
     println!("Building WASM components...");
