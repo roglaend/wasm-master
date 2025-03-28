@@ -127,6 +127,8 @@ interface network {
         accepted,   // Phase 2b: Response from an acceptor acknowledging acceptance.
         commit,     // Phase 3: Broadcast from the leader indicating the chosen value.
         heartbeat,  // Optional: Used for failure detection and leader keep-alive.
+        // election,   // Optional: Used to initiate an election.
+        // leader,     // Optional: Used to announce the leader.
     }
 
     enum status-kind {
@@ -164,9 +166,17 @@ interface network {
     }
 
     record heartbeat-payload {
-        timestamp: u64,
+        nodeid: u64,
     }
     
+    // record election-payload {
+    //     candidate-id: u64,
+    // }
+
+    // record leader-payload {
+    //     leader-id: u64,
+    // }
+
     variant message-payload {
         prepare(prepare-payload),
         promise(promise-payload),
@@ -174,6 +184,8 @@ interface network {
         accepted(accepted-payload),
         commit(commit-payload),
         heartbeat(heartbeat-payload),
+        // election(election-payload),
+        // leader(leader-payload),
     }
 
     record network-message {
@@ -193,6 +205,8 @@ interface network {
 
     send-hello: func() -> string;
     send-message: func(nodes: list<node>, message: network-message) -> list<network-response>;
+    send-message-forget: func(nodes: list<node>, message: network-message);
+    send-message-to-forget: func(node: node, message: network-message); 
 }
 
 
@@ -254,6 +268,10 @@ interface paxos-coordinator {
 
         /// Expose the current Paxos state (learned results and kv-store).
         get-state: func() -> paxos-state;
+
+        failure-service: func();
+
+        client-handle-test: func(value: string) -> bool;
     } 
 }
 
@@ -275,6 +293,39 @@ interface logger {
 interface client {
     send-request: func(value: string) -> bool;
     get-response: func() -> option<string>;
+}
+
+interface failure-detector {
+    use leader-detector.{leader-detector-resource};
+    use network.{node};
+
+    resource failure-detector-resource {
+        constructor(node-id: u64, nodes: list<node>, delta: u64);
+        checker: func() -> option<u64>;
+        heartbeat: func(node: u64);
+    }   
+}
+
+interface leader-detector {
+    use network.{node};
+
+    resource leader-detector-resource {
+        constructor(nodes: list<u64>, local-node-id: u64);
+        suspect: func(node: u64) -> option<u64>;
+        restore: func(node: u64) -> option<u64>;
+        nodes: func() -> list<u64>;
+    }
+}
+
+world failure-detector-world {
+    import logger;
+    import leader-detector;
+    export failure-detector;
+}
+
+world leader-detector-world {
+    import logger;
+    export leader-detector;
 }
 
 world proposer-world {
@@ -310,6 +361,9 @@ world paxos-world {
     /// Needs to be implemented by host
     import network;
     import logger; 
+
+    import failure-detector;
+    // import leader-detector;
 
     export paxos-coordinator;
 }

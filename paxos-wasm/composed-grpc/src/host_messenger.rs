@@ -2,6 +2,7 @@ use crate::grpc_service::create_clients;
 use crate::paxos_bindings;
 use futures::future::join_all;
 use proto::paxos_proto;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tonic;
 
@@ -9,6 +10,14 @@ use tonic;
 pub struct HostMessenger;
 
 impl HostMessenger {
+    pub async fn send_message_forget(
+        endpoints: Vec<String>,
+        proto_msg: paxos_proto::NetworkMessage,
+        message_kind: paxos_bindings::paxos::default::network::NetworkMessageKind)
+        -> () {
+        }
+
+
     /// Sends a proto network message to the given endpoints and returns the aggregated responses.
     pub async fn send_message(
         endpoints: Vec<String>,
@@ -33,7 +42,7 @@ impl HostMessenger {
                 .collect();
 
             // TODO: Find a better way to get responses. For ex. dynamic num nodes, might have quorum before etc.
-            tokio::time::timeout(Duration::from_secs(5), join_all(futures)).await
+            tokio::time::timeout(Duration::from_secs(1), join_all(futures)).await
         }
         .await;
 

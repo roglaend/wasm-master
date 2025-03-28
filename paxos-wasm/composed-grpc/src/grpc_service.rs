@@ -1,5 +1,6 @@
 use crate::paxos_bindings;
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use futures::future::join_all;
 use proto::paxos_proto;
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
@@ -13,21 +14,26 @@ pub struct PaxosService {
 pub async fn create_clients(
     endpoints: Vec<String>,
 ) -> Arc<Mutex<Vec<paxos_proto::paxos_client::PaxosClient<tonic::transport::Channel>>>> {
-    let mut clients_vec = Vec::new();
-    for endpoint in endpoints {
+    // Create a vector of connection futures.
+    let connection_futures = endpoints.into_iter().map(|endpoint| {
         let full_endpoint = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
             endpoint
         } else {
             format!("http://{}", endpoint)
         };
-        let client = paxos_proto::paxos_client::PaxosClient::connect(full_endpoint)
-            .await
-            .unwrap();
-        clients_vec.push(client);
-    }
+        async move {
+            paxos_proto::paxos_client::PaxosClient::connect(full_endpoint).await.ok()
+        }
+    });
+    
+    // Run all connection futures concurrently.
+    let results = join_all(connection_futures).await;
+    
+    // Filter out failed connections.
+    let clients_vec: Vec<_> = results.into_iter().filter_map(|client| client).collect();
+    
     Arc::new(Mutex::new(clients_vec))
 }
-
 #[tonic::async_trait]
 impl paxos_proto::paxos_server::Paxos for PaxosService {
     async fn propose_value(
@@ -39,10 +45,16 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
 
+        // let success = resource
+        //     .call_run_paxos(&mut *store, self.paxos_wasmtime.resource_handle, &req.value)
+        //     .await
+        //     .map_err(|e| Status::internal(format!("Propose failed: {:?}", e)))?;
+
         let success = resource
-            .call_run_paxos(&mut *store, self.paxos_wasmtime.resource_handle, &req.value)
+            .call_client_handle_test(&mut *store, self.paxos_wasmtime.resource_handle, &req.value)
             .await
             .map_err(|e| Status::internal(format!("Propose failed: {:?}", e)))?;
+        
 
         info!("GRPC propose_value: finish (success: {})", success);
         Ok(Response::new(paxos_proto::ProposeResponse { success }))
@@ -52,7 +64,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         &self,
         request: Request<paxos_proto::NetworkMessage>,
     ) -> Result<Response<paxos_proto::DeliverMessageResponse>, Status> {
-        info!("GRPC deliver_message: start");
+        // info!("GRPC deliver_message: start");
         let proto_msg = request.into_inner();
         let wit_msg: paxos_bindings::paxos::default::network::NetworkMessage =
             paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
@@ -65,10 +77,10 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
             .await
             .map_err(|e| Status::internal(format!("Deliver message failed: {:?}", e)))?;
 
-        info!(
-            "GRPC deliver_message: finish (kind: {:?}, status: {:?})",
-            response.kind, response.status
-        );
+        // info!(
+        //     "GRPC deliver_message: finish (kind: {:?}, status: {:?})",
+        //     response.kind, response.status
+        // );
         let success = match response.status {
             paxos_bindings::paxos::default::network::StatusKind::Success => true,
             paxos_bindings::paxos::default::network::StatusKind::Failure => false,
