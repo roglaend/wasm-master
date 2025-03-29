@@ -1,4 +1,5 @@
 use crate::paxos_bindings::paxos::default::logger::Level;
+use crate::paxos_bindings::paxos::default::paxos_types::Node;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use tracing::{debug, error, info, warn};
 /// A host-side logger that writes logs to a node-specific file,
 /// a shared global file, and also keeps an in-memory log with incremental offsets.
 pub struct HostLogger {
-    pub node_id: u64,
+    pub node: Node,
     pub node_file: Mutex<std::fs::File>,
     pub global_file: Arc<Mutex<std::fs::File>>,
     pub log_entries: Mutex<Vec<(u64, String)>>, // (offset, message)
@@ -22,7 +23,7 @@ impl HostLogger {
     /// * `node_id` - The identifier for this node.
     /// * `node_file_path` - The file path for this node’s log (e.g. "./logs/node1.log").
     /// * `global_file` - An Arc‑wrapped Mutex to a global log file.
-    pub fn new_from_workspace(node_id: u64) -> Self {
+    pub fn new_from_workspace(node: Node) -> Self {
         // Compute the workspace directory (the parent of Cargo.toml's directory).
         let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace_dir = binding.parent().expect("Failed to get workspace directory");
@@ -31,7 +32,7 @@ impl HostLogger {
         std::fs::create_dir_all(&logs_dir).expect("Failed to create logs folder");
 
         // Build file paths.
-        let node_file_path = logs_dir.join(format!("node{}.log", node_id));
+        let node_file_path = logs_dir.join(format!("node{}.log", node.node_id));
         let global_file_path = logs_dir.join("global.log");
 
         let node_file_path_str = node_file_path.to_str().expect("Invalid node file path");
@@ -44,21 +45,21 @@ impl HostLogger {
                 .expect("Failed to open global log file"),
         ));
 
-        Self::new(node_id, node_file_path_str, global_file)
+        Self::new(node, node_file_path_str, global_file)
     }
 
     // TODO: Maybe change this later to be per paxos phase logs, and a global log for the node.
     // TODO: Then make the "truly global" log be created by a third
 
     /// Create a new HostLogger given a node ID, node file path, and a shared global file.
-    pub fn new(node_id: u64, node_file_path: &str, global_file: Arc<Mutex<std::fs::File>>) -> Self {
+    pub fn new(node: Node, node_file_path: &str, global_file: Arc<Mutex<std::fs::File>>) -> Self {
         let node_file = OpenOptions::new()
             .append(true)
             .create(true)
             .open(node_file_path)
             .expect("Failed to open node-specific log file");
         HostLogger {
-            node_id,
+            node,
             node_file: Mutex::new(node_file),
             global_file,
             log_entries: Mutex::new(Vec::new()),
@@ -110,14 +111,24 @@ impl HostLogger {
 
     /// Log a message at the specified level.
     fn log(&self, level: Level, msg: String) {
-        let formatted = format!("[node {}] {}", self.node_id, msg);
+        // Build a formatted log string using details from the Node.
+        let formatted = format!(
+            "[node {} | {} | {:?}] {}",
+            self.node.node_id, self.node.address, self.node.role, msg
+        );
+        // TODO: Might be a bit too verbose?
         match level {
             Level::Debug => debug!("{}", formatted),
             Level::Info => info!("{}", formatted),
             Level::Warn => warn!("{}", formatted),
             Level::Error => error!("{}", formatted),
         }
-        let log_line = format!("[node {}][{:?}] {}\n", self.node_id, level, msg);
+        // TODO: Might be a bit too verbose?
+        // Build the log line to be written to file.
+        let log_line = format!(
+            "[node {} | {} | {:?}][{:?}] {}\n",
+            self.node.node_id, self.node.address, self.node.role, level, msg
+        );
         // Write to the node-specific file.
         if let Ok(mut file) = self.node_file.lock() {
             let _ = file.write_all(log_line.as_bytes());

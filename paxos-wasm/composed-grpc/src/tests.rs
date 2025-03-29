@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::host_logger::HostLogger;
+    use crate::paxos_bindings::paxos::default::paxos_types::{Node, PaxosRole};
 
     use std::fs;
     use std::sync::{Arc, Mutex};
@@ -13,7 +14,15 @@ mod tests {
         let global_temp = NamedTempFile::new().expect("failed to create global temp file");
         let global_file = Arc::new(Mutex::new(global_temp.reopen().unwrap()));
 
-        let logger = HostLogger::new(1, node_temp.path().to_str().unwrap(), global_file.clone());
+        let logger = HostLogger::new(
+            Node {
+                node_id: 1,
+                address: "address".to_string(),
+                role: PaxosRole::Coordinator,
+            },
+            node_temp.path().to_str().unwrap(),
+            global_file.clone(),
+        );
 
         logger.log_info("Test info message".to_string());
         logger.log_warn("Test warn message".to_string());
@@ -33,7 +42,15 @@ mod tests {
         let global_temp = NamedTempFile::new().expect("failed to create global temp file");
         let global_file = Arc::new(Mutex::new(global_temp.reopen().unwrap()));
 
-        let logger = HostLogger::new(1, node_temp.path().to_str().unwrap(), global_file.clone());
+        let logger = HostLogger::new(
+            Node {
+                node_id: 2,
+                address: "address 2".to_string(),
+                role: PaxosRole::Proposer,
+            },
+            node_temp.path().to_str().unwrap(),
+            global_file.clone(),
+        );
 
         logger.log_error("Test error message".to_string());
 

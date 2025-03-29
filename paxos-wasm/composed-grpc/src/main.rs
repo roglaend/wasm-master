@@ -4,15 +4,15 @@ mod host_logger;
 mod host_messenger;
 mod paxos_bindings;
 mod paxos_wasm;
-mod translation_layer;
 mod tests;
+mod translation_layer;
 
 use clap::Parser;
 use config::Config;
 use grpc_service::PaxosService;
 use paxos_wasm::PaxosWasmtime;
 use proto::paxos_proto;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU32};
 use tonic::transport::Server;
 
 use tracing::info;
@@ -38,11 +38,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let config = Config::new(args.node_id);
-    let is_leader = config.node_id == config.leader_id;
-    info!("Node id: {}. Is leader: {}.", config.node_id, is_leader);
+    let is_leader = config.node.node_id == config.leader_id;
+    info!("Node: {:?}. Is leader: {}.", config.node, is_leader);
 
-    let paxos_wasmtime = Arc::new(PaxosWasmtime::new(config.node_id, config.remote_nodes).await?);
-    let paxos_service = PaxosService { paxos_wasmtime };
+    let paxos_wasmtime =
+        Arc::new(PaxosWasmtime::new(config.node, config.remote_nodes, is_leader).await?);
+    let paxos_service = PaxosService {
+        client_seq: Arc::new(AtomicU32::new(0)),
+        paxos_wasmtime,
+    };
 
     let addr = config.bind_addr.parse()?;
     info!("gRPC server listening on {}", addr);

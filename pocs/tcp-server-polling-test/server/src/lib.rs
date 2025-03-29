@@ -128,6 +128,8 @@ async fn handle_client(
                 actual_msg, should_sleep
             );
             // TODO: THIS NEEDS TO BE ASYNC TO WORK PROPERLY!!!
+
+            // TODO: OR!!!! WE CAN SEPARATE HANDLE CALL AND HANDLE RETURN INTO TWO SEPARATE CALLS!!!
             let response = handler::handle(&actual_msg, should_sleep); //* This is the imported wasm component */
             let _ = output.write(response.as_bytes());
             println!("Server: response sent back to client.");

@@ -1,5 +1,5 @@
 [package]
-name = "composed-grpc-client"
+name = "modular-grpc-client"
 version = "0.1.0"
 edition = "2024"
 

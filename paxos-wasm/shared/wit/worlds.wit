@@ -1,0 +1,74 @@
+world proposer-world {
+    import logger;
+
+    export proposer;
+}
+
+world acceptor-world {
+    import logger;
+
+    export acceptor;
+}
+
+world learner-world {
+    import logger;
+
+    export learner;
+}
+
+world kv-store-world {
+    import logger;
+
+    export kv-store;
+}
+
+world paxos-world {
+    import proposer-agent;
+
+    // import proposer;
+
+    import acceptor;
+    import learner;
+    import kv-store;
+
+    /// Needs to be implemented by host
+    import network;
+    import logger; 
+
+    export paxos-coordinator;
+}
+
+// world paxos-client-world {
+//     import paxos-coordinator;
+//     export client;
+// }
+
+// world command-client-world {
+//     import client;
+// }
+
+
+world proposer-agent-world {
+    import proposer;
+    import network;
+    import logger;
+
+    export proposer-agent;
+}
+
+world acceptor-agent-world {
+    import acceptor;
+    import network;
+    import logger;
+
+    export acceptor-agent;
+}
+
+world learner-agent-world {
+    import learner;
+    import kv-store;
+    import network;
+    import logger;
+
+    export learner-agent;
+}

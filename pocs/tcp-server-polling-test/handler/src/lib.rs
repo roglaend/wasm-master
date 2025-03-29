@@ -1,4 +1,3 @@
-use std::thread;
 use std::time::Duration;
 use wasi::clocks::monotonic_clock;
 

@@ -1,13 +1,10 @@
 [package]
-name = "composed-grpc"
+name = "modular-grpc"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 proto = { path = "../shared/proto", package = "proto" }
-
-
-tonic = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 prost = "0.11"
 prost-types = "0.11"
@@ -22,5 +19,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 
 [build-dependencies]
-paxos-wasm-utils = { path = "../shared/utils" }
-
+paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }

@@ -57,11 +57,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = response.into_inner();
         info!("Learned entries:");
         for entry in state.learned {
-            info!("  Slot {}: value = {}", entry.slot, entry.value);
+            info!("  Slot {}: value = {:?}", entry.slot, entry.value);
         }
         info!("KV-Store state:");
         for pair in state.kv_state {
-            info!("  {} => {}", pair.key, pair.value);
+            info!("  {} => {:?}", pair.key, pair.value);
         }
     }
     Ok(())

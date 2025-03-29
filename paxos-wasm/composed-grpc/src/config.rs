@@ -1,4 +1,4 @@
-use crate::paxos_bindings::paxos::default::network::Node;
+use crate::paxos_bindings::paxos::default::paxos_types::{Node, PaxosRole::Coordinator};
 
 /// Shared configuration values for all nodes.
 pub struct SharedConfig {
@@ -45,7 +45,7 @@ impl SharedConfig {
 
 /// Complete configuration including both shared and node-specific values.
 pub struct Config {
-    pub node_id: u64,
+    pub node: Node,
     pub bind_addr: String,
     pub remote_nodes: Vec<Node>,
     pub leader_id: u64,
@@ -70,20 +70,28 @@ impl Config {
         // Our bind address is the endpoint corresponding to our node_id (1-indexed).
         let bind_addr = shared.endpoints[(node_id - 1) as usize].clone();
 
-        // Create a Node for every endpoint that is not our bind address.
+        // Build the Node for this current node.
+        let current_node = Node {
+            node_id,
+            address: bind_addr.clone(),
+            role: Coordinator,
+        };
+
+        // Create a Node for every endpoint except for the current one.
         let remote_nodes: Vec<Node> = shared
             .endpoints
             .iter()
             .enumerate()
             .filter(|(i, _)| *i != (node_id as usize - 1))
             .map(|(i, ep)| Node {
-                id: i as u64 + 1,
+                node_id: i as u64 + 1,
                 address: ep.clone(),
+                role: Coordinator,
             })
             .collect();
 
         Self {
-            node_id,
+            node: current_node,
             bind_addr,
             remote_nodes,
             leader_id: shared.leader_id,

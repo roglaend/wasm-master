@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Default server addresses (adjust if needed)
-LEADER_NODE_ADDR="http://127.0.0.1:50051"
+LEADER_NODE_ADDR="http://127.0.0.1:50053" # TODO: How to make this dynamic for the client?
 NON_LEADER_NODE_ADDR="http://127.0.0.1:50052"
 
 # Build the client once in release mode.
