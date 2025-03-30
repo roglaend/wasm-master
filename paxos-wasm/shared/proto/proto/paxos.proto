@@ -75,6 +75,7 @@ message AcceptedPayload {
   uint64 slot = 1;
   uint64 ballot = 2;
   bool success = 3;
+  Value value = 4;
 }
 
 // Learn message used to notify that a proposal has been chosen.

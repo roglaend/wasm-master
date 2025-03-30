@@ -15,7 +15,7 @@ bindings::export!(MyProposer with_types_in bindings);
 use bindings::exports::paxos::default::proposer::{Guest, GuestProposerResource, ProposerState};
 use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{
-    Accepted, Ballot, ClientRequest, Promise, Proposal, Slot, Value,
+    Accepted, Ballot, ClientRequest, Promise, Proposal, Slot, Value, Accept, Prepare, Learn
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareOutcome, PrepareResult};
 
@@ -35,6 +35,12 @@ pub struct MyProposerResource {
 
     pending_client_requests: RefCell<VecDeque<ClientRequest>>,
     in_flight: RefCell<HashMap<Slot, Proposal>>, //* Per instance (slot) proposals */
+
+    in_flight_accepts: RefCell<VecDeque<Accept>>,
+    adu: Cell<u64>,
+    
+    promises: RefCell<Vec<Promise>>,
+    learns: RefCell<HashMap<u64, Vec<Learn>>>
 }
 
 impl MyProposerResource {
@@ -63,6 +69,12 @@ impl GuestProposerResource for MyProposerResource {
 
             pending_client_requests: RefCell::new(VecDeque::new()),
             in_flight: RefCell::new(HashMap::new()),
+
+            in_flight_accepts: RefCell::new(VecDeque::new()),
+            adu: Cell::new(0),
+            
+            promises: RefCell::new(Vec::new()),
+            learns: RefCell::new(HashMap::new()),
         }
     }
 
@@ -300,5 +312,118 @@ impl GuestProposerResource for MyProposerResource {
             logger::log_warn("[Core Proposer] Not leader; resign operation aborted.");
             false
         }
+    }
+
+
+    fn create_prepare(&self) -> Prepare {
+        let prepare = Prepare {
+            slot: self.adu.get() + 1,
+            ballot: self.current_ballot.get()
+        };
+        prepare
+    }
+
+    fn register_promise(&self, promise: Promise) -> bool {
+        if promise.ballot != self.current_ballot.get() {
+            return  false;
+        }
+        self.promises.borrow_mut().push(promise);
+        true
+    }
+
+    // TODO : should process similar to PrepareQF which returns all slots > prepare.slot acceptors have accepted
+    // TODO: + also the last logic inside prpoposer runphaseone which appends them to a priority queue to get new leader uptospeed
+    fn process_promises(&self) -> bool {
+        if self.promises.borrow().len() < self.quorum() as usize {
+            logger::log_info("[Core Proposer] No quorum of promises");
+            return false;
+        }
+        true
+    }
+
+    fn register_learn(&self, learn: Learn) -> bool {
+        self.learns
+            .borrow_mut()
+            .entry(learn.slot)
+            .or_default()
+            .push(learn);
+        true
+    }
+
+
+    fn create_accept(&self) -> Option<Accept> {
+        // if !self.is_leader.get() {
+        //     logger::log_warn("[Core Proposer] Not leader; proposal creation aborted.");
+        //     return None;
+        // }
+
+        // Should take have priority queue for handling the leader change thingy
+
+        let client_req = match self.pending_client_requests.borrow_mut().pop_front() {
+            Some(cr) => cr,
+            None => {
+                logger::log_info("[Core Proposer] No pending client requests available.");
+                return None;
+            }
+        };
+
+        // Assign the next available slot.
+        let slot = self.current_slot.get();
+        self.current_slot.set(slot + 1);
+
+        let prop = Accept {
+            ballot: self.current_ballot.get(),
+            slot,
+            value: client_req.value,
+        };
+
+        // Create an in-flight entry with accept
+        self.in_flight_accepts.borrow_mut().push_back(prop.clone());
+
+        logger::log_info(&format!(
+            "[Core Proposer] Created proposal: ballot = {}, slot = {}, value = '{:?}'.",
+            prop.ballot, prop.slot, prop.value,
+        ));
+
+        Some(prop)
+    }
+
+    
+    // TODO : should process similar to AcceptQF
+    fn process_learns(&self) -> Option<Learn> {
+        let mut queue = self.in_flight_accepts.borrow_mut();
+        if let Some(next_accept) = queue.pop_front() {
+            logger::log_info(&format!(
+                "[Core Proposer] Checking for learns for slot = {}",
+                next_accept.slot
+            ));
+            
+            let learns_map = self.learns.borrow();
+            if let Some(learns_vec) = learns_map.get(&next_accept.slot) {
+                if learns_vec.len() < self.quorum() as usize {
+                    // Push back since quorum not met
+                    logger::log_info(&format!(
+                        "[Core Proposer] Quorum not reached yet for slot = {}",
+                        next_accept.slot
+                    ));
+                    drop(queue);
+                    self.in_flight_accepts.borrow_mut().push_front(next_accept);
+                    return None;
+                }
+                return learns_vec.first().cloned();
+            } else {
+                logger::log_info(&format!(
+                    "[Core Proposer] No learns yet for slot = {}",
+                    next_accept.slot
+                ));
+                drop(queue);
+                self.in_flight_accepts.borrow_mut().push_front(next_accept);
+            }
+        }
+        None
+    }
+
+    fn advance_adu(&self) {
+        self.adu.set(self.adu.get() + 1);
     }
 }

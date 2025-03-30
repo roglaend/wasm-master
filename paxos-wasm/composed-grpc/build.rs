@@ -12,7 +12,7 @@ fn main() {
     let socket = "paxos_coordinator";
 
     // The output composite WASM module will be named composed_paxos_coordinator.wasm.
-    let output = "composed_paxos_coordinator";
+    let output = "composed_paxos_coordinator-runloop";
 
     build_and_plug(target_triple, &build_list, &plugs, socket, output);
 }

@@ -1,3 +1,5 @@
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod bindings {
@@ -17,7 +19,7 @@ use bindings::exports::paxos::default::proposer_agent::{
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientRequest, Node, PaxosRole, Prepare, Promise, Proposal, Slot,
-    Value,
+    Value, Learn,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult};
 use bindings::paxos::default::{logger, network, proposer::ProposerResource};
@@ -32,6 +34,8 @@ pub struct MyProposerAgentResource {
     node: Node,
     acceptors: Vec<Node>,
     proposer: Arc<ProposerResource>,
+
+    is_leader: Cell<bool>
 }
 
 impl GuestProposerAgentResource for MyProposerAgentResource {
@@ -59,6 +63,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             node,
             acceptors,
             proposer,
+            is_leader: Cell::new(is_leader)
         }
     }
 
@@ -226,6 +231,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                         slot: acc_payload.slot,
                         ballot: acc_payload.ballot,
                         success: acc_payload.success,
+                        value: acc_payload.value
                     })
                 } else {
                     logger::log_warn(
@@ -270,23 +276,27 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     "[Proposer Agent] Handling PROMISE: ballot={}, accepted={:?}",
                     payload.ballot, payload.accepted
                 ));
-                // TODO: Perform the necessary task here to keep track of all incoming promises for a slot when using "fire-and-forget"
-                let _result = true;
-                // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
+                
+                self.proposer.register_promise(&payload);
 
                 NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore, // TODO: No message to send back anyway?
                 }
+
             }
             MessagePayload::Accepted(payload) => {
                 logger::log_info(&format!(
-                    "[Proposer Agent] Handling ACCEPTED: slot={}, ballot={}, success={}",
-                    payload.slot, payload.ballot, payload.success
+                    "[Proposer Agent] Handling ACCEPTED: slot={}, ballot={}",
+                    payload.slot, payload.ballot
                 ));
-                // TODO: Perform the necessary task here to keep track of all the incoming accepted messages when using "fire-and-forget"
-                let _result = true;
-                // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
+                let learn = Learn {
+                    slot: payload.slot,
+                    ballot: payload.ballot,
+                    value: payload.value
+                };
+
+                self.proposer.register_learn(&learn);
 
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -322,4 +332,65 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
         }
     }
+
+    fn send_prepare(&self, prepare: Prepare) {
+        let message = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Prepare(prepare)
+        };
+
+        network::send_message_forget(&self.acceptors, &message)
+    }
+    
+    fn send_accept(&self, accept: Accept) {
+        let message = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Accept(accept)
+        };
+
+        network::send_message_forget(&self.acceptors, &message)
+    }
+
+    fn send_commit(&self, learn: Learn) -> () {
+        
+        let message = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Learn(learn)
+        };
+
+        network::send_message_forget(&self.acceptors, &message)
+    }
+
+    fn register_promise(&self, promise: Promise) {
+        self.proposer.register_promise(&promise);
+    }
+
+    fn register_learn(&self, learn: Learn) {
+        self.proposer.register_learn(&learn);
+    }
+
+    fn create_prepare(&self) -> Prepare {
+        self.proposer.create_prepare()
+    }
+
+    fn create_accept(&self) -> Option<Accept> {
+        self.proposer.create_accept()
+    }
+
+    fn process_promises(&self) -> bool {
+        self.proposer.process_promises()
+    }
+
+    fn process_learns(&self) -> Option<Learn> {
+        self.proposer.process_learns()
+    }
+
+    fn advance_adu(&self) {
+        self.proposer.advance_adu();
+    }
+
+    fn is_leader(&self) -> bool {
+        self.is_leader.get()
+    }
+
 }

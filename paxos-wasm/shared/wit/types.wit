@@ -82,6 +82,7 @@ interface paxos-types {
         slot: u64,
         ballot: u64,
         success: bool,
+        value: value
     }
 
     /// Learn message used by acceptors to notify that a proposal has been chosen,

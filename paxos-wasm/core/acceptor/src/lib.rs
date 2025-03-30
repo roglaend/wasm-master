@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 pub mod bindings {
@@ -15,7 +15,7 @@ bindings::export!(MyAcceptor with_types_in bindings);
 use bindings::exports::paxos::default::acceptor::{Guest, GuestAcceptorResource};
 use bindings::paxos::default::acceptor_types::{AcceptedEntry, AcceptorState, PromiseEntry};
 use bindings::paxos::default::logger;
-use bindings::paxos::default::paxos_types::{Ballot, Slot};
+use bindings::paxos::default::paxos_types::{Ballot, Slot, Prepare, Promise, Accept, Learn, Accepted};
 
 pub struct MyAcceptor;
 
@@ -29,6 +29,11 @@ pub struct MyAcceptorResource {
     promises: RefCell<HashMap<Slot, Ballot>>,
     // Map from slot to the accepted proposal (if any).
     accepted: RefCell<HashMap<u64, AcceptedEntry>>,
+
+
+    rnd: Cell<u64>, //highest round the acceptor has promised in
+    highest_seen: Cell<u64>,
+    accepted2: RefCell<HashMap<u64, AcceptedEntry>>,
 }
 
 impl GuestAcceptorResource for MyAcceptorResource {
@@ -37,6 +42,11 @@ impl GuestAcceptorResource for MyAcceptorResource {
         Self {
             promises: RefCell::new(HashMap::new()),
             accepted: RefCell::new(HashMap::new()),
+
+            rnd: Cell::new(0),
+            highest_seen: Cell::new(0),
+            
+            accepted2: RefCell::new(HashMap::new())
         }
     }
 
@@ -118,5 +128,57 @@ impl GuestAcceptorResource for MyAcceptorResource {
             ));
             false
         }
+    }
+
+    fn handle_prepare(&self, prepare: Prepare) -> Option<Promise> {
+        if prepare.slot > self.highest_seen.get() {
+            self.highest_seen.set(prepare.slot);
+        }
+
+        if prepare.ballot < self.rnd.get() {
+            return None
+        }
+
+        self.rnd.set(prepare.ballot);
+
+        let promise = Promise { 
+            ballot: self.rnd.get(),
+            accepted: Vec::new()
+        };
+
+        // include accepted values greater than prepare slot (means values that were accepted but never committed)
+        Some(promise)
+
+        // fire_and fo
+
+    }
+
+    fn handle_accept(&self, accept: Accept) -> Option<Accepted> {
+        if accept.slot < self.highest_seen.get() && accept.ballot < self.rnd.get() {
+            return  None;
+        }
+
+        self.highest_seen.set(accept.slot);
+
+        if accept.ballot < self.rnd.get() {
+            return  None;
+        }
+
+        let accepted_value = AcceptedEntry {
+            slot: accept.slot,
+            ballot: accept.ballot,
+            value: accept.value.clone()
+        };
+
+        self.accepted2.borrow_mut().insert(accept.slot, accepted_value);
+
+        let accepted = Accepted {
+            slot: accept.slot,
+            ballot: accept.ballot,
+            success: true,
+            value: accept.value
+        };
+        Some(accepted)
+
     }
 }

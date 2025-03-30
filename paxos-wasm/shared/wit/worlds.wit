@@ -38,6 +38,22 @@ world paxos-world {
     export paxos-coordinator;
 }
 
+world paxos-world-runloop {
+    import proposer-agent;
+
+    // import proposer;
+
+    import acceptor;
+    import learner;
+    import kv-store;
+
+    /// Needs to be implemented by host
+    import network;
+    import logger; 
+
+    export paxos-coordinator-runloop;
+}
+
 // world paxos-client-world {
 //     import paxos-coordinator;
 //     export client;

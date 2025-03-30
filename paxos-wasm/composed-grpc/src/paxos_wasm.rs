@@ -118,6 +118,13 @@ impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
         "Hello".to_string()
     }
 
+    async fn send_message_forget(&mut self,
+        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
+        message: paxos_bindings::paxos::default::network::NetworkMessage
+    ) -> () {
+        todo!()
+    }
+
     async fn send_message(
         &mut self,
         nodes: Vec<paxos_bindings::paxos::default::network::Node>,

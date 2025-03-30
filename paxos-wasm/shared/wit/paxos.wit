@@ -2,7 +2,7 @@ package paxos:default;
 
 /// The core proposer contains all Paxos logic for proposals.
 interface proposer {
-    use paxos-types.{slot, ballot, value, client-request, proposal, promise, accepted};
+    use paxos-types.{slot, ballot, value, client-request, proposal, promise, accepted, prepare, accept, learn};
     use proposer-types.{prepare-result, accept-result, proposer-state};
 
     resource proposer-resource {
@@ -36,11 +36,21 @@ interface proposer {
 
         /// Relinquishes leadership.
         resign-leader: func() -> bool;
+
+
+
+        advance-adu: func();
+        create-prepare: func() -> prepare;
+        create-accept: func() -> option<accept>;
+        register-promise: func(promise: promise) -> bool;
+        register-learn: func(learn: learn) -> bool;
+        process-promises: func() -> bool;
+        process-learns: func() -> option<learn>;
     }
 }
 
 interface acceptor {
-    use paxos-types.{slot, ballot, value, learn};
+    use paxos-types.{slot, ballot, value, learn, prepare, promise, accept, accepted};
     use acceptor-types.{accepted-entry, acceptor-state};
 
 
@@ -50,6 +60,9 @@ interface acceptor {
         prepare: func(slot: slot, ballot: ballot) -> bool;
         accept: func(entry: accepted-entry) -> bool;
         // commit: func(slot: slot, ballot: ballot) -> learn
+
+        handle-prepare: func(prepare: prepare) -> option<promise>;
+        handle-accept: func(accept: accept) -> option<accepted>;
     }
 }
 
@@ -98,6 +111,7 @@ interface network {
 
     send-hello: func() -> string;
     send-message: func(nodes: list<node>, message: network-message) -> list<network-message>;
+    send-message-forget: func(nodes: list<node>, message: network-message);
 }
 
 interface paxos-coordinator {
@@ -151,6 +165,54 @@ interface paxos-coordinator {
     } 
 }
 
+interface paxos-coordinator-runloop {
+    use paxos-types.{node, slot, ballot, client-request, value};
+    use proposer-types.{prepare-result, accept-result};
+    use network-types.{network-message};
+    use learner-types.{learned-entry};
+    use kv-store-types.{kv-pair};
+
+    record learn-result {
+        learned-value: value,
+        quorum: u64,
+    }
+
+    record election-result {
+        leader: node,
+        quorum: u64,
+    }
+
+    record paxos-state {
+        learned: list<learned-entry>,
+        kv-state: list<kv-pair>,
+    }
+
+    resource paxos-coordinator-runloop-resource {
+        constructor(node: node, nodes: list<node>, is-leader: bool);
+
+        /// Handles network messages.
+        handle-message: func(message: network-message) -> network-message;
+
+        /// Retrieves the currently learned value.
+        get-learned-value: func() -> value;
+
+        /// Orchestrates the entire Paxos protocol.
+        paxos-run-loop: func();
+
+        prepare-phase: func();
+        
+        promise-phase: func() -> bool;
+
+        accept-phase: func() -> bool;
+
+        commit-phase: func() -> bool;
+
+        /// Expose the current Paxos state (learned results and kv-store).
+        get-state: func() -> paxos-state;
+    } 
+}
+
+
 interface logger {
     enum level {
         debug,
@@ -175,7 +237,7 @@ interface logger {
 /// THIS IS FOR THE MODULAR GRPC MODEL ///
 
 interface proposer-agent {
-    use paxos-types.{node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted};
+    use paxos-types.{node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, learn};
     use proposer-types.{prepare-result, accept-result};
     use network-types.{network-message};
 
@@ -208,6 +270,20 @@ interface proposer-agent {
 
         /// Handles incoming network messages relevant to the proposer.
         handle-message: func(message: network-message) -> network-message;
+
+        create-prepare: func() -> prepare;
+        create-accept: func() -> option<accept>;
+        send-prepare: func(prepare: prepare);
+        send-accept: func(accept: accept);
+        send-commit: func(learn: learn);
+        register-promise: func(promise: promise);
+        register-learn: func(learn: learn);
+
+        process-promises: func() -> bool;
+        process-learns: func() -> option<learn>;
+
+        advance-adu: func();
+        is-leader: func() -> bool;
     }
 }
 
