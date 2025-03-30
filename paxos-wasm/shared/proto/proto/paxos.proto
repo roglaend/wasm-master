@@ -86,55 +86,28 @@ message LearnPayload {
 
 // Heartbeat message.
 message HeartbeatPayload {
-  uint64 timestamp = 1;
+  Node sender = 1;
+  uint64 timestamp = 2;
 }
 
 // Empty message.
 message Empty {}
 
-// Top-level network message.
+// The unified network message.
 message NetworkMessage {
-  enum NetworkMessageKind {
-    PREPARE = 0;
-    PROMISE = 1;
-    ACCEPT = 2;
-    ACCEPTED = 3;
-    LEARN = 4;
-    HEARTBEAT = 5;
-    IGNORE = 6;
-  }
   Node sender = 1;
-  NetworkMessageKind kind = 2;
+  // The oneof 'payload' encodes the variant. 
+  // The field that is set determines the message type.
   oneof payload {
-    PreparePayload prepare = 3;
-    PromisePayload promise = 4;
-    AcceptPayload accept = 5;
-    AcceptedPayload accepted = 6;
-    LearnPayload learn = 7;
-    HeartbeatPayload heartbeat = 8;
-    Empty ignore = 9;
+    PreparePayload prepare = 2;
+    PromisePayload promise = 3;
+    AcceptPayload accept = 4;
+    AcceptedPayload accepted = 5;
+    LearnPayload learn = 6;
+    // LearnPayload learn_ack = 7;
+    HeartbeatPayload heartbeat = 7;
+    Empty ignore = 8;
   }
-}
-
-// Network response includes sender info, status, and payload.
-message NetworkResponse {
-  enum StatusKind {
-    SUCCESS = 0;
-    FAILURE = 1;
-    IGNORED = 2;
-  }
-  Node sender = 1;
-  NetworkMessage.NetworkMessageKind kind = 2;
-  oneof payload {
-    PreparePayload prepare = 3;
-    PromisePayload promise = 4;
-    AcceptPayload accept = 5;
-    AcceptedPayload accepted = 6;
-    LearnPayload learn = 7;
-    HeartbeatPayload heartbeat = 8;
-    Empty ignore = 9;
-  }
-  StatusKind status = 10;
 }
 
 // Learned entry and state reporting.
@@ -158,7 +131,7 @@ service Paxos {
   // Propose a new value.
   rpc ProposeValue (ProposeRequest) returns (ProposeResponse);
   // Deliver a network message.
-  rpc DeliverMessage (NetworkMessage) returns (NetworkResponse);
+  rpc DeliverMessage (NetworkMessage) returns (NetworkMessage);
   // Retrieve the currently learned value.
   rpc GetValue (Empty) returns (GetValueResponse);
   // Retrieve the complete Paxos state.

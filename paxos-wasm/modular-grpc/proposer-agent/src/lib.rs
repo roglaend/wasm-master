@@ -14,9 +14,7 @@ bindings::export!(MyProposerAgent with_types_in bindings);
 use bindings::exports::paxos::default::proposer_agent::{
     Guest as ProposerGuest, GuestProposerAgentResource,
 };
-use bindings::paxos::default::network_types::{
-    MessagePayload, NetworkMessage, NetworkMessageKind, NetworkResponse, StatusKind,
-};
+use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientRequest, Node, PaxosRole, Prepare, Promise, Proposal, Slot,
     Value,
@@ -157,7 +155,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let prepare = Prepare { slot, ballot };
         let msg = NetworkMessage {
             sender: self.node.clone(),
-            kind: NetworkMessageKind::Prepare,
             payload: MessagePayload::Prepare(prepare),
         };
         logger::log_debug(&format!(
@@ -173,7 +170,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
         responses
             .into_iter()
-            .filter(|resp| resp.status == StatusKind::Success)
             .filter_map(|resp| {
                 if let MessagePayload::Promise(prom_payload) = resp.payload {
                     Some(Promise {
@@ -208,7 +204,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         };
         let msg = NetworkMessage {
             sender: self.node.clone(),
-            kind: NetworkMessageKind::Accept,
             payload: MessagePayload::Accept(accept),
         };
         logger::log_info(&format!(
@@ -225,7 +220,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         // Process responses by filtering for success and converting Accepted payloads.
         responses
             .into_iter()
-            .filter(|resp| resp.status == StatusKind::Success)
             .filter_map(|resp| {
                 if let MessagePayload::Accepted(acc_payload) = resp.payload {
                     Some(Accepted {
@@ -262,7 +256,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         result
     }
 
-    fn handle_message(&self, message: NetworkMessage) -> NetworkResponse {
+    fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
         logger::log_info(&format!(
             "[Proposer Agent] Received network message: {:?}",
             message
@@ -270,99 +264,60 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
         // TODO: Fully implement and make use of the handling of incoming Promise and Accepted, when we use fire and forget messaging
 
-        match message.kind {
-            NetworkMessageKind::Promise => {
-                if let MessagePayload::Promise(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Proposer Agent] Handling PROMISE: ballot={}, accepted={:?}",
-                        payload.ballot, payload.accepted
-                    ));
-                    // TODO: Perform the necessary task here to keep track of all incoming promises for a slot
-                    let result = true;
-                    // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
-
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Promise,
-                        payload: MessagePayload::Promise(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
-                } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Promise,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-
-            NetworkMessageKind::Accepted => {
-                if let MessagePayload::Accepted(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Proposer Agent] Handling ACCEPTED: slot={}, ballot={}, success={}",
-                        payload.slot, payload.ballot, payload.success
-                    ));
-                    // TODO: Perform the necessary task here to keep track of all the incoming accepted messages
-                    let result = true;
-                    // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
-
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Accepted,
-                        payload: MessagePayload::Accepted(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
-                } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Accepted,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-
-            NetworkMessageKind::Heartbeat => {
-                if let MessagePayload::Heartbeat(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Proposer Agent] Handling HEARTBEAT: timestamp={}",
-                        payload.timestamp
-                    ));
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Heartbeat,
-                        payload: MessagePayload::Heartbeat(payload),
-                        status: StatusKind::Success,
-                    }
-                } else {
-                    logger::log_warn("[Proposer Agent] Missing or invalid HEARTBEAT payload.");
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Heartbeat,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-            other_kind => {
-                logger::log_warn(&format!(
-                    "[Proposer Agent] Received irrelevant message kind: {:?}",
-                    other_kind
+        match message.payload {
+            MessagePayload::Promise(payload) => {
+                logger::log_info(&format!(
+                    "[Proposer Agent] Handling PROMISE: ballot={}, accepted={:?}",
+                    payload.ballot, payload.accepted
                 ));
-                NetworkResponse {
+                // TODO: Perform the necessary task here to keep track of all incoming promises for a slot when using "fire-and-forget"
+                let _result = true;
+                // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
+
+                NetworkMessage {
                     sender: self.node.clone(),
-                    kind: NetworkMessageKind::Ignore,
-                    payload: MessagePayload::Empty,
-                    status: StatusKind::Ignored,
+                    payload: MessagePayload::Ignore, // TODO: No message to send back anyway?
+                }
+            }
+            MessagePayload::Accepted(payload) => {
+                logger::log_info(&format!(
+                    "[Proposer Agent] Handling ACCEPTED: slot={}, ballot={}, success={}",
+                    payload.slot, payload.ballot, payload.success
+                ));
+                // TODO: Perform the necessary task here to keep track of all the incoming accepted messages when using "fire-and-forget"
+                let _result = true;
+                // TODO: Ensure to factor out logic so we can reuse it when we wait for responses and handle them synchronously.
+
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore, // TODO: No message to send back anyway?
+                }
+            }
+            MessagePayload::Heartbeat(payload) => {
+                logger::log_info(&format!(
+                    "[Proposer Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
+                    payload.sender, payload.timestamp
+                ));
+                // Simply echo the heartbeat payload.
+                let response_payload = Heartbeat {
+                    sender: self.node.clone(),
+                    // timestamp = ... // TODO: Have a consistent way to define these?
+                    timestamp: payload.timestamp,
+                };
+                // TODO: Have a dedicated heartbeat ack payload type?
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Heartbeat(response_payload),
+                }
+            }
+            other_message => {
+                logger::log_warn(&format!(
+                    "[Proposer Agent] Received irrelevant message type: {:?}",
+                    other_message
+                ));
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore,
                 }
             }
         }

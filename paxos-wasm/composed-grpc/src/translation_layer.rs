@@ -20,6 +20,7 @@ impl From<paxos_types::Node> for paxos_proto::Node {
         }
     }
 }
+
 impl TryFrom<paxos_proto::Node> for paxos_types::Node {
     type Error = String;
     fn try_from(proto_node: paxos_proto::Node) -> Result<Self, Self::Error> {
@@ -49,6 +50,7 @@ impl From<paxos_types::Value> for paxos_proto::Value {
         }
     }
 }
+
 impl From<paxos_proto::Value> for paxos_types::Value {
     fn from(value: paxos_proto::Value) -> Self {
         paxos_types::Value {
@@ -83,134 +85,77 @@ impl From<paxos_proto::PValue> for paxos_types::PValue {
     }
 }
 
-// Conversion from internal network_types::NetworkMessage to proto::NetworkMessage.
-impl From<network_types::NetworkMessage> for paxos_proto::NetworkMessage {
-    fn from(wit_msg: network_types::NetworkMessage) -> Self {
-        let kind = match wit_msg.kind {
-            network_types::NetworkMessageKind::Prepare => {
-                paxos_proto::network_message::NetworkMessageKind::Prepare as i32
-            }
-            network_types::NetworkMessageKind::Promise => {
-                paxos_proto::network_message::NetworkMessageKind::Promise as i32
-            }
-            network_types::NetworkMessageKind::Accept => {
-                paxos_proto::network_message::NetworkMessageKind::Accept as i32
-            }
-            network_types::NetworkMessageKind::Accepted => {
-                paxos_proto::network_message::NetworkMessageKind::Accepted as i32
-            }
-            network_types::NetworkMessageKind::Learn => {
-                paxos_proto::network_message::NetworkMessageKind::Learn as i32
-            }
-            network_types::NetworkMessageKind::Heartbeat => {
-                paxos_proto::network_message::NetworkMessageKind::Heartbeat as i32
-            }
-            network_types::NetworkMessageKind::Ignore => {
-                paxos_proto::network_message::NetworkMessageKind::Ignore as i32
-            }
-        };
-
-        let payload = match wit_msg.payload {
-            network_types::MessagePayload::Prepare(prep) => Some(
+// Conversion for MessagePayload
+impl From<network_types::MessagePayload> for paxos_proto::network_message::Payload {
+    fn from(payload: network_types::MessagePayload) -> Self {
+        match payload {
+            network_types::MessagePayload::Prepare(prep) => {
                 paxos_proto::network_message::Payload::Prepare(paxos_proto::PreparePayload {
+                    slot: prep.slot,
+                    ballot: prep.ballot,
+                })
+            }
+            network_types::MessagePayload::Promise(prom) => {
+                let accepted = prom.accepted.into_iter().map(Into::into).collect();
+                paxos_proto::network_message::Payload::Promise(paxos_proto::PromisePayload {
+                    ballot: prom.ballot,
+                    accepted,
+                })
+            }
+            network_types::MessagePayload::Accept(acc) => {
+                paxos_proto::network_message::Payload::Accept(paxos_proto::AcceptPayload {
+                    slot: acc.slot,
+                    ballot: acc.ballot,
+                    value: Some(acc.value.into()),
+                })
+            }
+            network_types::MessagePayload::Accepted(accd) => {
+                paxos_proto::network_message::Payload::Accepted(paxos_proto::AcceptedPayload {
+                    slot: accd.slot,
+                    ballot: accd.ballot,
+                    success: accd.success,
+                })
+            }
+            network_types::MessagePayload::Learn(learn) => {
+                paxos_proto::network_message::Payload::Learn(paxos_proto::LearnPayload {
+                    slot: learn.slot,
+                    ballot: learn.ballot,
+                    value: Some(learn.value.into()),
+                })
+            }
+            network_types::MessagePayload::Heartbeat(hb) => {
+                paxos_proto::network_message::Payload::Heartbeat(paxos_proto::HeartbeatPayload {
+                    sender: Some(hb.sender.into()),
+                    timestamp: hb.timestamp,
+                })
+            }
+            network_types::MessagePayload::Ignore => {
+                paxos_proto::network_message::Payload::Ignore(proto::paxos_proto::Empty {})
+            }
+        }
+    }
+}
+
+impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePayload {
+    type Error = String;
+    fn try_from(proto_payload: paxos_proto::network_message::Payload) -> Result<Self, Self::Error> {
+        match proto_payload {
+            paxos_proto::network_message::Payload::Prepare(prep) => Ok(
+                network_types::MessagePayload::Prepare(paxos_types::Prepare {
                     slot: prep.slot,
                     ballot: prep.ballot,
                 }),
             ),
-            network_types::MessagePayload::Promise(prom) => {
+            paxos_proto::network_message::Payload::Promise(prom) => {
                 let accepted = prom.accepted.into_iter().map(Into::into).collect();
-                Some(paxos_proto::network_message::Payload::Promise(
-                    paxos_proto::PromisePayload {
+                Ok(network_types::MessagePayload::Promise(
+                    paxos_types::Promise {
                         ballot: prom.ballot,
                         accepted,
                     },
                 ))
             }
-            network_types::MessagePayload::Accept(acc) => Some(
-                paxos_proto::network_message::Payload::Accept(paxos_proto::AcceptPayload {
-                    slot: acc.slot,
-                    ballot: acc.ballot,
-                    value: Some(acc.value.into()),
-                }),
-            ),
-            network_types::MessagePayload::Accepted(accd) => Some(
-                paxos_proto::network_message::Payload::Accepted(paxos_proto::AcceptedPayload {
-                    slot: accd.slot,
-                    ballot: accd.ballot,
-                    success: accd.success,
-                }),
-            ),
-            network_types::MessagePayload::Learn(learn) => Some(
-                paxos_proto::network_message::Payload::Learn(paxos_proto::LearnPayload {
-                    slot: learn.slot,
-                    ballot: learn.ballot,
-                    value: Some(learn.value.into()),
-                }),
-            ),
-            network_types::MessagePayload::Heartbeat(hb) => Some(
-                paxos_proto::network_message::Payload::Heartbeat(paxos_proto::HeartbeatPayload {
-                    timestamp: hb.timestamp,
-                }),
-            ),
-            network_types::MessagePayload::Empty => None,
-        };
-
-        let sender = Some(wit_msg.sender.into());
-        paxos_proto::NetworkMessage {
-            sender,
-            kind,
-            payload,
-        }
-    }
-}
-
-impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
-    type Error = String;
-    fn try_from(proto_msg: paxos_proto::NetworkMessage) -> Result<Self, Self::Error> {
-        let kind = match proto_msg.kind {
-            x if x == paxos_proto::network_message::NetworkMessageKind::Prepare as i32 => {
-                network_types::NetworkMessageKind::Prepare
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Promise as i32 => {
-                network_types::NetworkMessageKind::Promise
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Accept as i32 => {
-                network_types::NetworkMessageKind::Accept
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Accepted as i32 => {
-                network_types::NetworkMessageKind::Accepted
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Learn as i32 => {
-                network_types::NetworkMessageKind::Learn
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Heartbeat as i32 => {
-                network_types::NetworkMessageKind::Heartbeat
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Ignore as i32 => {
-                network_types::NetworkMessageKind::Ignore
-            }
-            _ => return Err("Unknown network message kind".to_string()),
-        };
-
-        let proto_sender = proto_msg.sender.ok_or("Missing sender in proto message")?;
-        let sender = paxos_types::Node::try_from(proto_sender)
-            .map_err(|e| format!("Failed to convert Node: {}", e))?;
-
-        let payload = match proto_msg.payload {
-            Some(paxos_proto::network_message::Payload::Prepare(prep)) => {
-                network_types::MessagePayload::Prepare(paxos_types::Prepare {
-                    slot: prep.slot,
-                    ballot: prep.ballot,
-                })
-            }
-            Some(paxos_proto::network_message::Payload::Promise(prom)) => {
-                let accepted = prom.accepted.into_iter().map(Into::into).collect();
-                network_types::MessagePayload::Promise(paxos_types::Promise {
-                    ballot: prom.ballot,
-                    accepted,
-                })
-            }
-            Some(paxos_proto::network_message::Payload::Accept(acc)) => {
+            paxos_proto::network_message::Payload::Accept(acc) => {
                 let value = acc
                     .value
                     .map(Into::into)
@@ -218,20 +163,20 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
                         is_noop: true,
                         command: None,
                     });
-                network_types::MessagePayload::Accept(paxos_types::Accept {
+                Ok(network_types::MessagePayload::Accept(paxos_types::Accept {
                     slot: acc.slot,
                     ballot: acc.ballot,
                     value,
-                })
+                }))
             }
-            Some(paxos_proto::network_message::Payload::Accepted(accd)) => {
+            paxos_proto::network_message::Payload::Accepted(accd) => Ok(
                 network_types::MessagePayload::Accepted(paxos_types::Accepted {
                     slot: accd.slot,
                     ballot: accd.ballot,
                     success: accd.success,
-                })
-            }
-            Some(paxos_proto::network_message::Payload::Learn(learn)) => {
+                }),
+            ),
+            paxos_proto::network_message::Payload::Learn(learn) => {
                 let value = learn
                     .value
                     .map(Into::into)
@@ -239,235 +184,52 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
                         is_noop: true,
                         command: None,
                     });
-                network_types::MessagePayload::Learn(paxos_types::Learn {
+                Ok(network_types::MessagePayload::Learn(paxos_types::Learn {
                     slot: learn.slot,
                     ballot: learn.ballot,
                     value,
-                })
+                }))
             }
-            Some(paxos_proto::network_message::Payload::Heartbeat(hb)) => {
-                network_types::MessagePayload::Heartbeat(network_types::Heartbeat {
-                    node: sender.clone(),
-                    timestamp: hb.timestamp,
-                })
-            }
-            Some(paxos_proto::network_message::Payload::Ignore(_)) | None => {
-                network_types::MessagePayload::Empty
-            }
-        };
-
-        Ok(network_types::NetworkMessage {
-            sender,
-            kind,
-            payload,
-        })
-    }
-}
-
-// Conversion from proto::NetworkResponse to internal network_types::NetworkResponse.
-impl TryFrom<paxos_proto::NetworkResponse> for network_types::NetworkResponse {
-    type Error = String;
-    fn try_from(resp: paxos_proto::NetworkResponse) -> Result<Self, Self::Error> {
-        let sender = paxos_types::Node::try_from(
-            resp.sender
-                .unwrap_or_else(|| panic!("Missing sender in proto response")),
-        )
-        .map_err(|e| format!("Failed to convert Node: {}", e))?;
-
-        let kind = match resp.kind {
-            x if x == paxos_proto::network_message::NetworkMessageKind::Prepare as i32 => {
-                network_types::NetworkMessageKind::Prepare
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Promise as i32 => {
-                network_types::NetworkMessageKind::Promise
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Accept as i32 => {
-                network_types::NetworkMessageKind::Accept
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Accepted as i32 => {
-                network_types::NetworkMessageKind::Accepted
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Learn as i32 => {
-                network_types::NetworkMessageKind::Learn
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Heartbeat as i32 => {
-                network_types::NetworkMessageKind::Heartbeat
-            }
-            x if x == paxos_proto::network_message::NetworkMessageKind::Ignore as i32 => {
-                network_types::NetworkMessageKind::Ignore
-            }
-            _ => return Err("Unknown network message kind in response".to_string()),
-        };
-
-        let payload = match resp.payload {
-            Some(paxos_proto::network_response::Payload::Prepare(prep)) => {
-                network_types::MessagePayload::Prepare(paxos_types::Prepare {
-                    slot: prep.slot,
-                    ballot: prep.ballot,
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Promise(prom)) => {
-                let accepted = prom.accepted.into_iter().map(Into::into).collect();
-                network_types::MessagePayload::Promise(paxos_types::Promise {
-                    ballot: prom.ballot,
-                    accepted,
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Accept(acc)) => {
-                network_types::MessagePayload::Accept(paxos_types::Accept {
-                    slot: acc.slot,
-                    ballot: acc.ballot,
-                    value: acc.value.clone().map(Into::into).unwrap_or_else(|| {
-                        paxos_types::Value {
-                            is_noop: true,
-                            command: None,
-                        }
-                    }),
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Accepted(accd)) => {
-                network_types::MessagePayload::Accepted(paxos_types::Accepted {
-                    slot: accd.slot,
-                    ballot: accd.ballot,
-                    success: accd.success,
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Learn(learn)) => {
-                network_types::MessagePayload::Learn(paxos_types::Learn {
-                    slot: learn.slot,
-                    ballot: learn.ballot,
-                    value: learn.value.clone().map(Into::into).unwrap_or_else(|| {
-                        paxos_types::Value {
-                            is_noop: true,
-                            command: None,
-                        }
-                    }),
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Heartbeat(hb)) => {
-                network_types::MessagePayload::Heartbeat(network_types::Heartbeat {
-                    node: sender.clone(),
-                    timestamp: hb.timestamp,
-                })
-            }
-            Some(paxos_proto::network_response::Payload::Ignore(_)) | None => {
-                network_types::MessagePayload::Empty
-            }
-        };
-
-        let status = match resp.status {
-            x if x == paxos_proto::network_response::StatusKind::Success as i32 => {
-                network_types::StatusKind::Success
-            }
-            x if x == paxos_proto::network_response::StatusKind::Failure as i32 => {
-                network_types::StatusKind::Failure
-            }
-            x if x == paxos_proto::network_response::StatusKind::Ignored as i32 => {
-                network_types::StatusKind::Ignored
-            }
-            _ => network_types::StatusKind::Failure,
-        };
-
-        Ok(network_types::NetworkResponse {
-            sender,
-            kind,
-            payload,
-            status,
-        })
-    }
-}
-
-/// Conversion from internal network_types::NetworkResponse to proto::NetworkResponse.
-impl From<network_types::NetworkResponse> for paxos_proto::NetworkResponse {
-    fn from(internal: network_types::NetworkResponse) -> Self {
-        let kind = match internal.kind {
-            network_types::NetworkMessageKind::Prepare => {
-                paxos_proto::network_message::NetworkMessageKind::Prepare as i32
-            }
-            network_types::NetworkMessageKind::Promise => {
-                paxos_proto::network_message::NetworkMessageKind::Promise as i32
-            }
-            network_types::NetworkMessageKind::Accept => {
-                paxos_proto::network_message::NetworkMessageKind::Accept as i32
-            }
-            network_types::NetworkMessageKind::Accepted => {
-                paxos_proto::network_message::NetworkMessageKind::Accepted as i32
-            }
-            network_types::NetworkMessageKind::Learn => {
-                paxos_proto::network_message::NetworkMessageKind::Learn as i32
-            }
-            network_types::NetworkMessageKind::Heartbeat => {
-                paxos_proto::network_message::NetworkMessageKind::Heartbeat as i32
-            }
-            network_types::NetworkMessageKind::Ignore => {
-                paxos_proto::network_message::NetworkMessageKind::Ignore as i32
-            }
-        };
-
-        let payload = match internal.payload {
-            network_types::MessagePayload::Prepare(prep) => Some(
-                paxos_proto::network_response::Payload::Prepare(paxos_proto::PreparePayload {
-                    slot: prep.slot,
-                    ballot: prep.ballot,
-                }),
-            ),
-            network_types::MessagePayload::Promise(prom) => {
-                let accepted = prom.accepted.into_iter().map(Into::into).collect();
-                Some(paxos_proto::network_response::Payload::Promise(
-                    paxos_proto::PromisePayload {
-                        ballot: prom.ballot,
-                        accepted,
+            paxos_proto::network_message::Payload::Heartbeat(hb) => {
+                let sender = hb
+                    .sender
+                    .ok_or("Missing sender in heartbeat payload")?
+                    .try_into()?;
+                Ok(network_types::MessagePayload::Heartbeat(
+                    network_types::Heartbeat {
+                        sender,
+                        timestamp: hb.timestamp,
                     },
                 ))
             }
-            network_types::MessagePayload::Accept(acc) => Some(
-                paxos_proto::network_response::Payload::Accept(paxos_proto::AcceptPayload {
-                    slot: acc.slot,
-                    ballot: acc.ballot,
-                    value: Some(acc.value.into()),
-                }),
-            ),
-            network_types::MessagePayload::Accepted(accd) => Some(
-                paxos_proto::network_response::Payload::Accepted(paxos_proto::AcceptedPayload {
-                    slot: accd.slot,
-                    ballot: accd.ballot,
-                    success: accd.success,
-                }),
-            ),
-            network_types::MessagePayload::Learn(learn) => Some(
-                paxos_proto::network_response::Payload::Learn(paxos_proto::LearnPayload {
-                    slot: learn.slot,
-                    ballot: learn.ballot,
-                    value: Some(learn.value.into()),
-                }),
-            ),
-            network_types::MessagePayload::Heartbeat(hb) => Some(
-                paxos_proto::network_response::Payload::Heartbeat(paxos_proto::HeartbeatPayload {
-                    timestamp: hb.timestamp,
-                }),
-            ),
-            network_types::MessagePayload::Empty => None,
-        };
 
-        let sender = Some(internal.sender.into());
-        let status = match internal.status {
-            network_types::StatusKind::Success => {
-                paxos_proto::network_response::StatusKind::Success as i32
+            paxos_proto::network_message::Payload::Ignore(_) => {
+                Ok(network_types::MessagePayload::Ignore)
             }
-            network_types::StatusKind::Failure => {
-                paxos_proto::network_response::StatusKind::Failure as i32
-            }
-            network_types::StatusKind::Ignored => {
-                paxos_proto::network_response::StatusKind::Ignored as i32
-            }
-        };
-
-        paxos_proto::NetworkResponse {
-            sender,
-            kind,
-            payload,
-            status,
         }
+    }
+}
+
+// Conversion for NetworkMessage
+impl From<network_types::NetworkMessage> for paxos_proto::NetworkMessage {
+    fn from(wit_msg: network_types::NetworkMessage) -> Self {
+        let sender = Some(wit_msg.sender.into());
+        let payload = Some(wit_msg.payload.into());
+        paxos_proto::NetworkMessage { sender, payload }
+    }
+}
+
+impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
+    type Error = String;
+    fn try_from(proto_msg: paxos_proto::NetworkMessage) -> Result<Self, Self::Error> {
+        let proto_sender = proto_msg.sender.ok_or("Missing sender in proto message")?;
+        let sender = paxos_types::Node::try_from(proto_sender)
+            .map_err(|e| format!("Failed to convert Node: {}", e))?;
+        let payload = match proto_msg.payload {
+            Some(pl) => network_types::MessagePayload::try_from(pl)?,
+            None => network_types::MessagePayload::Ignore,
+        };
+        Ok(network_types::NetworkMessage { sender, payload })
     }
 }
 

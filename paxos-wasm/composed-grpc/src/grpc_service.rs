@@ -1,4 +1,4 @@
-use crate::paxos_bindings;
+use crate::paxos_bindings::{self, MessagePayloadExt as _};
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
 use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
@@ -43,7 +43,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
 
-        // TODO: Have a standardize way to do this conversion. Maybe in the client?
+        // TODO: Have a standardize way to do this conversion. Have it per user.
         let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
         let request: ClientRequest = ClientRequest {
@@ -68,11 +68,12 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
     async fn deliver_message(
         &self,
         request: Request<paxos_proto::NetworkMessage>,
-    ) -> Result<Response<paxos_proto::NetworkResponse>, Status> {
+    ) -> Result<Response<paxos_proto::NetworkMessage>, Status> {
         info!("GRPC deliver_message: start");
         let proto_msg = request.into_inner();
         let wit_msg = paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
             .map_err(|e| Status::invalid_argument(format!("Invalid network message: {}", e)))?;
+
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
 
@@ -82,12 +83,12 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
             .map_err(|e| Status::internal(format!("Deliver message failed: {:?}", e)))?;
 
         info!(
-            "GRPC deliver_message: finish (kind: {:?}, status: {:?})",
-            internal_response.kind, internal_response.status
+            "GRPC deliver_message: finish payload type: {}",
+            internal_response.payload.payload_type()
         );
 
         // Convert our internal response to a proto response.
-        let proto_response: paxos_proto::NetworkResponse = internal_response.into();
+        let proto_response: paxos_proto::NetworkMessage = internal_response.into();
         Ok(Response::new(proto_response))
     }
 

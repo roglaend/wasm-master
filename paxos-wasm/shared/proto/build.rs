@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .out_dir(&out_dir)
-        .compile(
+        .compile_protos(
             &[proto_file.to_str().ok_or("Invalid proto file path")?],
             &[proto_dir.to_str().ok_or("Invalid proto directory path")?],
         )?;

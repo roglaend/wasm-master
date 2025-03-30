@@ -8,6 +8,6 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 env_logger = "0.11"
-wasmtime = "30"
-wasmtime-wasi = "30"
+wasmtime = "31"
+wasmtime-wasi = "31"
 anyhow = "1"

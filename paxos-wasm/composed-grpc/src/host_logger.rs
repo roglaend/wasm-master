@@ -109,6 +109,8 @@ impl HostLogger {
         self.log(Level::Debug, msg);
     }
 
+    // TODO: Make the logging async!
+
     /// Log a message at the specified level.
     fn log(&self, level: Level, msg: String) {
         // Build a formatted log string using details from the Node.

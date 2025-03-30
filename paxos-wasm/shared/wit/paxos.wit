@@ -94,16 +94,16 @@ interface kv-store {
 
 interface network {
     use paxos-types.{node};
-    use network-types.{network-message, network-response};
+    use network-types.{network-message};
 
     send-hello: func() -> string;
-    send-message: func(nodes: list<node>, message: network-message) -> list<network-response>;
+    send-message: func(nodes: list<node>, message: network-message) -> list<network-message>;
 }
 
 interface paxos-coordinator {
     use paxos-types.{node, slot, ballot, client-request, value};
     use proposer-types.{prepare-result, accept-result};
-    use network-types.{network-message, network-response};
+    use network-types.{network-message};
     use learner-types.{learned-entry};
     use kv-store-types.{kv-pair};
 
@@ -138,7 +138,7 @@ interface paxos-coordinator {
         commit-phase: func(slot: slot) -> option<learn-result>;
 
         /// Handles network messages.
-        handle-message: func(message: network-message) -> network-response;
+        handle-message: func(message: network-message) -> network-message;
 
         /// Retrieves the currently learned value.
         get-learned-value: func() -> value;
@@ -177,7 +177,7 @@ interface logger {
 interface proposer-agent {
     use paxos-types.{node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted};
     use proposer-types.{prepare-result, accept-result};
-    use network-types.{network-message, network-response};
+    use network-types.{network-message};
 
     resource proposer-agent-resource {
         /// Constructs a new proposer agent given this node’s id and the list of all cluster nodes.
@@ -207,15 +207,14 @@ interface proposer-agent {
         finalize-proposal: func(slot: slot, chosen-value: value) -> bool;
 
         /// Handles incoming network messages relevant to the proposer.
-        handle-message: func(message: network-message) -> network-response;
+        handle-message: func(message: network-message) -> network-message;
     }
 }
-
 
 interface acceptor-agent {
     use paxos-types.{slot, value};
     use paxos-coordinator.{learn-result};
-    use network.{network-message, network-response};
+    use network.{network-message};
 
     resource acceptor-agent-resource {
         constructor(send-learns: bool);
@@ -232,14 +231,14 @@ interface acceptor-agent {
         commit-phase: func(slot: slot, value: value) -> option<learn-result>;
 
         /// Handles incoming network messages that are relevant to the acceptor.
-        handle-message: func(message: network-message) -> network-response; // Note that they only care about a subset of the message types
+        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
     }
 
 }
 
 interface learner-agent {
     use paxos-coordinator.{paxos-state};
-    use network.{network-message, network-response};
+    use network.{network-message};
 
     resource learner-agent-resource {
         constructor();
@@ -251,7 +250,7 @@ interface learner-agent {
         get-state: func() -> paxos-state;
 
         /// Processes incoming network messages (such as commit notifications and accepted responses).
-        handle-message: func(message: network-message) -> network-response; // Note that they only care about a subset of the message types
+        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
     }
 
 }

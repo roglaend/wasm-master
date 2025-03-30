@@ -5,6 +5,7 @@
         "pocs",
         "pollable",
         "pollables",
+        "protos",
         "wasi",
         "wrpc"
     ]

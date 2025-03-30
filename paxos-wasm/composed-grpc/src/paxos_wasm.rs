@@ -1,7 +1,7 @@
 use crate::host_logger::HostLogger;
 use crate::host_messenger::HostMessenger;
-use crate::paxos_bindings;
 use crate::paxos_bindings::paxos::default::paxos_types::Node;
+use crate::paxos_bindings::{self, MessagePayloadExt};
 use proto::paxos_proto;
 use std::error::Error;
 use std::path::PathBuf;
@@ -122,18 +122,15 @@ impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
         &mut self,
         nodes: Vec<paxos_bindings::paxos::default::network::Node>,
         message: paxos_bindings::paxos::default::network::NetworkMessage,
-    ) -> Vec<paxos_bindings::paxos::default::network::NetworkResponse> {
+    ) -> Vec<paxos_bindings::paxos::default::network::NetworkMessage> {
         self.logger.log_info(format!(
-            "Sending network message of kind: {:?}",
-            message.kind
+            "Sending network message with payload type: {}",
+            message.payload.payload_type()
         ));
-        // Convert the WIT NetworkMessage into the proto-generated NetworkMessage.
-        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
 
-        // Extract endpoints from the nodes.
+        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
         let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
 
-        // Delegate the sending to HostMessenger
         HostMessenger::send_message(endpoints, proto_msg).await
     }
 }

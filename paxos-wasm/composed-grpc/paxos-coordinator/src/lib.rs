@@ -15,9 +15,7 @@ use bindings::exports::paxos::default::paxos_coordinator::{
     AcceptResult, ElectionResult, Guest as CoordinatorGuest, GuestPaxosCoordinatorResource,
     LearnResult, PaxosState, PrepareResult,
 };
-use bindings::paxos::default::network_types::{
-    MessagePayload, NetworkMessage, NetworkMessageKind, NetworkResponse, StatusKind,
-};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accepted, Ballot, ClientRequest, Learn, Node, PValue, Promise, Slot, Value,
 };
@@ -216,7 +214,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             };
             let msg = NetworkMessage {
                 sender: self.node.clone(),
-                kind: NetworkMessageKind::Learn,
                 payload: MessagePayload::Learn(learn),
             };
             let _ = network::send_message(&self.nodes, &msg);
@@ -247,156 +244,90 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// This function pattern-matches on the incoming NetworkMessage and calls the
     /// appropriate Paxos logic (e.g. on the acceptor, learner, or KV store),
     /// then returns a corresponding NetworkResponse.
-    fn handle_message(&self, message: NetworkMessage) -> NetworkResponse {
+    fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
         logger::log_info(&format!(
             "[Coordinator] Received network message: {:?}",
             message
         ));
         //* Moved the Promise and Accepted handle to the proposer agent. As will also be done by all the other handles to their respective agent. */
-        match message.kind {
-            NetworkMessageKind::Prepare => {
-                if let MessagePayload::Prepare(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Coordinator] Handling PREPARE: slot={}, ballot={}",
-                        payload.slot, payload.ballot
-                    ));
-                    let result = self.acceptor.prepare(payload.slot, payload.ballot);
-
-                    // TODO: Get list of PValue/accepted from core acceptor instead
-                    let accepted = if result {
-                        vec![PValue {
-                            slot: payload.slot,
-                            ballot: payload.ballot,
-                            value: None,
-                        }]
-                    } else {
-                        vec![]
-                    };
-                    let payload = Promise {
-                        ballot: payload.ballot,
-                        accepted: accepted,
-                    };
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Promise,
-                        payload: MessagePayload::Promise(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
-                } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Promise,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-            NetworkMessageKind::Accept => {
-                if let MessagePayload::Accept(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Coordinator] Handling ACCEPT: slot={}, ballot={}, value={:?}",
-                        payload.slot, payload.ballot, payload.value
-                    ));
-                    let entry = acceptor::AcceptedEntry {
+        match message.payload {
+            MessagePayload::Prepare(payload) => {
+                logger::log_info(&format!(
+                    "[Coordinator] Handling PREPARE: slot={}, ballot={}",
+                    payload.slot, payload.ballot
+                ));
+                let result = self.acceptor.prepare(payload.slot, payload.ballot);
+                // TODO: Get list of PValue/accepted from core acceptor instead
+                let accepted = if result {
+                    vec![PValue {
                         slot: payload.slot,
                         ballot: payload.ballot,
-                        value: payload.value.clone(),
-                    };
-                    let result = self.acceptor.accept(&entry);
-
-                    let payload = Accepted {
-                        slot: entry.slot,
-                        ballot: entry.ballot,
-                        success: result,
-                    };
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Accepted,
-                        payload: MessagePayload::Accepted(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
+                        value: None,
+                    }]
                 } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Accept,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-            NetworkMessageKind::Learn => {
-                if let MessagePayload::Learn(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "Handling LEARN: slot={}, value={:?}",
-                        payload.slot, payload.value
-                    ));
-                    // Update learner and persist value in the KV store.
-                    self.learner.learn(payload.slot, &payload.value);
-                    self.kv_store.set(&self.paxos_key, &payload.value);
-                    let result = true;
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Learn,
-                        payload: MessagePayload::Learn(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
-                } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Learn,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-            NetworkMessageKind::Heartbeat => {
-                if let MessagePayload::Heartbeat(payload) = message.payload {
-                    logger::log_info(&format!(
-                        "[Coordinator] Handling HEARTBEAT: timestamp={}",
-                        payload.timestamp
-                    ));
-                    let result = true;
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Heartbeat,
-                        payload: MessagePayload::Heartbeat(payload),
-                        status: if result {
-                            StatusKind::Success
-                        } else {
-                            StatusKind::Failure
-                        },
-                    }
-                } else {
-                    NetworkResponse {
-                        sender: self.node.clone(),
-                        kind: NetworkMessageKind::Heartbeat,
-                        payload: MessagePayload::Empty,
-                        status: StatusKind::Failure,
-                    }
-                }
-            }
-            other_kind => {
-                logger::log_warn(&format!(
-                    "[Coordinator] Received irrelevant message kind: {:?}",
-                    other_kind
-                ));
-                NetworkResponse {
+                    vec![]
+                };
+                let promise_payload = Promise {
+                    ballot: payload.ballot,
+                    accepted,
+                };
+                NetworkMessage {
                     sender: self.node.clone(),
-                    kind: NetworkMessageKind::Ignore,
-                    payload: MessagePayload::Empty,
-                    status: StatusKind::Ignored,
+                    payload: MessagePayload::Promise(promise_payload),
+                }
+            }
+            MessagePayload::Accept(payload) => {
+                logger::log_info(&format!(
+                    "[Coordinator] Handling ACCEPT: slot={}, ballot={}, value={:?}",
+                    payload.slot, payload.ballot, payload.value
+                ));
+                let entry = acceptor::AcceptedEntry {
+                    slot: payload.slot,
+                    ballot: payload.ballot,
+                    value: payload.value.clone(),
+                };
+                let result = self.acceptor.accept(&entry);
+                let accepted_payload = Accepted {
+                    slot: entry.slot,
+                    ballot: entry.ballot,
+                    success: result,
+                };
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Accepted(accepted_payload),
+                }
+            }
+            MessagePayload::Learn(payload) => {
+                logger::log_info(&format!(
+                    "Handling LEARN: slot={}, value={:?}",
+                    payload.slot, payload.value
+                ));
+                // Update learner and persist value in the KV store.
+                self.learner.learn(payload.slot, &payload.value);
+                self.kv_store.set(&self.paxos_key, &payload.value);
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Learn(payload), // TODO: Use custom learn-ack type? Needed?
+                }
+            }
+            MessagePayload::Heartbeat(payload) => {
+                logger::log_info(&format!(
+                    "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
+                    payload.sender, payload.timestamp
+                ));
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Heartbeat(payload),
+                }
+            }
+            other_message => {
+                logger::log_warn(&format!(
+                    "[Coordinator] Received irrelevant message type: {:?}",
+                    other_message
+                ));
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore,
                 }
             }
         }

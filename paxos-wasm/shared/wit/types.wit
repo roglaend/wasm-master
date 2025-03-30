@@ -189,49 +189,28 @@ interface kv-store-types {
 }
 
 interface network-types {
-    use paxos-types.{node, prepare, promise, accept, accepted, learn};
+    use paxos-types.{paxos-role, node, prepare, promise, accept, accepted, learn};
 
-    enum network-message-kind {
-        prepare,    // Phase 1a: Sent by a proposer to request promises.
-        promise,    // Phase 1b: Response from an acceptor with its promise.
-        accept,     // Phase 2a: Sent by the proposer to request acceptance.
-        accepted,   // Phase 2b: Response from an acceptor acknowledging acceptance.
-        learn,      // Phase 3: Broadcast from the leader/acceptors indicating the chosen value.
-        heartbeat,  // Used for failure detection and leader keep-alive.
-        ignore,     // Indicates that the previous message was ignored.
-    }
-
-    enum status-kind {
-        success,
-        failure,
-        ignored,
+    variant message-payload {
+        ignore,                 // No-op.
+        prepare(prepare),       // A prepare request.
+        promise(promise),       // A promise response.
+        accept(accept),         // An accept request.
+        accepted(accepted),     // An accepted response.
+        learn(learn),           // A learn request.
+        // learn-ack(learn),    // A learn ack. // TODO: Use or not to use, with custom payload? 
+        heartbeat(heartbeat),   // Heartbeat.
     }
 
     record heartbeat {
-        node: node, // The sender of the heartbeat (?)
-        timestamp: u64
-    }
-    
-    variant message-payload {
-        prepare(prepare),
-        promise(promise),
-        accept(accept),
-        accepted(accepted),
-        learn(learn),
-        heartbeat(heartbeat),
-        empty,
+        sender: node,
+        timestamp: u64,
     }
 
     record network-message {
         sender: node,
-        kind: network-message-kind,
+        // targets: paxos-role, // TODO: Do we want to specify a specific target group?
         payload: message-payload,
     }
 
-    record network-response {
-        sender: node,
-        kind: network-message-kind,
-        payload: message-payload,
-        status: status-kind,
-    }
 }
