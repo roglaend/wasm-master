@@ -98,6 +98,7 @@ impl From<network_types::MessagePayload> for paxos_proto::network_message::Paylo
             network_types::MessagePayload::Promise(prom) => {
                 let accepted = prom.accepted.into_iter().map(Into::into).collect();
                 paxos_proto::network_message::Payload::Promise(paxos_proto::PromisePayload {
+                    slot: prom.slot,
                     ballot: prom.ballot,
                     accepted,
                 })
@@ -119,7 +120,7 @@ impl From<network_types::MessagePayload> for paxos_proto::network_message::Paylo
             network_types::MessagePayload::Learn(learn) => {
                 paxos_proto::network_message::Payload::Learn(paxos_proto::LearnPayload {
                     slot: learn.slot,
-                    ballot: learn.ballot,
+                    // ballot: learn.ballot,
                     value: Some(learn.value.into()),
                 })
             }
@@ -150,6 +151,7 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                 let accepted = prom.accepted.into_iter().map(Into::into).collect();
                 Ok(network_types::MessagePayload::Promise(
                     paxos_types::Promise {
+                        slot: prom.slot,
                         ballot: prom.ballot,
                         accepted,
                     },
@@ -186,7 +188,7 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                     });
                 Ok(network_types::MessagePayload::Learn(paxos_types::Learn {
                     slot: learn.slot,
-                    ballot: learn.ballot,
+                    // ballot: learn.ballot,
                     value,
                 }))
             }

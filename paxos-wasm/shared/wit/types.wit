@@ -55,8 +55,8 @@ interface paxos-types {
     }
 
     /// Promise message returned by an acceptor in response to a prepare.
-    /// It includes the acceptor's current ballot and any previously accepted proposals.
     record promise {
+        slot: slot,
         ballot: ballot,
         accepted: list<p-value>,
     }
@@ -88,7 +88,7 @@ interface paxos-types {
     /// or by the leader to commit a value.
     record learn {
         slot: slot,
-        ballot: ballot,
+        // ballot: ballot, // TODO: Do we need ballot?
         value: value,
     }
 }
@@ -131,12 +131,18 @@ interface proposer-types {
 }
 
 interface acceptor-types {
-    use paxos-types.{slot, ballot, value};
+    use paxos-types.{slot, ballot, value, promise, accepted, p-value};
 
-    record accepted-entry {
-        slot: slot,
-        ballot: ballot,
-        value: value,
+    /// Result type for a prepare request.
+    variant promise-result {
+        promised(promise),
+        rejected(ballot),
+    }
+
+    /// Result type for an accept request.
+    variant accepted-result {
+        accepted(accepted),
+        rejected(ballot),
     }
 
     // This record holds the highest ballot promised for a given slot.
@@ -147,13 +153,18 @@ interface acceptor-types {
 
     record acceptor-state {
         promises: list<promise-entry>,
-        accepted: list<accepted-entry>,
+        accepted: list<p-value>,
     }
 
 }
 
 interface learner-types {
     use paxos-types.{slot, value};
+
+    record learn-result {
+        learned-value: value,
+        quorum: u64,
+    }
 
     // TODO: ballot??
 

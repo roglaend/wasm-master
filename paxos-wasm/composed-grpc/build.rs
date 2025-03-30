@@ -8,7 +8,12 @@ fn main() {
 
     // For plugging, specify the plug modules and the socket module separately.
     // Here, "plugs" are the modules to plug in, and "socket" is the primary module.
-    let plugs = ["composed_proposer_agent", "acceptor", "learner", "kv_store"];
+    let plugs = [
+        "composed_proposer_agent",
+        "composed_acceptor_agent",
+        "learner",
+        "kv_store",
+    ];
     let socket = "paxos_coordinator";
 
     // The output composite WASM module will be named composed_paxos_coordinator.wasm.

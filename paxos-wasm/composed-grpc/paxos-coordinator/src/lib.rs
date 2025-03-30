@@ -16,10 +16,10 @@ use bindings::exports::paxos::default::paxos_coordinator::{
     LearnResult, PaxosState, PrepareResult,
 };
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{
-    Accepted, Ballot, ClientRequest, Learn, Node, PValue, Promise, Slot, Value,
+use bindings::paxos::default::paxos_types::{Ballot, ClientRequest, Learn, Node, Slot, Value};
+use bindings::paxos::default::{
+    acceptor_agent, kv_store, learner, logger, network, proposer_agent,
 };
-use bindings::paxos::default::{acceptor, kv_store, learner, logger, network, proposer_agent};
 
 pub struct MyPaxosCoordinator;
 
@@ -33,11 +33,10 @@ pub struct MyPaxosCoordinatorResource {
     // The list of nodes in the cluster.
     nodes: Vec<Node>,
 
-    // Uses the proposer wrapper agent
+    // Uses the agents
     proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
+    acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
 
-    // The component resources.
-    acceptor: Arc<acceptor::AcceptorResource>,
     learner: Arc<learner::LearnerResource>,
     kv_store: Arc<kv_store::KvStoreResource>,
 
@@ -58,15 +57,19 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         let proposer_agent = Arc::new(proposer_agent::ProposerAgentResource::new(
             &node, &nodes, is_leader,
         ));
-
-        let acceptor = Arc::new(acceptor::AcceptorResource::new());
+        let send_learns = false;
+        let acceptor_agent = Arc::new(acceptor_agent::AcceptorAgentResource::new(
+            &node,
+            &nodes,
+            send_learns,
+        ));
         let learner = Arc::new(learner::LearnerResource::new());
         let kv_store = Arc::new(kv_store::KvStoreResource::new());
         Self {
             node,
             nodes,
             proposer_agent,
-            acceptor,
+            acceptor_agent,
             learner,
             kv_store,
             paxos_key: "paxos_values".to_string(), // TODO: Change the kv-store to save paxos values for slots instead of using the "history"
@@ -144,25 +147,25 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self, ballot: Ballot, slot: Slot) -> PrepareResult {
         // Query local acceptor.
-        let local_prepared = self.acceptor.prepare(slot, ballot);
-        if !local_prepared {
-            logger::log_error(&format!(
-                "[Coordinator] Local prepare failed for slot {} with ballot {}.",
-                slot, ballot
-            ));
-            panic!("Local prepare failure");
-        }
-        let local_promise = Promise {
-            ballot,
-            accepted: vec![], // TODO: Actually get these values from the local core acceptor (through the acceptor agent)
+        let local_promise_result = self.acceptor_agent.process_prepare(slot, ballot);
+
+        let local_promise = match local_promise_result {
+            bindings::paxos::default::acceptor_types::PromiseResult::Promised(promise) => promise,
+            bindings::paxos::default::acceptor_types::PromiseResult::Rejected(current_ballot) => {
+                logger::log_error(&format!(
+                    "[Coordinator] Local prepare failed for slot {} with ballot {} (current promise: {}).",
+                    slot, ballot, current_ballot
+                ));
+                panic!("Local prepare failure") // TODO: Handle this?
+            }
         };
 
-        // Call proposer agent's prepare-phase, merging local promise with remote responses.
+        // Merge the local promise with remote responses using the proposer agent.
         let prepare_result = self
             .proposer_agent
             .prepare_phase(slot, ballot, &vec![local_promise]);
 
-        logger::log_debug(&format!(
+        logger::log_info(&format!(
             "[Coordinator] Completed prepare phase for slot {}.",
             slot
         ));
@@ -172,31 +175,30 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Executes the accept phase by merging local acceptance with remote responses.
     /// The coordinator queries its local acceptor for an acceptance vote.
     fn accept_phase(&self, value: Value, slot: Slot, ballot: Ballot) -> AcceptResult {
-        let local_accepted = self.acceptor.accept(&acceptor::AcceptedEntry {
-            slot,
-            ballot,
-            value: value.clone(),
-        });
-        if !local_accepted {
-            logger::log_error(&format!(
-                "[Coordinator] Local acceptance failed for slot {}.",
-                slot
-            ));
-            panic!("Local acceptance failure");
+        let local_accept_result = self
+            .acceptor_agent
+            .process_accept(slot, ballot, &value.clone());
+
+        match local_accept_result {
+            bindings::paxos::default::acceptor_types::AcceptedResult::Accepted(local_accept) => {
+                let accept_result =
+                    self.proposer_agent
+                        .accept_phase(&value, slot, ballot, &vec![local_accept]);
+
+                logger::log_info(&format!(
+                    "[Coordinator] Completed accept phase for slot {}.",
+                    slot
+                ));
+                accept_result
+            }
+            bindings::paxos::default::acceptor_types::AcceptedResult::Rejected(current_ballot) => {
+                logger::log_error(&format!(
+                    "[Coordinator] Local acceptance failed for slot {} with ballot {} (current promise: {}).",
+                    slot, ballot, current_ballot
+                ));
+                panic!("Local acceptance failure") // TODO: Handle this?
+            }
         }
-        let local_accept = Accepted {
-            slot,
-            ballot,
-            success: true,
-        };
-        let accept_result =
-            self.proposer_agent
-                .accept_phase(&value, slot, ballot, &vec![local_accept]);
-        logger::log_debug(&format!(
-            "[Coordinator] Completed accept phase for slot {}.",
-            slot
-        ));
-        accept_result
     }
 
     /// Phase 3: Commit Phase.
@@ -209,7 +211,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 .set(&self.paxos_key, &prop.client_request.value);
             let learn = Learn {
                 slot,
-                ballot: prop.ballot,
+                // ballot: prop.ballot, // TODO: Ballot needed?
                 value: prop.client_request.value.clone(),
             };
             let msg = NetworkMessage {
@@ -251,52 +253,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         ));
         //* Moved the Promise and Accepted handle to the proposer agent. As will also be done by all the other handles to their respective agent. */
         match message.payload {
-            MessagePayload::Prepare(payload) => {
-                logger::log_info(&format!(
-                    "[Coordinator] Handling PREPARE: slot={}, ballot={}",
-                    payload.slot, payload.ballot
-                ));
-                let result = self.acceptor.prepare(payload.slot, payload.ballot);
-                // TODO: Get list of PValue/accepted from core acceptor instead
-                let accepted = if result {
-                    vec![PValue {
-                        slot: payload.slot,
-                        ballot: payload.ballot,
-                        value: None,
-                    }]
-                } else {
-                    vec![]
-                };
-                let promise_payload = Promise {
-                    ballot: payload.ballot,
-                    accepted,
-                };
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Promise(promise_payload),
-                }
-            }
-            MessagePayload::Accept(payload) => {
-                logger::log_info(&format!(
-                    "[Coordinator] Handling ACCEPT: slot={}, ballot={}, value={:?}",
-                    payload.slot, payload.ballot, payload.value
-                ));
-                let entry = acceptor::AcceptedEntry {
-                    slot: payload.slot,
-                    ballot: payload.ballot,
-                    value: payload.value.clone(),
-                };
-                let result = self.acceptor.accept(&entry);
-                let accepted_payload = Accepted {
-                    slot: entry.slot,
-                    ballot: entry.ballot,
-                    success: result,
-                };
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Accepted(accepted_payload),
-                }
-            }
             MessagePayload::Learn(payload) => {
                 logger::log_info(&format!(
                     "Handling LEARN: slot={}, value={:?}",
@@ -310,6 +266,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     payload: MessagePayload::Learn(payload), // TODO: Use custom learn-ack type? Needed?
                 }
             }
+
+            //* Forward the relevant messages to the respective agents */
+            MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
+            MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
+
             MessagePayload::Heartbeat(payload) => {
                 logger::log_info(&format!(
                     "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",

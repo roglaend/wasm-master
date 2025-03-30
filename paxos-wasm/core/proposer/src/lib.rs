@@ -147,36 +147,39 @@ impl GuestProposerResource for MyProposerResource {
             }
         };
 
-        logger::log_debug(&format!(
-            "[Core Proposer] Received promises: {:?}",
-            promises
-        ));
-
-        let mut count = 0;
-        let mut highest_accepted_ballot = 0;
-        let mut chosen_value: Option<Value> = None;
-
-        // Iterate over all accepted p-values for the proposal, filtering by ballot and slot.
-        for pv in promises
+        // Filter promises that are for the right slot and ballot.
+        let valid_promises: Vec<&Promise> = promises
             .iter()
-            .filter(|prom| prom.ballot == prop.ballot)
-            .flat_map(|prom| prom.accepted.iter())
-            .filter(|pv| pv.slot == prop.slot)
-        {
-            count += 1;
-            if pv.ballot > highest_accepted_ballot {
-                highest_accepted_ballot = pv.ballot;
-                chosen_value = pv.value.clone();
-            }
-        }
+            .filter(|prom| prom.slot == prop.slot && prom.ballot == prop.ballot)
+            .collect();
 
-        if count < self.quorum() {
+        let count = valid_promises.len();
+        let quorum = self.quorum() as usize;
+
+        if count < quorum {
             logger::log_warn(&format!(
-                "[Core Proposer] Prepare phase failed: {} accepted proposals received (quorum is {}).",
-                count,
-                self.quorum()
+                "[Core Proposer] Prepare phase failed: only {} valid promises received (quorum required: {}).",
+                count, quorum
             ));
             return PrepareResult::QuorumFailure;
+        }
+
+        logger::log_debug(&format!(
+            "[Core Proposer] Prepare phase: received {}/{} valid promises (quorum required: {}).",
+            count, self.num_acceptors, quorum
+        ));
+
+        // Inspect already accepted proposals (if any) among those promises.
+        let mut highest_accepted_ballot = 0;
+        let mut chosen_value: Option<Value> = None;
+        for prom in valid_promises {
+            for pv in &prom.accepted {
+                // We filter by the same slot for clarity.
+                if pv.slot == prop.slot && pv.ballot > highest_accepted_ballot {
+                    highest_accepted_ballot = pv.ballot;
+                    chosen_value = pv.value.clone();
+                }
+            }
         }
 
         // If no accepted value was found, use the original client's value.

@@ -24,7 +24,7 @@ fn main() {
     //   - output: the name of the composite module.
     let plug_jobs: &[(&[&str], &str, &str)] = &[
         (&["proposer"], "proposer_agent", "composed_proposer_agent"),
-        // ( &["acceptor"], "acceptor_agent", "composed_acceptor_agent" ),
+        (&["acceptor"], "acceptor_agent", "composed_acceptor_agent"),
         // ( &["learner"], "learner_agent", "composed_learner_agent" ),
         // ( &["kv_store"], "kv_store_agent", "composed_kv_store_agent" ),
     ];

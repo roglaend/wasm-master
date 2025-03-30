@@ -59,8 +59,9 @@ message PValue {
 
 // Promise message returned by an acceptor.
 message PromisePayload {
-  uint64 ballot = 1;
-  repeated PValue accepted = 2;
+  uint64 slot = 1;
+  uint64 ballot = 2;
+  repeated PValue accepted = 3;
 }
 
 // Accept message sent by the proposer.
@@ -80,8 +81,8 @@ message AcceptedPayload {
 // Learn message used to notify that a proposal has been chosen.
 message LearnPayload {
   uint64 slot = 1;
-  uint64 ballot = 2;
-  Value value = 3;
+  // uint64 ballot = 2;
+  Value value = 2;
 }
 
 // Heartbeat message.

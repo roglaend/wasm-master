@@ -40,16 +40,15 @@ interface proposer {
 }
 
 interface acceptor {
-    use paxos-types.{slot, ballot, value, learn};
-    use acceptor-types.{accepted-entry, acceptor-state};
+    use paxos-types.{slot, ballot, value, learn, promise, accepted};
+    use acceptor-types.{promise-result, accepted-result, acceptor-state};
 
 
     resource acceptor-resource {
-        constructor();
+        constructor(gc-window: option<u64>);
         get-state: func() -> acceptor-state;
-        prepare: func(slot: slot, ballot: ballot) -> bool;
-        accept: func(entry: accepted-entry) -> bool;
-        // commit: func(slot: slot, ballot: ballot) -> learn
+        prepare: func(slot: slot, ballot: ballot) -> promise-result;
+        accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
     }
 }
 
@@ -104,13 +103,8 @@ interface paxos-coordinator {
     use paxos-types.{node, slot, ballot, client-request, value};
     use proposer-types.{prepare-result, accept-result};
     use network-types.{network-message};
-    use learner-types.{learned-entry};
+    use learner-types.{learned-entry, learn-result};
     use kv-store-types.{kv-pair};
-
-    record learn-result {
-        learned-value: value,
-        quorum: u64,
-    }
 
     record election-result {
         leader: node,
@@ -212,25 +206,20 @@ interface proposer-agent {
 }
 
 interface acceptor-agent {
-    use paxos-types.{slot, value};
-    use paxos-coordinator.{learn-result};
+    use paxos-types.{node, slot, ballot, value};
+    use acceptor-types.{promise-result, accepted-result};
+    use learner-types.{learn-result};
     use network.{network-message};
 
     resource acceptor-agent-resource {
-        constructor(send-learns: bool);
-        /// Processes an incoming prepare request from a proposer.
-        /// Returns a promise result (including any previously accepted proposal).
-        // process-prepare: func(slot: u64, ballot: u64) -> promise-result;
+        constructor(node: node, nodes: list<node>, send-learns: bool);
+        
+        process-prepare: func(slot: slot, ballot: ballot) -> promise-result;
 
-        /// Processes an incoming accept request from the proposer.
-        /// Returns an accepted result if the proposal is accepted.
-        // process-accept: func(slot: u64, ballot: u64, proposal-value: string) -> accepted-result;
+        process-accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
 
-        /// Once a quorum of accept responses is achieved, commits the proposal by broadcasting the learned value.
-        /// Returns an optional learn result (e.g., if the value was persisted).
         commit-phase: func(slot: slot, value: value) -> option<learn-result>;
 
-        /// Handles incoming network messages that are relevant to the acceptor.
         handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
     }
 

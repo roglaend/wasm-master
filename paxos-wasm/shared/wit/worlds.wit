@@ -24,10 +24,11 @@ world kv-store-world {
 
 world paxos-world {
     import proposer-agent;
+    import acceptor-agent;
 
     // import proposer;
+    // import acceptor;
 
-    import acceptor;
     import learner;
     import kv-store;
 

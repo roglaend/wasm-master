@@ -12,7 +12,7 @@ pub mod bindings {
 bindings::export!(MyProposerAgent with_types_in bindings);
 
 use bindings::exports::paxos::default::proposer_agent::{
-    Guest as ProposerGuest, GuestProposerAgentResource,
+    Guest as GuestProposerAgent, GuestProposerAgentResource,
 };
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
@@ -24,7 +24,7 @@ use bindings::paxos::default::{logger, network, proposer::ProposerResource};
 
 pub struct MyProposerAgent;
 
-impl ProposerGuest for MyProposerAgent {
+impl GuestProposerAgent for MyProposerAgent {
     type ProposerAgentResource = MyProposerAgentResource;
 }
 
@@ -172,10 +172,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             .into_iter()
             .filter_map(|resp| {
                 if let MessagePayload::Promise(prom_payload) = resp.payload {
-                    Some(Promise {
-                        ballot: prom_payload.ballot,
-                        accepted: prom_payload.accepted,
-                    })
+                    Some(prom_payload)
                 } else {
                     logger::log_warn("[Proposer Agent] Received successful response with unexpected payload variant.");
                     None
