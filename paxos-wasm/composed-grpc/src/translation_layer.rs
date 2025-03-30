@@ -27,6 +27,7 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
             x if x == NetworkMessageKind::Prepare as i32 => {
                 if let Some(Payload::Prepare(prep)) = proto_msg.payload {
                     network::MessagePayload::Prepare(network::PreparePayload {
+                        sender: prep.sender,
                         slot: prep.slot,
                         ballot: prep.ballot,
                     })
@@ -36,16 +37,17 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
             }
             x if x == NetworkMessageKind::Promise as i32 => {
                 if let Some(Payload::Promise(prom)) = proto_msg.payload {
-                    let accepted_value = if prom.accepted_value.is_empty() {
-                        None
-                    } else {
-                        Some(prom.accepted_value)
-                    };
+                    // let accepted_value = if prom.accepted_value.is_empty() {
+                    //     None
+                    // } else {
+                    //     Some(prom.accepted_value)
+                    // };
                     network::MessagePayload::Promise(network::PromisePayload {
-                        slot: prom.slot,
+                        // slot: prom.slot,
                         ballot: prom.ballot,
-                        accepted_ballot: prom.accepted_ballot,
-                        accepted_value,
+                        // accepted_ballot: prom.accepted_ballot,
+                        // accepted_value,
+                        accepted: prom.accepted,
                     })
                 } else {
                     return Err("Missing Promise payload".to_string());
@@ -54,6 +56,7 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
             x if x == NetworkMessageKind::Accept as i32 => {
                 if let Some(Payload::Accept(acc)) = proto_msg.payload {
                     network::MessagePayload::Accept(network::AcceptPayload {
+                        sender: acc.sender,
                         slot: acc.slot,
                         ballot: acc.ballot,
                         proposal: acc.proposal,
@@ -67,7 +70,7 @@ impl TryFrom<paxos_proto::NetworkMessage> for network::NetworkMessage {
                     network::MessagePayload::Accepted(network::AcceptedPayload {
                         slot: accd.slot,
                         ballot: accd.ballot,
-                        accepted: accd.accepted,
+                        value: accd.value,
                     })
                 } else {
                     return Err("Missing Accepted payload".to_string());
@@ -138,20 +141,23 @@ impl From<network::NetworkMessage> for paxos_proto::NetworkMessage {
         let payload = match wit_msg.payload {
             network::MessagePayload::Prepare(prep) => {
                 Some(Payload::Prepare(paxos_proto::PreparePayload {
+                    sender: prep.sender,
                     slot: prep.slot,
                     ballot: prep.ballot,
                 }))
             }
             network::MessagePayload::Promise(prom) => {
                 Some(Payload::Promise(paxos_proto::PromisePayload {
-                    slot: prom.slot,
+                    // slot: prom.slot,
                     ballot: prom.ballot,
-                    accepted_ballot: prom.accepted_ballot,
-                    accepted_value: prom.accepted_value.unwrap_or_default(),
+                    accepted: prom.accepted,
+                    // accepted_ballot: prom.accepted_ballot,
+                    // accepted_value: prom.accepted_value.unwrap_or_default(),
                 }))
             }
             network::MessagePayload::Accept(acc) => {
                 Some(Payload::Accept(paxos_proto::AcceptPayload {
+                    sender: acc.sender,
                     slot: acc.slot,
                     ballot: acc.ballot,
                     proposal: acc.proposal,
@@ -161,7 +167,7 @@ impl From<network::NetworkMessage> for paxos_proto::NetworkMessage {
                 Some(Payload::Accepted(paxos_proto::AcceptedPayload {
                     slot: accd.slot,
                     ballot: accd.ballot,
-                    accepted: accd.accepted,
+                    value: accd.value,
                 }))
             }
             network::MessagePayload::Commit(comm) => {

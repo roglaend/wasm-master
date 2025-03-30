@@ -17,6 +17,7 @@ members = [
 
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
+    "paxos-wasm/composed-grpc/client_command_line",
     "paxos-wasm/composed-grpc/command",
     "paxos-wasm/composed-grpc/paxos-coordinator",
 
@@ -24,8 +25,8 @@ members = [
 
     # ---------------------------------- #
 
-    "pocs/network-component/tcp-client",
-    "pocs/network-component/tcp-server",
+    # "pocs/network-component/tcp-client",
+    # "pocs/network-component/tcp-server",
     
     # ---------------------------------- #
 

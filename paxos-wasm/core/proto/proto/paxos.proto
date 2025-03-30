@@ -4,27 +4,34 @@ package paxos;
 
 // Network message payloads.
 message PreparePayload {
-  uint64 slot = 1;
-  uint64 ballot = 2;
+  string sender = 1;
+  uint64 slot = 2;
+  uint64 ballot = 3;
 }
 
+// message PromisePayload {
+//   uint64 slot = 1;
+//   uint64 ballot = 2;
+//   uint64 accepted_ballot = 3;         // 0 if none was accepted.
+//   string accepted_value = 4;          // Empty if none.
+// }
+
 message PromisePayload {
-  uint64 slot = 1;
-  uint64 ballot = 2;
-  uint64 accepted_ballot = 3;         // 0 if none was accepted.
-  string accepted_value = 4;          // Empty if none.
+  uint64 ballot = 1;
+  repeated string accepted = 2;
 }
 
 message AcceptPayload {
-  uint64 slot = 1;
-  uint64 ballot = 2;
-  string proposal = 3;
+  string sender = 1;
+  uint64 slot = 2;
+  uint64 ballot = 3;
+  string proposal = 4;
 }
 
 message AcceptedPayload {
   uint64 slot = 1;
   uint64 ballot = 2;
-  bool accepted = 3;
+  string value = 3;
 }
 
 message CommitPayload {
@@ -69,6 +76,7 @@ message NetworkMessage {
     // LeaderPayload leader = 9;
   }
 }
+
 
 // Learned entry and KV-pair (for state reporting).
 message LearnedEntry {

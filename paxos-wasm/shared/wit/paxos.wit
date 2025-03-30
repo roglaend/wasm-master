@@ -1,6 +1,8 @@
 package paxos:default;
 
 interface proposer {
+    use types.{prepare, promise, p-value, accept, learn};
+
     record client-proposal {
         // slot: u64, // tracked by the proposer internally instead
         value: string,
@@ -26,16 +28,64 @@ interface proposer {
         accepted: bool,
     }
 
+    
+
     resource proposer-resource {
         constructor(init-ballot: u64, num-acceptors: u64, is-leader: bool);
         get-state: func() -> proposer-state;
         propose: func(proposal: client-proposal) -> propose-result;
         become-leader: func() -> bool;
         resign-leader: func() -> bool;
+        
+        is-leader: func() -> bool;
+        
+        advance-adu: func();
+        create-prepare: func(sender: string) -> prepare;
+        enqueue-client-request: func(val: client-proposal) -> bool;
+        create-accept: func(sender: string) -> option<accept>;
+        register-promise: func(promise: promise) -> bool;
+        process-promises: func(quroum: u64,) -> bool;
+        register-learn: func(learn: learn) -> bool;
+        process-learns: func(quroum: u64) -> option<learn>;
     }
 }
 
+interface types {
+    record prepare {
+        sender: string,
+        slot: u64,
+        ballot: u64,
+    }
+
+    record promise {
+        ballot: u64,
+        accepted: list<string>, // TODO NOT STRING
+    }
+
+    record p-value {
+        slot: u64,
+        ballot: u64,
+        value: string,
+    }
+
+    record learn {
+        slot: u64,
+        ballot: u64,
+        value: string,
+    }
+
+    record accept {
+        sender: string,
+        slot: u64,
+        ballot: u64,
+        value: string,
+    }
+
+}
+
 interface acceptor {
+    use types.{prepare, promise, p-value, accept, learn};
+
     record accepted-entry {
         slot: u64,
         ballot: u64,
@@ -58,6 +108,9 @@ interface acceptor {
         get-state: func() -> acceptor-state;
         prepare: func(slot: u64, ballot: u64) -> bool;
         accept: func(entry: accepted-entry) -> bool;
+
+        handle-prepare: func(prepare: prepare) -> option<promise>;
+        handle-accept: func(accept: accept) -> option<learn>;
     }
 }
 
@@ -120,6 +173,7 @@ interface kv-store {
 }
 
 interface network {
+    // use types.{p-value};
     enum network-message-kind {
         prepare,    // Phase 1a: Sent by a proposer to request promises.
         promise,    // Phase 1b: Response from an acceptor with its promise.
@@ -137,18 +191,18 @@ interface network {
     }
 
     record prepare-payload {
+        sender: string,
         slot: u64,
         ballot: u64,
     }
 
     record promise-payload {
-        slot: u64,
-        ballot: u64,
-        accepted-ballot: u64,         // 0 if none was accepted.
-        accepted-value: option<string>, // Previously accepted value (if any).
+        ballot: u64,    
+        accepted: list<string>, 
     }
 
     record accept-payload {
+        sender: string,
         slot: u64,
         ballot: u64,
         proposal: string,
@@ -157,7 +211,7 @@ interface network {
     record accepted-payload {
         slot: u64,
         ballot: u64,
-        accepted: bool,
+        value: string,
     }
 
     record commit-payload {
@@ -214,6 +268,8 @@ interface paxos-coordinator {
     use network.{node, network-message, network-response};
     use learner.{learned-entry};
     use kv-store.{kv-pair};
+
+    use types.{prepare, promise, p-value, accept, learn};
 
     record promise-result {
         ballot: u64,
@@ -272,6 +328,16 @@ interface paxos-coordinator {
         failure-service: func();
 
         client-handle-test: func(value: string) -> bool;
+
+        paxos-run-loop: func(node-addr: string);
+
+        rasmus-prepare-phase: func(node-addr: string);
+        
+        rasmus-promise-phase: func() -> bool;
+
+        rasmus-accept-phase: func(node-addr: string) -> bool;
+
+        rasmus-commit-phase: func() -> bool;
     } 
 }
 

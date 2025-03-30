@@ -1,8 +1,9 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use bindings::paxos::default::network::{NetworkMessage, NetworkResponse};
-use bindings::paxos::default::proposer::ClientProposal;
-use core::panic;
+use bindings::paxos::default::proposer::{ClientProposal, Promise};
+use bindings::paxos::default::types::{Accept, Prepare, Learn};
+use core::{net, panic};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::{format, Debug};
@@ -19,7 +20,7 @@ bindings::export!(MyPaxosCoordinator with_types_in bindings);
 
 use bindings::exports::paxos::default::paxos_coordinator::{
     AcceptedResult, ElectionResult, Guest as CoordinatorGuest, GuestPaxosCoordinatorResource,
-    LearnResult, PaxosState, PromiseResult,
+    LearnResult, PaxosState, PromiseResult
 };
 use bindings::paxos::default::{acceptor, kv_store, learner, logger, network, proposer, failure_detector};
 
@@ -27,6 +28,14 @@ pub struct MyPaxosCoordinator;
 
 impl CoordinatorGuest for MyPaxosCoordinator {
     type PaxosCoordinatorResource = MyPaxosCoordinatorResource;
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Phase {
+    Start,
+    Prepare,
+    Promise,
+    AcceptCommit,
 }
 
 pub struct MyPaxosCoordinatorResource {
@@ -42,8 +51,8 @@ pub struct MyPaxosCoordinatorResource {
     // A key for storing committed Paxos values in the key/value store.
     paxos_key: String,
 
-
-
+    phase: Cell<Phase>,
+    node_id: Cell<u64>
     // heartbeats: Arc<Mutex<HashMap<u64, u64>>>,
     // node_id: u64,
     // leader_id: Cell<u64>,
@@ -111,7 +120,7 @@ impl MyPaxosCoordinatorResource {
     {
         match payload_option {
             Some(p) => {
-                logger::log_info(&format!("Processing payload for kind {:?}: {:?}", kind, p));
+                // logger::log_info(&format!("Processing payload for kind {:?}: {:?}", kind, p));
                 let result = handler(p);
                 self.build_response(kind, result)
             }
@@ -150,6 +159,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             // node_id,
             // election_in_progress: Cell::new(false),
             failure_detector,
+            phase: Cell::new(Phase::Start),
+            node_id: Cell::new(node_id)
         }
     }
 
@@ -178,7 +189,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         };
 
         // Build and broadcast the prepare message.
-        let prepare_payload = network::PreparePayload { slot, ballot };
+        let prepare_payload = network::PreparePayload {
+            sender: "test".to_string(),
+            slot, ballot 
+        };
         let message = network::NetworkMessage {
             kind: network::NetworkMessageKind::Prepare,
             payload: network::MessagePayload::Prepare(prepare_payload),
@@ -216,6 +230,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         // Build and broadcast the accept message.
         let accept_payload = network::AcceptPayload {
+            sender: "quickfix".to_string(),
             slot,
             ballot,
             proposal: proposal_value.clone(),
@@ -327,22 +342,13 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     // Testing of fire and forget
-    fn client_handle_test(&self, client_value: String) -> bool{
-        let client_proposal = ClientProposal {
-            value: client_value,
+    fn client_handle_test(&self, client_value: String) -> bool {
+
+        let client_prposal = ClientProposal {
+            value: client_value
         };
 
-        let pr: proposer::ProposeResult = self.proposer.propose(&client_proposal);
-
-        let prepare_payload = network::PreparePayload { slot: pr.proposal.slot, ballot: pr.proposal.ballot };
-        let message = network::NetworkMessage {
-            kind: network::NetworkMessageKind::Prepare,
-            payload: network::MessagePayload::Prepare(prepare_payload),
-        };
-
-        println!("Sending prepare message at time: {:?}", wasi::clocks::monotonic_clock::now());
-        network::send_message_forget(&self.nodes, &message);
-        println!("Sent prepare message at time: {:?}", wasi::clocks::monotonic_clock::now());
+        self.proposer.enqueue_client_request(&client_prposal);
         true
     }
 
@@ -351,10 +357,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// appropriate Paxos logic (e.g. on the acceptor, learner, or KV store),
     /// then returns a corresponding NetworkResponse.
     fn handle_message(&self, message: NetworkMessage) -> NetworkResponse {
-        logger::log_info(&format!(
-            "Coordinator: Received network message: {:?}",
-            message
-        ));
+        // logger::log_info(&format!(
+        //     "Coordinator: Received network message: {:?}",
+        //     message
+        // ));
 
         match message.kind {
             network::NetworkMessageKind::Prepare => {
@@ -368,7 +374,34 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                                 "Handling PREPARE: slot={}, ballot={}",
                                 prep.slot, prep.ballot,
                             ));
-                            self.acceptor.prepare(prep.slot, prep.ballot)
+                            // Quickfix
+                            let prepare = Prepare {
+                                sender: prep.sender,
+                                slot: prep.slot,
+                                ballot: prep.ballot
+                            };
+                            if let Some(promise) = self.acceptor.handle_prepare(&prepare) {
+
+                                // fire promise back
+                                let promise_payload = network::PromisePayload {
+                                    ballot: promise.ballot,
+                                    accepted: promise.accepted
+                                }; 
+
+                                let message = network::NetworkMessage {
+                                    kind: network::NetworkMessageKind::Promise,
+                                    payload: network::MessagePayload::Promise(promise_payload),
+                                };
+
+                                let return_node: Vec<network::Node> = self.nodes
+                                    .iter()
+                                    .filter(|node| node.address == prepare.sender)
+                                    .cloned() // clones each matching node
+                                    .collect();
+                                
+                                network::send_message_forget(&return_node, &message);
+                            }
+                            true
                         },
                     )
                 } else {
@@ -384,10 +417,16 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         Some(payload),
                         |prom: network::PromisePayload| {
                             logger::log_info(&format!(
-                                "Handling PROMISE: slot={}, ballot={}, accepted_ballot={}, accepted_value={:?}",
-                                prom.slot, prom.ballot, prom.accepted_ballot, prom.accepted_value)
+                                "Handling PROMISE: ballot={}",
+                                prom.ballot)
                             );
-                            // TODO: Never used?
+
+                            let promise = Promise {
+                                ballot: prom.ballot,
+                                accepted: prom.accepted,
+                            };
+
+                            self.proposer.register_promise(&promise);
                             true
                         },
                     )
@@ -408,12 +447,44 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                                 acc.slot, acc.ballot, acc.proposal
                             ));
                             // Create an accepted entry and process the accept request.
-                            let entry = acceptor::AcceptedEntry {
+                            // let entry = acceptor::AcceptedEntry {
+                            //     slot: acc.slot,
+                            //     ballot: acc.ballot,
+                            //     value: acc.proposal,
+                            // };
+                            // self.acceptor.accept(&entry)
+
+
+                            let accept = Accept {
+                                sender: acc.sender,
                                 slot: acc.slot,
                                 ballot: acc.ballot,
-                                value: acc.proposal,
+                                value: acc.proposal
                             };
-                            self.acceptor.accept(&entry)
+
+                            if let Some(learn) = self.acceptor.handle_accept(&accept) {
+                                
+
+                                let learn_payload = network::AcceptedPayload {
+                                    slot: learn.slot,
+                                    ballot: learn.ballot,
+                                    value: learn.value,
+                                };
+
+                                let message = network::NetworkMessage {
+                                    kind: network::NetworkMessageKind::Accepted,
+                                    payload: network::MessagePayload::Accepted(learn_payload)
+                                };
+
+                                let return_node: Vec<network::Node> = self.nodes
+                                    .iter()
+                                    .filter(|node| node.address == accept.sender)
+                                    .cloned() // clones each matching node
+                                    .collect();
+
+                                network::send_message_forget(&return_node, &message);
+                            }
+                            true
                         },
                     )
                 } else {
@@ -431,10 +502,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         |accd: network::AcceptedPayload| {
                             logger::log_info(&format!(
                                 "Handling ACCEPTED: slot={}, ballot={}, accepted={}",
-                                accd.slot, accd.ballot, accd.accepted
+                                accd.slot, accd.ballot, accd.value
                             ));
                             // Update internal state as needed.
-                            // TODO: Never used?
+                            let learn = Learn {
+                                slot: accd.slot,
+                                ballot: accd.ballot,
+                                value: accd.value
+                                
+                            };
+                            
+                            self.proposer.register_learn(&learn);
                             true
                         },
                     )
@@ -456,7 +534,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                             ));
                             // Update the learner and persist value in the kv-store.
                             self.learner.learn(comm.slot, &comm.value.clone());
-                            self.kv_store.set(&self.paxos_key, &comm.value);
+                            self.kv_store.set(&self.paxos_key, &comm.value);                
+                            self.proposer.advance_adu();
                             true
                         },
                     )
@@ -472,10 +551,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         network::NetworkMessageKind::Heartbeat,
                         Some(payload),
                         |hb: network::HeartbeatPayload| {
-                            logger::log_info(&format!(
-                                "Handling HEARTBEAT: nodeid={}",
-                                hb.nodeid,
-                            ));
+                            // logger::log_info(&format!(
+                            //     "Handling HEARTBEAT: nodeid={}",
+                            //     hb.nodeid,
+                            // ));
                             self.failure_detector.heartbeat(hb.nodeid);
                             true
                         },
@@ -551,72 +630,121 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         let new_lead = self.failure_detector.checker();
         if let Some(leader) = new_lead {
             logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
+            if leader == self.node_id.get() {
+                self.proposer.become_leader();
+            }
         }
     }
 
-    // OLD STALE CHECKER
-    // fn stale_checker(&self, threshold: u64) {
-    //     // Currently leader does not check for staleness
-    //     let leader_id = self.leader_id.get();
-    //     if leader_id == self.node_id {
-    //         return;
-    //     }
-    //     let now = wasi::clocks::monotonic_clock::now();
-    //     let map = self.heartbeats.lock().unwrap();
-    //     let stale_nodes: Vec<u64> = map
-    //         .iter()
-    //         .filter_map(|(nodeid, timestamp)| {
-    //             if now - *timestamp > threshold {
-    //                 Some(*nodeid)
-    //             } else {
-    //                 None
-    //             }
-    //         })
-    //         .collect();
+    fn rasmus_prepare_phase(&self, node_addr: String) {
+
+        // get prepare from proposer
+        let prepare = self.proposer.create_prepare(&node_addr);
         
-    //     // Check if leader is stale 
-    //     // Assume this means failure :clownemoji: 
-    //     // Start election
-    //     if stale_nodes.contains(&leader_id) && !self.election_in_progress.get() {
-    //         logger::log_warn(&format!("Leader {} is stale. Triggering leader election.", &leader_id));
-    //         let election_payload = network::ElectionPayload {
-    //             candidate_id: self.node_id,
-    //         };
-    //         let message = network::NetworkMessage {
-    //             kind: network::NetworkMessageKind::Election,
-    //             payload: network::MessagePayload::Election(election_payload),
-    //         };
+        // call local acceptor and register promise if exisits
+        if let Some(local_promise) = self.acceptor.handle_prepare(&prepare) {
+            self.proposer.register_promise(&local_promise);
+        }
 
-    //         let mut higher_nodes = vec![];
-    //         for node in &self.nodes {
-    //             if node.id > self.node_id {
-    //                 higher_nodes.push(node.clone());
-    //             }
-    //         }
+        // fire and forget prepare to other nodes:
+        let prepare_payload = network::PreparePayload { 
+            sender: prepare.sender,
+            slot: prepare.slot,
+            ballot: prepare.ballot,
+         };
+        let message = network::NetworkMessage {
+            kind: network::NetworkMessageKind::Prepare,
+            payload: network::MessagePayload::Prepare(prepare_payload),
+        };
 
-    //         let responses = network::send_message(&higher_nodes, &message);
-    //         // Check atleast one response is success
-    //         if responses.iter().any(|r| r.status == network::StatusKind::Success) {
-    //             logger::log_debug("Higher node id exist - Waiting for LEADER CHANGE message");
-    //             self.election_in_progress.set(true);
+        network::send_message_forget(&self.nodes, &message);
+    }
 
-    //         } else {
-    //             logger::log_debug("No response from higher nodeid - becoming leader");
-    //             let leader_payload = network::LeaderPayload {
-    //                 leader_id: self.node_id,
-    //             };
-    //             let message = network::NetworkMessage {
-    //                 kind: network::NetworkMessageKind::Leader,
-    //                 payload: network::MessagePayload::Leader(leader_payload),
-    //             };
-    //             //
-    //             network::send_message(&self.nodes, &message);
+    fn rasmus_promise_phase(&self) -> bool {
+        let test = self.proposer.process_promises(self.get_quorum());
+        test
+    }
 
-    //             // Update leader id
-    //             self.leader_id.set(self.node_id);
-    //             self.proposer.become_leader();
-    //         }
+    // This will send out accept messages for all values in client queue
+    // To simulate that accept messages can be sent out and this node can crash in the meantime,
+    // the new leader node will pick them up because of accepted in acceptors - Not implemented yet
+    fn rasmus_accept_phase(&self, node_addr: String) -> bool {
+        let mut sent = false;
+        while let Some(accept) = self.proposer.create_accept(&node_addr) {
+            sent = true;
+            if let Some(local_learn) = self.acceptor.handle_accept(&accept) {
+                   self.proposer.register_learn(&local_learn);
+            }
 
-    //     }
-    // }
+            let accept_payload = network::AcceptPayload {
+                sender: accept.sender,
+                slot: accept.slot,
+                ballot: accept.ballot,
+                proposal: accept.value
+            };
+
+            let message = network::NetworkMessage {
+                kind: network::NetworkMessageKind::Accept,
+                payload: network::MessagePayload::Accept(accept_payload)
+            };
+
+            network::send_message_forget(&self.nodes, &message);
+            // return true
+        }
+        sent
+    }
+
+    // TODO : return to sender, should also be able to return to sender accross leader change :clownemoji:
+    fn rasmus_commit_phase(&self) -> bool {  
+        // learned value -> commit
+        if let Some(learn) = self.proposer.process_learns(self.get_quorum()) {
+            
+            self.learner.learn(learn.slot, &learn.value);
+            self.kv_store.set(&self.paxos_key, &learn.value);
+
+            self.proposer.advance_adu();
+
+            let commit_payload = network::CommitPayload {
+                slot: learn.slot,
+                value: learn.value,
+            };
+            let message = network::NetworkMessage {
+                kind: network::NetworkMessageKind::Commit,
+                payload: network::MessagePayload::Commit(commit_payload),
+            };
+            
+            network::send_message_forget(&self.nodes, &message);
+            return true
+        }
+        false
+    }
+
+    // Ticker called from host
+    fn paxos_run_loop(&self, node_addr: String) {
+        match self.phase.get() {
+            Phase::Start => {
+                if self.proposer.is_leader() {
+                    self.phase.set(Phase::Prepare);
+                }
+            }
+            // Phase 1
+            Phase::Prepare => {
+                logger::log_info("[Leader Coordinator] - Initiating prepare");
+                self.rasmus_prepare_phase(node_addr);
+                self.phase.set(Phase::Promise);
+            }
+            Phase::Promise =>  {
+                logger::log_info("[Leader Coordinator] - Checking promises");
+                if self.rasmus_promise_phase() {
+                    self.phase.set(Phase::AcceptCommit);
+                }
+            }
+            // Phase 2 - We are here until crash
+            Phase::AcceptCommit => {
+                self.rasmus_accept_phase(node_addr);
+                self.rasmus_commit_phase();
+            }
+        }
+    }
+
 }

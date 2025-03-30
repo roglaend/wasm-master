@@ -7,10 +7,12 @@ mod paxos_bindings;
 mod paxos_wasm;
 mod translation_layer;
 mod tests;
+mod run_paxos_service;
 
 use clap::Parser;
 use config::Config;
 use failure_service::FailureService;
+use run_paxos_service::RunPaxosService;
 use grpc_service::PaxosService;
 use paxos_wasm::PaxosWasmtime;
 use proto::paxos_proto;
@@ -62,10 +64,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         paxos_wasmtime: paxos_wasmtime.clone(),
     });
 
+    let run_paxos_service= Arc::new(RunPaxosService {
+        paxos_wasmtime: paxos_wasmtime.clone()
+    });
     
     failure_service.start_heartbeat_sender(config.node_id, endpoints_addr.clone(), Duration::from_millis(1000)); // Send hearbeats every second
     
     failure_service.start_failure_service(Duration::from_secs(5)); // Check for failures every 5 seconds - Adjust as needed
+
+    // failure_service.start_paxos_run_loop(Duration::from_millis(300), config.bind_addr.clone());
+
+    // start paxos run loop
+    run_paxos_service.start_paxos_run_loop(Duration::from_millis(500), config.bind_addr.clone());
+
 
     // Now run the gRPC server in the foreground
     let addr = config.bind_addr.parse()?;
