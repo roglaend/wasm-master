@@ -1,44 +1,52 @@
 use crate::paxos_bindings::{self, MessagePayloadExt as _};
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use futures::future::join_all;
 use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Clone)]
 pub struct PaxosService {
     pub paxos_wasmtime: Arc<PaxosWasmtime>,
 
-    pub client_seq: Arc<AtomicU32>, // TODO: Fix this hack
+    pub client_seq: Arc<AtomicU32>, // TODO: Fix this hack, having proper control of this and other user specific data.
 }
 
 pub async fn create_clients(
     endpoints: Vec<String>,
 ) -> Arc<Mutex<Vec<paxos_proto::paxos_client::PaxosClient<tonic::transport::Channel>>>> {
-    let mut clients_vec = Vec::new();
-    for endpoint in endpoints {
+    // Create a vector of connection futures.
+    let connection_futures = endpoints.into_iter().map(|endpoint| {
         let full_endpoint = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
             endpoint
         } else {
             format!("http://{}", endpoint)
         };
-        let client = paxos_proto::paxos_client::PaxosClient::connect(full_endpoint)
-            .await
-            .unwrap();
-        clients_vec.push(client);
-    }
+        async move {
+            paxos_proto::paxos_client::PaxosClient::connect(full_endpoint)
+                .await
+                .ok()
+        }
+    });
+
+    // Run all connection futures concurrently.
+    let results = join_all(connection_futures).await;
+
+    // Filter out failed connections. // TODO: Handle this properly or just log it?
+    let clients_vec: Vec<_> = results.into_iter().filter_map(|client| client).collect();
+
     Arc::new(Mutex::new(clients_vec))
 }
-
 #[tonic::async_trait]
 impl paxos_proto::paxos_server::Paxos for PaxosService {
     async fn propose_value(
         &self,
         request: Request<paxos_proto::ProposeRequest>,
     ) -> Result<Response<paxos_proto::ProposeResponse>, Status> {
-        info!("GRPC propose_value: start");
+        info!("[gRPC Service] Starting process to submit client request to wasm component.");
         let req = request.into_inner();
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
@@ -46,7 +54,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         // TODO: Have a standardize way to do this conversion. Have it per user.
         let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let request: ClientRequest = ClientRequest {
+        let client_request: ClientRequest = ClientRequest {
             client_id: "Client 1".into(),
             client_seq: seq,
             value: Value {
@@ -56,11 +64,18 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         };
 
         let success = resource
-            .call_run_paxos(&mut *store, self.paxos_wasmtime.resource_handle, &request)
+            .call_submit_client_request(
+                &mut *store,
+                self.paxos_wasmtime.resource_handle,
+                &client_request,
+            )
             .await
-            .map_err(|e| Status::internal(format!("Propose failed: {:?}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
 
-        info!("GRPC propose_value: finish (success: {})", success);
+        info!(
+            "[gRPC Service] Finished submitting client request, success: {}).",
+            success
+        );
         Ok(Response::new(paxos_proto::ProposeResponse { success }))
     }
 
@@ -69,7 +84,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         &self,
         request: Request<paxos_proto::NetworkMessage>,
     ) -> Result<Response<paxos_proto::NetworkMessage>, Status> {
-        info!("GRPC deliver_message: start");
+        debug!("[gRPC Service] Starting process to deliver network message to wasm component.");
         let proto_msg = request.into_inner();
         let wit_msg = paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
             .map_err(|e| Status::invalid_argument(format!("Invalid network message: {}", e)))?;
@@ -80,10 +95,12 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let internal_response = resource
             .call_handle_message(&mut *store, self.paxos_wasmtime.resource_handle, &wit_msg)
             .await
-            .map_err(|e| Status::internal(format!("Deliver message failed: {:?}", e)))?;
+            .map_err(|e| {
+                Status::internal(format!("Failed to handle delivered message: {:?}", e))
+            })?;
 
-        info!(
-            "GRPC deliver_message: finish payload type: {}",
+        debug!(
+            "[gRPC Service] Finished finished delivering message to wasm component, payload type: {}.",
             internal_response.payload.payload_type()
         );
 
@@ -91,6 +108,42 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let proto_response: paxos_proto::NetworkMessage = internal_response.into();
         Ok(Response::new(proto_response))
     }
+
+    //* Old way to run a single synchronous paxos instance. */
+    // async fn run_paxos_instance_sync(
+    //     &self,
+    //     request: Request<paxos_proto::ProposeRequest>,
+    // ) -> Result<Response<paxos_proto::ProposeResponse>, Status> {
+    //     info!(
+    //         "[gRPC Service] Starting process to run a single instance of the paxos algorithm synchronously."
+    //     );
+    //     let req = request.into_inner();
+    //     let mut store = self.paxos_wasmtime.store.lock().await;
+    //     let resource = self.paxos_wasmtime.resource();
+
+    //     // TODO: Have a standardize way to do this conversion. Have it per user.
+    //     let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
+
+    //     let request: ClientRequest = ClientRequest {
+    //         client_id: "Client 1".into(),
+    //         client_seq: seq,
+    //         value: Value {
+    //             is_noop: false,
+    //             command: Some(req.value),
+    //         },
+    //     };
+
+    //     let success = resource
+    //         .run_paxos_instance_sync(&mut *store, self.paxos_wasmtime.resource_handle, &req)
+    //         .await
+    //         .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
+
+    //     info!(
+    //         "[gRPC Service] Finished running the single synchronous instance of paxos algorithm, success: {}).",
+    //         success
+    //     );
+    //     Ok(Response::new(paxos_proto::ProposeResponse { success }))
+    // }
 
     async fn get_value(
         &self,

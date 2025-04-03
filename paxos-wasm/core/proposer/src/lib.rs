@@ -1,12 +1,12 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "proposer-world",
         // generate_unused_types: true,
-        additional_derives: [PartialEq],
+        additional_derives: [PartialEq, Clone],
     });
 }
 
@@ -15,9 +15,9 @@ bindings::export!(MyProposer with_types_in bindings);
 use bindings::exports::paxos::default::proposer::{Guest, GuestProposerResource, ProposerState};
 use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{
-    Accepted, Ballot, ClientRequest, Promise, Proposal, Slot, Value,
+    Accepted, Ballot, ClientRequest, PValue, Promise, Proposal, Slot, Value,
 };
-use bindings::paxos::default::proposer_types::{AcceptResult, PrepareOutcome, PrepareResult};
+use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult};
 
 pub struct MyProposer;
 
@@ -25,25 +25,123 @@ impl Guest for MyProposer {
     type ProposerResource = MyProposerResource;
 }
 
-// Maintains current state, pending proposals, and in-flight proposals.
 pub struct MyProposerResource {
     is_leader: Cell<bool>,
     num_acceptors: u64,
+    ballot_delta: Ballot,
 
     current_slot: Cell<Slot>,
     current_ballot: Cell<Ballot>,
+    // adu: Cell<Ballot>,
 
+    // New values submitted by clients.
     pending_client_requests: RefCell<VecDeque<ClientRequest>>,
-    in_flight: RefCell<HashMap<Slot, Proposal>>, //* Per instance (slot) proposals */
+    // Values that must be proposed again after a failed accept phase.
+    prioritized_values: RefCell<VecDeque<PValue>>, // TODO: Have it indexed by slot instead to enforce slot -> value mapping for re-proposals?
+    // Proposals currently in flight, indexed by slot.
+    in_flight_proposals: RefCell<HashMap<Slot, Proposal>>,
+
+    accepted_proposals: RefCell<BTreeMap<Slot, Proposal>>, // Adu, just per slot and with the proposal
+                                                           // TODO: Move the state and handling of in_flight_accepted on the proposer agent here?
 }
 
 impl MyProposerResource {
     fn quorum(&self) -> u64 {
         return (self.num_acceptors / 2) + 1;
     }
+
+    // fn advance_adu(&self) -> Slot {
+    //     self.adu.set(self.adu.get() + 1);
+    //     self.adu.get()
+    // }
+
+    fn get_next_slot(&self) -> Slot {
+        let next_slot = self.current_slot.get() + 1;
+        self.current_slot.set(next_slot);
+        next_slot
+    }
+
+    fn next_value(&self) -> Option<Value> {
+        if let Some(val) = self.prioritized_values.borrow_mut().pop_front() {
+            Some(val.value?) // TODO: Enforce the usage of same slot, should be the same though?
+        } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
+            Some(req.value)
+        } else {
+            None
+        }
+    }
+
+    /// Collect all accepted values for slots higher than min_slot,
+    /// ensuring that only those slots that have reached quorum are kept.
+    /// Also fills in missing slots with no-op PValue entries.
+    fn collect_accepted_values_with_quorum(
+        &self,
+        min_slot: Slot,
+        promises: &[Promise],
+    ) -> Vec<PValue> {
+        let quorum = self.quorum() as usize;
+        let ballot = self.current_ballot.get();
+
+        // Map each slot to (count, best accepted value)
+        let mut slot_map: HashMap<Slot, (usize, PValue)> = HashMap::new();
+
+        for promise in promises {
+            for accepted in &promise.accepted {
+                // Consider only accepted values for slots higher than min_slot.
+                if accepted.slot > min_slot {
+                    // Get or insert the current entry for the slot.
+                    let entry = slot_map
+                        .entry(accepted.slot)
+                        .or_insert((0, accepted.clone()));
+                    entry.0 += 1; // The counter
+                    // Choose the accepted value with the highest ballot.
+                    if accepted.ballot > entry.1.ballot {
+                        entry.1 = accepted.clone();
+                    }
+                }
+            }
+        }
+
+        // Collect only the accepted values that meet the quorum requirement.
+        let mut accepted_with_quorum: Vec<PValue> = slot_map
+            .into_iter()
+            .filter_map(|(_slot, (count, accepted))| {
+                if count >= quorum {
+                    Some(accepted)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        accepted_with_quorum.sort_by_key(|accepted| accepted.slot);
+
+        // Fill in missing slots with no-op PValue entries.
+        let mut complete_values = Vec::new();
+        let mut expected_slot = min_slot + 1;
+        for accepted in accepted_with_quorum.into_iter() {
+            // For any missing slot, insert a no-op value.
+            let cur_slot = accepted.slot;
+            while expected_slot < cur_slot {
+                complete_values.push(PValue {
+                    slot: expected_slot,
+                    ballot: ballot,
+                    value: Some(Value {
+                        is_noop: true,
+                        command: None,
+                    }), // TODO: No-op. Do this another place?
+                });
+                expected_slot += 1;
+            }
+            complete_values.push(accepted);
+            expected_slot = cur_slot + 1;
+        }
+
+        complete_values
+    }
 }
 
-// TODO: Remove or improve upon the redundant return types
+// TODO: Make the proposer also increase ballot if phase 1 fails and try again
 
 impl GuestProposerResource for MyProposerResource {
     fn new(is_leader: bool, num_acceptors: u64, init_ballot: Ballot) -> Self {
@@ -57,12 +155,16 @@ impl GuestProposerResource for MyProposerResource {
         Self {
             is_leader: Cell::new(is_leader),
             num_acceptors,
+            ballot_delta: init_ballot,
 
             current_slot: Cell::new(0),
             current_ballot: Cell::new(init_ballot),
-
+            // adu: Cell::new(0),
             pending_client_requests: RefCell::new(VecDeque::new()),
-            in_flight: RefCell::new(HashMap::new()),
+            prioritized_values: RefCell::new(VecDeque::new()),
+            in_flight_proposals: RefCell::new(HashMap::new()),
+            // in_flight_accepted: RefCell::new(BTreeMap::new()),
+            accepted_proposals: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -80,8 +182,13 @@ impl GuestProposerResource for MyProposerResource {
                 .iter()
                 .cloned()
                 .collect(),
-            in_flight: self.in_flight.borrow().values().cloned().collect(),
-            last_proposal: self.in_flight.borrow().values().last().cloned(),
+            in_flight: self
+                .in_flight_proposals
+                .borrow()
+                .values()
+                .cloned()
+                .collect(),
+            last_proposal: self.in_flight_proposals.borrow().values().last().cloned(),
         }
     }
 
@@ -92,11 +199,23 @@ impl GuestProposerResource for MyProposerResource {
         true
     }
 
-    fn get_proposal(&self, slot: Slot) -> Option<Proposal> {
-        return self.in_flight.borrow().get(&slot).cloned();
+    fn get_current_slot(&self) -> Slot {
+        self.current_slot.get()
     }
 
-    /// Creates the next proposal if one client_request is pending and the node is leader.
+    fn get_current_ballot(&self) -> Slot {
+        self.current_ballot.get()
+    }
+
+    fn get_in_flight_proposal(&self, slot: Slot) -> Option<Proposal> {
+        return self.in_flight_proposals.borrow().get(&slot).cloned();
+    }
+    // TODO: Merge these by having a "accepted" field on the Proposal itself?
+
+    fn get_accepted_proposal(&self, slot: Slot) -> Option<Proposal> {
+        return self.accepted_proposals.borrow().get(&slot).cloned();
+    }
+
     /// Returns Some(proposal) if created; otherwise, None.
     fn create_proposal(&self) -> Option<Proposal> {
         if !self.is_leader.get() {
@@ -104,30 +223,30 @@ impl GuestProposerResource for MyProposerResource {
             return None;
         }
 
-        let client_req = match self.pending_client_requests.borrow_mut().pop_front() {
-            Some(cr) => cr,
+        let value = match self.next_value() {
+            Some(val) => val,
             None => {
-                logger::log_info("[Core Proposer] No pending client requests available.");
+                logger::log_info("[Core Proposer] No pending values available for proposal.");
                 return None;
             }
         };
 
-        // Assign the next available slot.
-        let slot = self.current_slot.get();
-        self.current_slot.set(slot + 1);
+        let slot = self.get_next_slot();
 
         let prop = Proposal {
-            ballot: self.current_ballot.get(),
+            ballot: self.get_current_ballot(),
             slot,
-            client_request: client_req,
+            value,
         };
 
         // Create an in-flight entry with proposal
-        self.in_flight.borrow_mut().insert(slot, prop.clone());
+        self.in_flight_proposals
+            .borrow_mut()
+            .insert(slot, prop.clone());
 
         logger::log_info(&format!(
-            "[Core Proposer] Created proposal: ballot = {:?}, slot = {}, value = '{}'.",
-            prop.client_request.value, prop.slot, prop.ballot,
+            "[Core Proposer] Created proposal: ballot = {}, slot = {}, value = {:?}.",
+            prop.ballot, prop.slot, prop.value,
         ));
 
         Some(prop)
@@ -135,77 +254,50 @@ impl GuestProposerResource for MyProposerResource {
 
     /// Processes promise responses and returns a prepare result.
     /// Chooses the highest accepted value if available.
-    fn process_prepare(&self, slot: Slot, promises: Vec<Promise>) -> PrepareResult {
-        let prop = match self.get_proposal(slot) {
-            Some(p) => p,
-            None => {
-                logger::log_error(&format!(
-                    "[Core Proposer] In-flight proposal for slot {} not found during prepare phase.",
-                    slot
-                ));
-                return PrepareResult::MissingProposal;
-            }
-        };
+    fn process_prepare(&self, min_slot: Slot, promises: Vec<Promise>) -> PrepareResult {
+        let quorum: usize = self.quorum() as usize;
+        let _current_slot = self.current_slot.get();
+        let current_ballot = self.current_ballot.get();
 
-        // Filter promises that are for the right slot and ballot.
+        // Filter promises for the current ballot.
         let valid_promises: Vec<&Promise> = promises
             .iter()
-            .filter(|prom| prom.slot == prop.slot && prom.ballot == prop.ballot)
+            .filter(|p| p.ballot == current_ballot)
             .collect();
 
-        let count = valid_promises.len();
-        let quorum = self.quorum() as usize;
-
-        if count < quorum {
+        if valid_promises.len() < quorum {
             logger::log_warn(&format!(
                 "[Core Proposer] Prepare phase failed: only {} valid promises received (quorum required: {}).",
-                count, quorum
+                valid_promises.len(),
+                quorum
             ));
             return PrepareResult::QuorumFailure;
         }
-
         logger::log_debug(&format!(
             "[Core Proposer] Prepare phase: received {}/{} valid promises (quorum required: {}).",
-            count, self.num_acceptors, quorum
+            valid_promises.len(),
+            self.num_acceptors,
+            quorum
         ));
 
-        // Inspect already accepted proposals (if any) among those promises.
-        let mut highest_accepted_ballot = 0;
-        let mut chosen_value: Option<Value> = None;
-        for prom in valid_promises {
-            for pv in &prom.accepted {
-                // We filter by the same slot for clarity.
-                if pv.slot == prop.slot && pv.ballot > highest_accepted_ballot {
-                    highest_accepted_ballot = pv.ballot;
-                    chosen_value = pv.value.clone();
-                }
-            }
-        }
+        // TODO: use "current_slot" instead of having the "min_slot" argument?
+        let accepted_values = self.collect_accepted_values_with_quorum(min_slot, &promises);
 
-        // If no accepted value was found, use the original client's value.
-        let outcome = if let Some(val) = chosen_value {
-            PrepareOutcome {
-                chosen_value: val,
-                is_original: false,
-            }
-        } else {
-            PrepareOutcome {
-                chosen_value: prop.client_request.value.clone(),
-                is_original: true,
-            }
-        };
+        // Save the accepted values into the pending accepted values queue.
+        self.prioritized_values.borrow_mut().extend(accepted_values);
 
         logger::log_info(&format!(
-            "[Core Proposer] Prepare phase succeeded for slot {} (is_original: {}).",
-            prop.slot, outcome.is_original
+            "[Core Proposer] Prepare phase succeeded with ballot {}.",
+            current_ballot
         ));
-        PrepareResult::Outcome(outcome)
+        // TODO: Enforce correct usage by setting a "phase" flag to "phase-2" here?
+        PrepareResult::Success
     }
 
     /// Processes accepted responses and returns an accept result.
     /// Compares the count of successful accepts against the quorum.
     fn process_accept(&self, slot: Slot, accepts: Vec<Accepted>) -> AcceptResult {
-        let prop = match self.get_proposal(slot) {
+        let prop = match self.get_in_flight_proposal(slot) {
             Some(p) => p,
             None => {
                 logger::log_error(&format!(
@@ -222,9 +314,24 @@ impl GuestProposerResource for MyProposerResource {
             .filter(|a| a.slot == prop.slot && a.ballot == prop.ballot && a.success)
             .count();
 
+        // TODO: Fix this
+        // if count >= self.num_acceptors as usize {
+        //     logger::log_debug(&format!(
+        //         "[Core Proposer] Accept phase failed for slot {}. All acceptors answered.",
+        //         slot
+        //     ));
+        //     self.prioritized_values.borrow_mut().push_back(PValue {
+        //         // TODO: Add back to queue as just a Value?
+        //         slot: slot,
+        //         ballot: self.current_ballot.get(),
+        //         value: Some(prop.value.clone()),
+        //     });
+        // }
+
         if count < self.quorum() as usize {
-            logger::log_warn(&format!(
-                "[Core Proposer] Accept phase failed: {} acceptances received (quorum is {}).",
+            logger::log_debug(&format!(
+                "[Core Proposer] Accept phase failed for slot {}: {} acceptances received (quorum is {}).",
+                slot,
                 count,
                 self.quorum()
             ));
@@ -234,42 +341,50 @@ impl GuestProposerResource for MyProposerResource {
                 "[Core Proposer] Accept phase succeeded for slot {} with {} acceptances.",
                 prop.slot, count
             ));
+            if self.get_in_flight_proposal(slot).is_none() {
+                return AcceptResult::MissingProposal;
+            }
+
             AcceptResult::Accepted(count as u64)
         }
     }
 
-    /// Finalizes a proposal using the chosen value.
-    /// Re-enqueues the original client request if the value changed.
-    fn finalize_proposal(&self, slot: Slot, chosen_value: Value) -> bool {
-        let prop = match self.get_proposal(slot) {
+    /// Finalizes a proposal
+    fn finalize_proposal(&self, slot: Slot) -> Option<Value> {
+        let prop = match self.get_in_flight_proposal(slot) {
             Some(p) => p,
             None => {
                 logger::log_error(&format!(
                     "[Core Proposer] In-flight proposal for slot {} not found during finalization.",
                     slot
                 ));
-                return false;
+                return None;
             }
         };
-        let slot = prop.slot;
-        self.in_flight.borrow_mut().remove(&slot);
+        self.in_flight_proposals.borrow_mut().remove(&slot);
+        self.accepted_proposals
+            .borrow_mut()
+            .insert(slot, prop.clone()); // TODO: Merge these by having a "accepted" field on the Proposal itself?
 
-        // TODO: More explicit Value equality check?
-        if prop.client_request.value != chosen_value {
-            logger::log_info(&format!(
-                "[Core Proposer] Finalized slot {}: chosen value {:?} differs from original {:?}. Re-enqueuing client request.",
-                slot, chosen_value, prop.client_request.value
-            ));
-            self.pending_client_requests
-                .borrow_mut()
-                .push_back(prop.client_request);
-        } else {
-            logger::log_info(&format!(
-                "[Core Proposer] Finalized slot {:?} with original value {:?}.",
-                slot, chosen_value
-            ));
-        }
-        true
+        logger::log_info(&format!(
+            "[Core Proposer] Finalized accepted slot {} with value {:?}.",
+            slot, prop.value
+        ));
+        Some(prop.value)
+    }
+
+    fn increase_ballot(&self) -> Ballot {
+        let new_ballot = self.current_ballot.get() + self.ballot_delta;
+        self.current_ballot.set(new_ballot);
+        logger::log_info(&format!(
+            "Core Proposer] Increased current ballot to: {}",
+            new_ballot
+        ));
+        new_ballot
+    }
+
+    fn is_leader(&self) -> bool {
+        self.is_leader.get()
     }
 
     // TODO: handle the process when leader change properly
@@ -277,17 +392,13 @@ impl GuestProposerResource for MyProposerResource {
     /// Increments the ballot and sets the leader flag.
     /// Returns true if leadership is acquired.
     fn become_leader(&self) -> bool {
-        if self.is_leader.get() {
+        if self.is_leader() {
             logger::log_warn("[Core Proposer] Already leader; cannot become leader again.");
             false
         } else {
-            let new_ballot = self.current_ballot.get() + 1;
-            self.current_ballot.set(new_ballot);
+            self.increase_ballot();
             self.is_leader.set(true);
-            logger::log_info(&format!(
-                "[Core Proposer] Leadership acquired with new ballot {}.",
-                new_ballot
-            ));
+            logger::log_info("[Core Proposer] Leadership acquired.");
             true
         }
     }
@@ -295,7 +406,7 @@ impl GuestProposerResource for MyProposerResource {
     /// Clears the leader flag.
     /// Returns true if leadership was successfully resigned.
     fn resign_leader(&self) -> bool {
-        if self.is_leader.get() {
+        if self.is_leader() {
             self.is_leader.set(false);
             logger::log_info("[Core Proposer] Leadership resigned.");
             true

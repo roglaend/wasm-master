@@ -13,6 +13,7 @@ fn main() {
         "composed_acceptor_agent",
         "learner",
         "kv_store",
+        "composed_failure_service",
     ];
     let socket = "paxos_coordinator";
 

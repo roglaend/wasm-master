@@ -39,8 +39,9 @@ impl HostLogger {
 
         let global_file = Arc::new(Mutex::new(
             OpenOptions::new()
-                .append(true)
+                .write(true)
                 .create(true)
+                .truncate(true)
                 .open(global_file_path)
                 .expect("Failed to open global log file"),
         ));
@@ -54,8 +55,9 @@ impl HostLogger {
     /// Create a new HostLogger given a node ID, node file path, and a shared global file.
     pub fn new(node: Node, node_file_path: &str, global_file: Arc<Mutex<std::fs::File>>) -> Self {
         let node_file = OpenOptions::new()
-            .append(true)
+            .write(true)
             .create(true)
+            .truncate(true)
             .open(node_file_path)
             .expect("Failed to open node-specific log file");
         HostLogger {
