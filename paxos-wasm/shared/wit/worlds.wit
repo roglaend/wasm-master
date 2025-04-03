@@ -22,6 +22,19 @@ world kv-store-world {
     export kv-store;
 }
 
+world leader-detector-world {
+    import logger;
+    
+    export leader-detector;
+}
+
+world failure-detector-world {
+    import logger;
+    import leader-detector;
+
+    export failure-detector;
+}
+
 world paxos-world {
     import proposer-agent;
     import acceptor-agent;
@@ -31,6 +44,8 @@ world paxos-world {
 
     import learner;
     import kv-store;
+
+    import failure-detector;
 
     /// Needs to be implemented by host
     import network;

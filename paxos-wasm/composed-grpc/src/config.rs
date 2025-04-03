@@ -44,12 +44,13 @@ impl SharedConfig {
 }
 
 /// Complete configuration including both shared and node-specific values.
+#[derive(Clone)]
 pub struct Config {
     pub node: Node,
     pub bind_addr: String,
     pub remote_nodes: Vec<Node>,
     pub leader_id: u64,
-    pub _num_nodes: u64,
+    pub is_event_driven: bool,
 }
 
 impl Config {
@@ -57,7 +58,6 @@ impl Config {
     /// It computes the bind address for this node and constructs remote node instances for all other endpoints.
     pub fn new(node_id: u64) -> Self {
         let shared = SharedConfig::load();
-        let num_nodes = shared.endpoints.len() as u64;
 
         // Validate that node_id is within the range of defined endpoints (using 1-indexing).
         if node_id == 0 || (node_id as usize) > shared.endpoints.len() {
@@ -90,12 +90,19 @@ impl Config {
             })
             .collect();
 
+        // Read the event-driven flag from the environment.
+        // Defaults to "false" if not provided.
+        let is_event_driven: bool = std::env::var("IS_EVENT_DRIVEN")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse()
+            .expect("IS_EVENT_DRIVEN must be a boolean");
+
         Self {
             node: current_node,
             bind_addr,
             remote_nodes,
             leader_id: shared.leader_id,
-            _num_nodes: num_nodes,
+            is_event_driven,
         }
     }
 }

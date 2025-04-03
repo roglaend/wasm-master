@@ -97,17 +97,18 @@ message Empty {}
 // The unified network message.
 message NetworkMessage {
   Node sender = 1;
-  // The oneof 'payload' encodes the variant. 
-  // The field that is set determines the message type.
   oneof payload {
-    PreparePayload prepare = 2;
-    PromisePayload promise = 3;
-    AcceptPayload accept = 4;
-    AcceptedPayload accepted = 5;
-    LearnPayload learn = 6;
-    // LearnPayload learn_ack = 7;
-    HeartbeatPayload heartbeat = 7;
-    Empty ignore = 8;
+    Empty ignore = 2;
+    PreparePayload prepare = 3;
+    PromisePayload promise = 4;
+    AcceptPayload accept = 5;
+    AcceptedPayload accepted = 6;
+    LearnPayload learn = 7;
+    // LearnPayload learn_ack = 7; // TODO: Useful?
+    HeartbeatPayload heartbeat = 8;
+
+    // ElectionPayload = 9; // Create if used
+    // LeaderPayload = 10;  // Create if used
   }
 }
 
@@ -133,6 +134,8 @@ service Paxos {
   rpc ProposeValue (ProposeRequest) returns (ProposeResponse);
   // Deliver a network message.
   rpc DeliverMessage (NetworkMessage) returns (NetworkMessage);
+  // Alternative (old) method to run a single synchronous paxos instance.
+  // rpc RunPaxosInstanceSync(ProposeRequest) returns (ProposeResponse);
   // Retrieve the currently learned value.
   rpc GetValue (Empty) returns (GetValueResponse);
   // Retrieve the complete Paxos state.

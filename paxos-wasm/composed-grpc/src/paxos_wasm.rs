@@ -1,6 +1,7 @@
 use crate::host_logger::HostLogger;
 use crate::host_messenger::HostMessenger;
 use crate::paxos_bindings::paxos::default::paxos_types::Node;
+use crate::paxos_bindings::paxos::default::proposer_agent::RunConfig;
 use crate::paxos_bindings::{self, MessagePayloadExt};
 use proto::paxos_proto;
 use std::error::Error;
@@ -55,6 +56,7 @@ impl PaxosWasmtime {
         node: paxos_bindings::paxos::default::paxos_types::Node,
         nodes: Vec<paxos_bindings::paxos::default::paxos_types::Node>,
         is_leader: bool,
+        run_config: RunConfig,
     ) -> Result<Self, Box<dyn Error>> {
         let mut config = wasmtime::Config::default();
         config.async_support(true);
@@ -87,7 +89,7 @@ impl PaxosWasmtime {
         let paxos_guest = final_bindings.paxos_default_paxos_coordinator();
         let paxos_resource = paxos_guest.paxos_coordinator_resource();
         let resource_handle = paxos_resource
-            .call_constructor(&mut store, &node, &nodes, is_leader)
+            .call_constructor(&mut store, &node, &nodes, is_leader, run_config)
             .await?;
 
         Ok(Self {
@@ -118,13 +120,29 @@ impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
         "Hello".to_string()
     }
 
+    async fn send_message_forget(
+        &mut self,
+        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
+        message: paxos_bindings::paxos::default::network::NetworkMessage,
+    ) -> () {
+        self.logger.log_info(format!(
+            "[Host Messenger] Sending network message, fire-and-forget , with payload type: {}",
+            message.payload.payload_type()
+        ));
+
+        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
+        let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
+
+        HostMessenger::send_message_forget(endpoints, proto_msg).await
+    }
+
     async fn send_message(
         &mut self,
         nodes: Vec<paxos_bindings::paxos::default::network::Node>,
         message: paxos_bindings::paxos::default::network::NetworkMessage,
     ) -> Vec<paxos_bindings::paxos::default::network::NetworkMessage> {
         self.logger.log_info(format!(
-            "Sending network message with payload type: {}",
+            "[Host Messenger] Sending network message, and waiting for responses, with payload type: {}",
             message.payload.payload_type()
         ));
 
