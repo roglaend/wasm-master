@@ -5,12 +5,15 @@ use std::collections::HashMap;
 
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "../../shared/wit/paxos.wit",
+        path: "../../shared/wit",
         world: "kv-store-world",
     });
 }
 
 bindings::export!(MyKvStore with_types_in bindings);
+
+use bindings::exports::paxos::default::kv_store::Key;
+use bindings::paxos::default::paxos_types::Value;
 
 use crate::bindings::exports::paxos::default::kv_store::{Guest, GuestKvStoreResource};
 use crate::bindings::paxos::default::logger;
@@ -22,31 +25,31 @@ impl Guest for MyKvStore {
     type KvStoreResource = MyKvStoreResource;
 }
 
-/// Internal representation of an operation.
+/// Internal representation of an operation. // TODO: Add similar to WIT
 #[derive(Clone, Debug)]
 enum Operation {
-    Set { key: String, value: String },
-    Remove { key: String },
+    Set { key: Key, value: Value },
+    Remove { key: Key },
     Clear,
 }
 
 /// The key/value resource that maintains both current state and an operation history.
 pub struct MyKvStoreResource {
-    store: RefCell<HashMap<String, String>>,
+    store: RefCell<HashMap<Key, Value>>,
     history: RefCell<Vec<Operation>>,
 }
 
 impl MyKvStoreResource {
     /// Helper to log a "set" operation.
-    fn log_set(&self, key: &str, value: &str) {
+    fn log_set(&self, key: &Key, value: &Value) {
         self.history.borrow_mut().push(Operation::Set {
             key: key.to_string(),
-            value: value.to_string(),
+            value: value.clone(),
         });
     }
 
     /// Helper to log a "remove" operation.
-    fn log_remove(&self, key: &str) {
+    fn log_remove(&self, key: &Key) {
         self.history.borrow_mut().push(Operation::Remove {
             key: key.to_string(),
         });
@@ -91,24 +94,24 @@ impl GuestKvStoreResource for MyKvStoreResource {
     }
 
     /// Retrieve a value for a given key.
-    fn get(&self, key: String) -> Option<String> {
+    fn get(&self, key: String) -> Option<Value> {
         self.store.borrow().get(&key).cloned()
     }
 
     /// Set a key to a given value.
-    fn set(&self, key: String, value: String) {
+    fn set(&self, key: Key, value: Value) {
         self.store.borrow_mut().insert(key.clone(), value.clone());
         self.log_set(&key, &value);
-        logger::log_info(&format!("KV-Store: Set key '{}' to value '{}'", key, value));
+        logger::log_info(&format!("KV-Store: Set key '{}' to value {:?}", key, value));
     }
 
     /// Remove a key from the store.
-    fn remove(&self, key: String) -> Option<String> {
+    fn remove(&self, key: Key) -> Option<Value> {
         let removed = self.store.borrow_mut().remove(&key);
         self.log_remove(&key);
         if let Some(ref value) = removed {
             logger::log_info(&format!(
-                "KV-Store: Removed key '{}' with value '{}'",
+                "KV-Store: Removed key '{}' with value {:?}",
                 key, value
             ));
         }

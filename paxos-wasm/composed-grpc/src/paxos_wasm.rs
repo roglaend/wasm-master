@@ -1,6 +1,7 @@
 use crate::host_logger::HostLogger;
 use crate::host_messenger::HostMessenger;
-use crate::paxos_bindings;
+use crate::paxos_bindings::paxos::default::paxos_types::Node;
+use crate::paxos_bindings::{self, MessagePayloadExt};
 use proto::paxos_proto;
 use std::error::Error;
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ impl WasiView for ComponentRunStates {
 }
 
 impl ComponentRunStates {
-    pub fn new(node_id: u64) -> Self {
+    pub fn new(node: Node) -> Self {
         ComponentRunStates {
             wasi_ctx: WasiCtxBuilder::new()
                 .inherit_stdio()
@@ -37,7 +38,7 @@ impl ComponentRunStates {
                 .inherit_args()
                 .build(),
             resource_table: ResourceTable::new(),
-            logger: Arc::new(HostLogger::new_from_workspace(node_id)),
+            logger: Arc::new(HostLogger::new_from_workspace(node)),
         }
     }
 }
@@ -51,14 +52,15 @@ pub struct PaxosWasmtime {
 
 impl PaxosWasmtime {
     pub async fn new(
-        node_id: u64,
-        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
+        node: paxos_bindings::paxos::default::paxos_types::Node,
+        nodes: Vec<paxos_bindings::paxos::default::paxos_types::Node>,
+        is_leader: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let mut config = wasmtime::Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
 
-        let state = ComponentRunStates::new(node_id);
+        let state = ComponentRunStates::new(node.clone());
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
@@ -85,7 +87,7 @@ impl PaxosWasmtime {
         let paxos_guest = final_bindings.paxos_default_paxos_coordinator();
         let paxos_resource = paxos_guest.paxos_coordinator_resource();
         let resource_handle = paxos_resource
-            .call_constructor(&mut store, node_id, &nodes)
+            .call_constructor(&mut store, &node, &nodes, is_leader)
             .await?;
 
         Ok(Self {
@@ -120,19 +122,16 @@ impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
         &mut self,
         nodes: Vec<paxos_bindings::paxos::default::network::Node>,
         message: paxos_bindings::paxos::default::network::NetworkMessage,
-    ) -> Vec<paxos_bindings::paxos::default::network::NetworkResponse> {
+    ) -> Vec<paxos_bindings::paxos::default::network::NetworkMessage> {
         self.logger.log_info(format!(
-            "Sending network message of kind: {:?}",
-            message.kind
+            "Sending network message with payload type: {}",
+            message.payload.payload_type()
         ));
-        // Convert the WIT NetworkMessage into the proto-generated NetworkMessage.
-        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
 
-        // Extract endpoints from the nodes.
+        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
         let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
 
-        // Delegate the sending to HostMessenger
-        HostMessenger::send_message(endpoints, proto_msg, message.kind).await
+        HostMessenger::send_message(endpoints, proto_msg).await
     }
 }
 

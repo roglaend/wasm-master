@@ -1,9 +1,11 @@
 {
     "cSpell.words": [
         "accd",
+        "Deque",
         "pocs",
         "pollable",
         "pollables",
+        "protos",
         "wasi",
         "wrpc"
     ]

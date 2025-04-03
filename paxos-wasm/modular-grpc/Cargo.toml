@@ -1,0 +1,21 @@
+[package]
+name = "modular-grpc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+proto = { path = "../shared/proto", package = "proto" }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+wasmtime = "31"
+wasmtime-wasi = "31"
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+tempfile = "3"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+
+[build-dependencies]
+paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }

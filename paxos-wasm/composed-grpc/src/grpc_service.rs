@@ -1,6 +1,8 @@
-use crate::paxos_bindings;
+use crate::paxos_bindings::{self, MessagePayloadExt as _};
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
 use tracing::info;
@@ -8,6 +10,8 @@ use tracing::info;
 #[derive(Clone)]
 pub struct PaxosService {
     pub paxos_wasmtime: Arc<PaxosWasmtime>,
+
+    pub client_seq: Arc<AtomicU32>, // TODO: Fix this hack
 }
 
 pub async fn create_clients(
@@ -39,8 +43,20 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
 
+        // TODO: Have a standardize way to do this conversion. Have it per user.
+        let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
+
+        let request: ClientRequest = ClientRequest {
+            client_id: "Client 1".into(),
+            client_seq: seq,
+            value: Value {
+                is_noop: false,
+                command: Some(req.value),
+            },
+        };
+
         let success = resource
-            .call_run_paxos(&mut *store, self.paxos_wasmtime.resource_handle, &req.value)
+            .call_run_paxos(&mut *store, self.paxos_wasmtime.resource_handle, &request)
             .await
             .map_err(|e| Status::internal(format!("Propose failed: {:?}", e)))?;
 
@@ -48,34 +64,32 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         Ok(Response::new(paxos_proto::ProposeResponse { success }))
     }
 
+    // TODO: Make it an option to not send responses back
     async fn deliver_message(
         &self,
         request: Request<paxos_proto::NetworkMessage>,
-    ) -> Result<Response<paxos_proto::DeliverMessageResponse>, Status> {
+    ) -> Result<Response<paxos_proto::NetworkMessage>, Status> {
         info!("GRPC deliver_message: start");
         let proto_msg = request.into_inner();
-        let wit_msg: paxos_bindings::paxos::default::network::NetworkMessage =
-            paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
-                .map_err(|e| Status::invalid_argument(format!("Invalid network message: {}", e)))?;
+        let wit_msg = paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
+            .map_err(|e| Status::invalid_argument(format!("Invalid network message: {}", e)))?;
+
         let mut store = self.paxos_wasmtime.store.lock().await;
         let resource = self.paxos_wasmtime.resource();
 
-        let response = resource
+        let internal_response = resource
             .call_handle_message(&mut *store, self.paxos_wasmtime.resource_handle, &wit_msg)
             .await
             .map_err(|e| Status::internal(format!("Deliver message failed: {:?}", e)))?;
 
         info!(
-            "GRPC deliver_message: finish (kind: {:?}, status: {:?})",
-            response.kind, response.status
+            "GRPC deliver_message: finish payload type: {}",
+            internal_response.payload.payload_type()
         );
-        let success = match response.status {
-            paxos_bindings::paxos::default::network::StatusKind::Success => true,
-            paxos_bindings::paxos::default::network::StatusKind::Failure => false,
-        };
-        Ok(Response::new(paxos_proto::DeliverMessageResponse {
-            success,
-        }))
+
+        // Convert our internal response to a proto response.
+        let proto_response: paxos_proto::NetworkMessage = internal_response.into();
+        Ok(Response::new(proto_response))
     }
 
     async fn get_value(
@@ -91,10 +105,16 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
             .await
             .map_err(|e| Status::internal(format!("Get value failed: {:?}", e)))?;
 
-        let response = paxos_proto::GetValueResponse {
-            value: value.unwrap_or_default(),
+        // TODO: This is wrong. Should instead get a "ClientResponse" instead of a "Value"
+        let proto_value = paxos_proto::Value {
+            is_noop: value.is_noop,
+            command: value.command.unwrap_or_default(),
         };
-        info!("GRPC get_value: finish (value: {})", response.value);
+
+        let response = paxos_proto::GetValueResponse {
+            value: Some(proto_value),
+        };
+        info!("GRPC get_value: finish (value: {:?})", response.value);
         Ok(Response::new(response))
     }
 

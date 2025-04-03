@@ -5,12 +5,14 @@ use std::collections::BTreeMap;
 
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "../../shared/wit/paxos.wit",
+        path: "../../shared/wit",
         world: "learner-world",
     });
 }
 
 bindings::export!(MyLearner with_types_in bindings);
+
+use bindings::paxos::default::paxos_types::{Slot, Value};
 
 use crate::bindings::exports::paxos::default::learner::{
     Guest, GuestLearnerResource, LearnedEntry, LearnerState,
@@ -26,7 +28,7 @@ impl Guest for MyLearner {
 /// Our learner now uses a BTreeMap to store learned values per slot.
 /// This ensures that each slot only has one learned value and that the entries remain ordered.
 pub struct MyLearnerResource {
-    learned: RefCell<BTreeMap<u64, String>>,
+    learned: RefCell<BTreeMap<Slot, Value>>,
 }
 
 impl GuestLearnerResource for MyLearnerResource {
@@ -55,17 +57,17 @@ impl GuestLearnerResource for MyLearnerResource {
 
     /// Record that a value has been learned for a given slot.
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
-    fn learn(&self, slot: u64, value: String) {
+    fn learn(&self, slot: Slot, value: Value) {
         let mut learned_map = self.learned.borrow_mut();
         if !learned_map.contains_key(&slot) {
             logger::log_info(&format!(
-                "Learner: Learned value '{}' for slot {}",
-                value, slot
+                "Learner: For slot {}, learned value {:?}",
+                slot, value
             ));
             learned_map.insert(slot, value);
         } else {
             logger::log_warn(&format!(
-                "Learner: Slot {} already has a learned value. Ignoring new value '{}'.",
+                "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
                 slot, value
             ));
         }
