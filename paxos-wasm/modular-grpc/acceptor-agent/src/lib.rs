@@ -33,6 +33,8 @@ pub struct MyAcceptorAgentResource {
     node: Node,
     learners: Vec<Node>,
     acceptor: Arc<AcceptorResource>,
+
+    proposers: Vec<Node>,
 }
 
 impl MyAcceptorAgentResource {}
@@ -44,8 +46,16 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
         // TODO: make this more future proof?
         let learners: Vec<_> = nodes
+            .clone()
             .into_iter()
             .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
+            .collect();
+
+        // do not remember why I added this
+        let proposers: Vec<_> = nodes
+            .clone()
+            .into_iter()
+            .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
@@ -53,6 +63,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             config,
             node,
             learners,
+            proposers,
             acceptor,
         }
     }
@@ -107,7 +118,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
-        logger::log_info(&format!(
+        logger::log_debug(&format!(
             "[Acceptor Agent] Received network message: {:?}",
             message
         ));
@@ -169,7 +180,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 response
             }
             MessagePayload::Heartbeat(payload) => {
-                logger::log_info(&format!(
+                logger::log_debug(&format!(
                     "[Acceptor Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
                     payload.sender, payload.timestamp
                 ));
