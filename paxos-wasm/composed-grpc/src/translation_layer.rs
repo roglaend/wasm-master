@@ -4,8 +4,6 @@ use std::convert::TryFrom;
 use crate::paxos_bindings::exports::paxos::default::paxos_coordinator;
 use crate::paxos_bindings::paxos::default::network_types;
 use crate::paxos_bindings::paxos::default::paxos_types;
-
-// Conversion for Node.
 impl From<paxos_types::Node> for paxos_proto::Node {
     fn from(node: paxos_types::Node) -> Self {
         paxos_proto::Node {
@@ -47,6 +45,8 @@ impl From<paxos_types::Value> for paxos_proto::Value {
         paxos_proto::Value {
             is_noop: val.is_noop,
             command: val.command.unwrap_or_default(),
+            client_id: val.client_id,
+            client_seq: val.client_seq
         }
     }
 }
@@ -60,6 +60,8 @@ impl From<paxos_proto::Value> for paxos_types::Value {
             } else {
                 Some(value.command)
             },
+            client_id: value.client_id,
+            client_seq: value.client_seq
         }
     }
 }
@@ -84,8 +86,6 @@ impl From<paxos_proto::PValue> for paxos_types::PValue {
         }
     }
 }
-
-// Conversion for MessagePayload
 impl From<network_types::MessagePayload> for paxos_proto::network_message::Payload {
     fn from(payload: network_types::MessagePayload) -> Self {
         match payload {
@@ -133,6 +133,22 @@ impl From<network_types::MessagePayload> for paxos_proto::network_message::Paylo
             network_types::MessagePayload::Ignore => {
                 paxos_proto::network_message::Payload::Ignore(proto::paxos_proto::Empty {})
             }
+
+            network_types::MessagePayload::RetryLearn(slot) => {
+                paxos_proto::network_message::Payload::RetryLearn(paxos_proto::RetryLearnPayload {
+                    slot,
+                })
+            }
+
+            network_types::MessagePayload::Executed(val) => {
+                paxos_proto::network_message::Payload::Executed(paxos_proto::ClientResponse {
+                    client_id: val.client_id,
+                    client_seq: val.client_seq, // TODO: Handle this properly
+                    success: true,
+                    command_result: val.command_result.unwrap_or_default(),
+                    slot: val.slot,
+                })
+            }
         }
     }
 }
@@ -164,6 +180,8 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                     .unwrap_or_else(|| paxos_types::Value {
                         is_noop: true,
                         command: None,
+                        client_id: 0,
+                        client_seq: 0
                     });
                 Ok(network_types::MessagePayload::Accept(paxos_types::Accept {
                     slot: acc.slot,
@@ -185,6 +203,8 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                     .unwrap_or_else(|| paxos_types::Value {
                         is_noop: true,
                         command: None,
+                        client_id: 0,
+                        client_seq: 0
                     });
                 Ok(network_types::MessagePayload::Learn(paxos_types::Learn {
                     slot: learn.slot,
@@ -207,6 +227,24 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
 
             paxos_proto::network_message::Payload::Ignore(_) => {
                 Ok(network_types::MessagePayload::Ignore)
+            }
+
+            paxos_proto::network_message::Payload::RetryLearn(retry) => {
+                Ok(network_types::MessagePayload::RetryLearn(retry.slot))
+            }
+
+            paxos_proto::network_message::Payload::Executed(executed) => {
+        
+
+                Ok(network_types::MessagePayload::Executed(
+                    paxos_types::ClientResponse {
+                        client_id: executed.client_id,
+                        client_seq: executed.client_seq, // TODO: Handle this properly
+                        success: true,
+                        command_result: Some(executed.command_result),
+                        slot: executed.slot,
+                    },
+                ))
             }
         }
     }
@@ -235,7 +273,7 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
     }
 }
 
-/// Converts internal Paxos state (WIT type) to proto-defined PaxosState.
+
 pub fn convert_internal_state_to_proto(
     internal_state: paxos_coordinator::PaxosState,
 ) -> paxos_proto::PaxosState {
@@ -257,6 +295,7 @@ pub fn convert_internal_state_to_proto(
         .collect();
     paxos_proto::PaxosState { learned, kv_state }
 }
+
 
 /// Converts proto-defined PaxosState into internal Paxos state (WIT type).
 pub fn _convert_proto_state_to_internal(

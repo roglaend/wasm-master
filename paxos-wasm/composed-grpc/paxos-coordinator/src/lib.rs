@@ -1,6 +1,8 @@
 use core::panic;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub mod bindings {
     wit_bindgen::generate!( {
@@ -16,8 +18,9 @@ use bindings::exports::paxos::default::paxos_coordinator::{
     AcceptResult, ElectionResult, Guest as CoordinatorGuest, GuestPaxosCoordinatorResource,
     LearnResult, PaxosState, PrepareResult, RunConfig,
 };
+use bindings::paxos::default::learner_types::LearnResultTest;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{ClientRequest, Learn, Node, PaxosPhase, Slot, Value};
+use bindings::paxos::default::paxos_types::{ClientRequest, ClientResponse, Learn, Node, PaxosPhase, Slot, Value};
 use bindings::paxos::default::{
     acceptor_agent, failure_detector, kv_store, learner, logger, network, proposer_agent,
 };
@@ -38,6 +41,7 @@ pub struct MyPaxosCoordinatorResource {
     // Uses the agents
     proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
     acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
+    // learner_agent: Arc<learner_agent::LearnerAgentResource>,
 
     learner: Arc<learner::LearnerResource>,
     kv_store: Arc<kv_store::KvStoreResource>,
@@ -49,12 +53,48 @@ pub struct MyPaxosCoordinatorResource {
     // leader_id: Cell<u64>,
     // election_in_progress: Cell<bool>
     next_commit_slot: Cell<Slot>, // Adu
+
+    time_startup: Cell<Instant>,
+
+    tickercounter: Cell<u64>,
+
+    test: RefCell<VecDeque<ClientResponse>>,
 }
 
 impl MyPaxosCoordinatorResource {
     /// Returns the required quorum (here, a majority).
     fn get_quorum(&self) -> u64 {
         (self.nodes.len() as u64 / 2) + 1
+    }
+
+    fn check_and_resend_if_gap(&self) -> bool {
+        if let Some(slot) = self.learner.check_for_gap() {
+            if let Some(accepted) = self.proposer_agent.get_accepted_proposal(slot) {
+                // We have accepted it, just broadcast it to the learners
+                let learn = Learn {
+                    slot,
+                    value: accepted.value.clone(),
+                };
+                self.proposer_agent.commit_phase(&learn);
+                logger::log_warn(&format!(
+                    "[Proposer Agent] Retrying learn for accepted proposal: slot={}, value={:?}",
+                    slot, accepted.value
+                ));
+                return true;
+            } else {
+                // It is still in flight, maybe something went wrong. Broadcas accept message
+                // SHOULD ALWAYS BE A MISSING PROPOSAL WHEN THIS HAPPENS
+                if let Some(missing_proposal) = self.proposer_agent.get_in_flight_proposal(slot) {
+                    let _ = self.proposer_agent.accept_phase(
+                        &missing_proposal.value, 
+                        missing_proposal.slot, 
+                        missing_proposal.ballot, 
+                    &vec![]);
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -67,6 +107,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         let acceptor_agent = Arc::new(acceptor_agent::AcceptorAgentResource::new(
             &node, &nodes, config,
         ));
+
+        // let learner_agent = Arc::new(learner_agent::LearnerAgentResource::new(
+        //     &node, &nodes, config,
+        // ));
+
         let learner = Arc::new(learner::LearnerResource::new());
         let kv_store = Arc::new(kv_store::KvStoreResource::new());
 
@@ -83,11 +128,15 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             nodes,
             proposer_agent,
             acceptor_agent,
+            // learner_agent,
             learner,
             kv_store,
             failure_detector,
             paxos_key: "paxos_values".to_string(), // TODO: Change the kv-store to save paxos values for slots instead of using the "history"
             next_commit_slot: Cell::new(1),
+            time_startup: Cell::new(Instant::now()),
+            tickercounter: Cell::new(0),
+            test: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -96,38 +145,89 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     // Ticker called from host
-    fn run_paxos_loop(&self) {
+    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+        self.tickercounter.set(self.tickercounter.get() + 1);
         match self.proposer_agent.get_paxos_phase() {
             PaxosPhase::Start => {
                 logger::log_debug("[Coordinator] Run loop: started.");
                 if self.proposer_agent.is_leader() {
                     self.proposer_agent.start_leader_loop();
                 }
+                None
             }
             PaxosPhase::PrepareSend => {
-                logger::log_info("[Coordinator] Run loop: Running in phase one.");
+                logger::log_debug("[Coordinator] Run loop: Running in phase one.");
                 self.prepare_phase();
+                None
             }
             PaxosPhase::PreparePending => {
-                logger::log_info("[Coordinator] Run loop: Checking Prepare timeout.");
+                logger::log_debug("[Coordinator] Run loop: Checking Prepare timeout.");
                 self.proposer_agent.check_prepare_timeout();
+                None
             }
             PaxosPhase::AcceptCommit => {
-                logger::log_info("[Coordinator] Run loop: Running in phase two.");
-                self.accept_phase();
-                if !self.config.acceptors_send_learns {
-                    self.commit_phase();
+                logger::log_debug("[Coordinator] Run loop: Running in phase two.");
+                // Quick fix to allow 10 accept messages to be sent out at once
+                let alpha = 10;
+                for _i in 0..alpha {
+                    let res = self.accept_phase();
+                    match res {
+                        AcceptResult::Accepted(_) => {
+                            
+                        }
+                        AcceptResult::MissingProposal => {
+                            break;
+                        }
+                        AcceptResult::QuorumFailure => {
+                        }
+                        AcceptResult::IsEventDriven => {
+                        }
+                        
+                    }
                 }
+                if !self.config.acceptors_send_learns {
+                    for _i in 0..alpha {
+                        let learn_result = self.commit_phase();
+                        match learn_result {
+                            Some(learn) => {
+                                logger::log_info(&format!(
+                                    "[Coordinator] Committed value: {:?}",
+                                    learn.learned_value
+                                ));
+                            }
+                            None => {
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                let mut executed_list = vec![];
+                for i in 0..10 {
+                    let executed = self.test.borrow_mut().pop_front();
+                    if let Some(val) = executed.clone() {
+                        logger::log_info(&format!(
+                            "[Proposer Agent] Executed value: {:?}",
+                            val
+                        ));
+                        executed_list.push(val);
+                    }
+                   
+                }
+                if executed_list.len() > 0 {
+                    return Some(executed_list);
+                }
+                None
             }
-            PaxosPhase::Stop => {}  // TODO
-            PaxosPhase::Crash => {} // TODO
+            PaxosPhase::Stop => {None}  // TODO
+            PaxosPhase::Crash => {None} // TODO
         }
     }
 
     /// Executes the prepare phase by merging local and remote promise responses.
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self) -> PrepareResult {
-        let slot = self.proposer_agent.get_current_slot();
+        let slot = self.next_commit_slot.get(); // Starts from 1, or the number the learner has "executed" on leader change
         let ballot = self.proposer_agent.get_current_ballot();
 
         // Query local acceptor.
@@ -198,40 +298,59 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
     /// Commits the proposal by updating the learner and key‑value store, then broadcasting a commit message.
     fn commit_phase(&self) -> Option<LearnResult> {
-        let next_slot = self.next_commit_slot.get();
-
-        if let Some(prop) = self.proposer_agent.get_accepted_proposal(next_slot) {
-            self.learner.learn(prop.slot, &prop.value); // TODO: Properly handle the order/execution of learns inside the learners
-            self.kv_store.set(&self.paxos_key, &prop.value); // TODO: Move this to inside the learner
-            let learn = Learn {
-                slot: prop.slot,
-                // ballot: prop.ballot, // TODO: Ballot needed?
-                value: prop.value.clone(),
-            };
-            let msg = NetworkMessage {
-                sender: self.node.clone(),
-                payload: MessagePayload::Learn(learn),
-            };
-            if self.config.is_event_driven {
-                network::send_message_forget(&self.nodes, &msg);
-            } else {
-                let _ = network::send_message(&self.nodes, &msg);
-                // TODO: Handle the case if we send learn-ack back?
+        
+        if self.tickercounter.get() % 5 == 0 {
+            // Check if we have a gap in the learned values on timer 5x tickerinterval
+            if self.check_and_resend_if_gap() {
+                return None;
             }
+        }
 
-            // Update the next commit slot for the next round.
-            self.next_commit_slot.set(next_slot + 1);
+        if let Some(prop) = self.proposer_agent.get_some_accepted_proposal() {
+            let learn_result = self.learner.learn(prop.slot, &prop.value);
 
+            match learn_result {
+                LearnResultTest::Execute(learns) => {
+                    for learn_entry in learns {
+                        let learn = Learn {
+                            slot: learn_entry.slot,
+                            // ballot: prop.ballot, // TODO: Ballot needed?
+                            value: learn_entry.value.clone(),
+                        };
+
+                        let executed_value = learn_entry.value.clone();
+                        let res = "HIHI FAKE EXECUTION RESULT".to_string();
+                        let client_response = ClientResponse {
+                            client_id: executed_value.client_id.to_string(),
+                            client_seq: executed_value.client_seq,
+                            success: true,
+                            command_result: Some(res),
+                            slot: learn_entry.slot,
+                        };
+
+                        let mut executed_queue = self.test.borrow_mut();
+                        executed_queue.push_back(client_response);
+
+                        self.next_commit_slot.set(learn_entry.slot + 1);
+                        self.proposer_agent.commit_phase(&learn);
+                    }
+                }
+                LearnResultTest::Ignore => {
+                    // Learend value that cannot be executed yet
+                }
+                
+            }
             Some(LearnResult {
                 learned_value: prop.value,
                 quorum: self.get_quorum(),
             })
+
         } else {
-            logger::log_debug(&format!(
-                "[Coordinator] No accepted proposal found during commit phase for slot {}.",
-                next_slot
-            ));
-            None
+            // logger::log_debug(&format!(
+            //     "[Coordinator] No accepted proposal found for slot {}.",
+            //     next_slot
+            // ));
+            return None;
         }
     }
 
@@ -259,9 +378,22 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     payload.slot, payload.value
                 ));
                 if !self.config.acceptors_send_learns {
-                    // Update learner and persist value in the KV store. // TODO: Properly handle the order/execution of learns inside the learners
-                    self.learner.learn(payload.slot, &payload.value);
-                    self.kv_store.set(&self.paxos_key, &payload.value); // TODO: Move this to inside the learner
+
+                    // need some here if you are just a lear replica and miss the learn request
+
+                    let learn_result = self.learner.learn(payload.slot, &payload.value);
+                    match learn_result {
+                        LearnResultTest::Execute(learns) => {
+                            for learn_entry in learns {
+                                self.next_commit_slot.set(learn_entry.slot + 1);
+                            }
+                        }
+                        LearnResultTest::Ignore => {
+                            // Learend value that cannot be executed yet
+                        }
+                        
+                    }
+
                 }
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -276,6 +408,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
             MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
 
+            MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
+            
             MessagePayload::Heartbeat(payload) => {
                 logger::log_debug(&format!(
                     "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",

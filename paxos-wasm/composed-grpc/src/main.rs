@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     failure_service.start_failure_service(Duration::from_secs(5)); // Check for failures every 5 seconds - Adjust as needed
 
     // start paxos run loop
-    run_paxos_service.start_paxos_run_loop(Duration::from_millis(500));
+    run_paxos_service.start_paxos_run_loop(Duration::from_millis(10));
 
     // Now run the gRPC server in the foreground
     let addr = config.bind_addr.parse()?;

@@ -1,3 +1,4 @@
+use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
 use crate::paxos_bindings::{self, MessagePayloadExt as _};
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
 use futures::future::join_all;
@@ -7,6 +8,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
+use once_cell::sync::Lazy;
+use tokio::sync::oneshot;
+use dashmap::DashMap;
+
+pub static RESPONSE_REGISTRY: Lazy<DashMap<u64, oneshot::Sender<ClientResponse>>> =
+    Lazy::new(|| DashMap::new());
+
 
 #[derive(Clone)]
 pub struct PaxosService {
@@ -48,35 +56,54 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
     ) -> Result<Response<paxos_proto::ProposeResponse>, Status> {
         info!("[gRPC Service] Starting process to submit client request to wasm component.");
         let req = request.into_inner();
-        let mut store = self.paxos_wasmtime.store.lock().await;
-        let resource = self.paxos_wasmtime.resource();
 
         // TODO: Have a standardize way to do this conversion. Have it per user.
-        let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        // let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
         let client_request: ClientRequest = ClientRequest {
-            client_id: "Client 1".into(),
-            client_seq: seq,
+            client_id: "".into(),
+            client_seq: 0,
             value: Value {
                 is_noop: false,
                 command: Some(req.value),
+                client_id: req.client_id,
+                client_seq: req.client_seq,
             },
         };
 
-        let success = resource
-            .call_submit_client_request(
-                &mut *store,
-                self.paxos_wasmtime.resource_handle,
-                &client_request,
-            )
-            .await
-            .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
+        let request_id = req.client_id * 1000 + req.client_seq;
+        let (response_tx, response_rx) = oneshot::channel(); 
+        RESPONSE_REGISTRY.insert(request_id.clone(), response_tx);
 
-        info!(
-            "[gRPC Service] Finished submitting client request, success: {}).",
-            success
-        );
-        Ok(Response::new(paxos_proto::ProposeResponse { success }))
+        {
+            let mut store = self.paxos_wasmtime.store.lock().await;
+            let resource = self.paxos_wasmtime.resource();
+            let success = resource
+                .call_submit_client_request(
+                    &mut *store,
+                    self.paxos_wasmtime.resource_handle,
+                    &client_request,
+                )
+                .await
+                .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
+
+            info!(
+                "[gRPC Service] Finished submitting client request, success: {}).",
+                success
+            );
+        }
+
+        let result = response_rx.await.map_err(|e| {
+            info!(
+                "[gRPC Service] Failed to receive response for client_id {}: {:?}",
+                request_id, e
+            );
+            Status::internal(format!("Failed to receive response for client_id {}: {:?}", request_id, e))
+        })?;
+
+        let result_message = &format!("{:?}", result.command_result);
+
+        Ok(Response::new(paxos_proto::ProposeResponse { success: true, message: result_message.to_string() }))
     }
 
     // TODO: Make it an option to not send responses back
@@ -162,6 +189,8 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let proto_value = paxos_proto::Value {
             is_noop: value.is_noop,
             command: value.command.unwrap_or_default(),
+            client_id: value.client_id,
+            client_seq: value.client_seq,
         };
 
         let response = paxos_proto::GetValueResponse {

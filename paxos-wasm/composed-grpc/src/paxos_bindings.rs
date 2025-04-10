@@ -24,6 +24,8 @@ impl MessagePayloadExt for MessagePayload {
             MessagePayload::Learn(_) => "Learn",
             MessagePayload::Heartbeat(_) => "Heartbeat",
             MessagePayload::Ignore => "Ignore",
+            MessagePayload::RetryLearn(_) => "RetryLearn",
+            MessagePayload::Executed(_) => "Executed",
         }
     }
 }
