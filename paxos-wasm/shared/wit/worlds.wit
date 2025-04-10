@@ -36,8 +36,10 @@ world failure-detector-world {
 }
 
 world paxos-world {
+
     import proposer-agent;
     import acceptor-agent;
+    // import learner-agent;
 
     // import proposer;
     // import acceptor;
@@ -52,6 +54,9 @@ world paxos-world {
     import logger; 
 
     export paxos-coordinator;
+    // export proposer-agent;
+    // export acceptor-agent;
+
 }
 
 // world paxos-client-world {
@@ -68,6 +73,8 @@ world proposer-agent-world {
     import proposer;
     import network;
     import logger;
+
+    import failure-detector;
 
     export proposer-agent;
 }

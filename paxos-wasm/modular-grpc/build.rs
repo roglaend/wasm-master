@@ -23,9 +23,10 @@ fn main() {
     //   - socket: the module to be used as the socket,
     //   - output: the name of the composite module.
     let plug_jobs: &[(&[&str], &str, &str)] = &[
-        (&["proposer"], "proposer_agent", "composed_proposer_agent"),
+        (&["proposer"], "proposer_agent", "temp_composed_proposer_agent"),
         (&["acceptor"], "acceptor_agent", "composed_acceptor_agent"),
-        // ( &["learner"], "learner_agent", "composed_learner_agent" ),
+        ( &["learner"], "learner_agent", "composed_learner_agent" ),
+        ( &["composed_failure_service"], "temp_composed_proposer_agent", "composed_proposer_agent" ),
         // ( &["kv_store"], "kv_store_agent", "composed_kv_store_agent" ),
     ];
 
