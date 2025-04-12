@@ -296,7 +296,6 @@ interface proposer-agent {
         run-paxos-instance-sync: func(client-request: client-request) -> bool;
 
         failure-service: func();
-
     }
 }
 
@@ -340,9 +339,25 @@ interface learner-agent {
     
         run-paxos-loop: func();
     }
-
-
-
 }
 
+interface tcp-server {
+    use paxos-types.{node, run-config};
+    use network-types.{network-message};
 
+    resource tcp-server-resource {
+        constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
+        
+        run: func();
+    }
+}
+
+interface tcp-serializer {
+    use network-types.{network-message};
+
+    /// Convert a NetworkMessage into bytes.
+    serialize: func(message: network-message) -> list<u8>;
+
+    /// Convert bytes into a NetworkMessage.
+    deserialize: func(serialized: list<u8>) -> network-message;
+}

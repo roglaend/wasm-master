@@ -142,6 +142,6 @@ pub fn build_and_plug(
     let target_dir = get_target_dir(target_triple);
     build_crates(&workspace, &target_dir, target_triple, build_list);
     validate_artifacts(&target_dir, build_list);
-    rerun_if_source_changed(&workspace, build_list);
+    // rerun_if_source_changed(&workspace, build_list);
     plug_modules(&target_dir, plugs, socket, output);
 }

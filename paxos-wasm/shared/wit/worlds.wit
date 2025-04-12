@@ -95,3 +95,53 @@ world learner-agent-world {
 
     export learner-agent;
 }
+
+world tcp-serializer-world {
+    export tcp-serializer;
+}
+
+world tcp-client-world {
+    import tcp-serializer;
+
+    import logger;
+
+    export network;
+}
+
+world paxos-tcp-world {
+    import tcp-serializer;
+    import proposer-agent;
+    import acceptor-agent;
+    import learner-agent;
+
+    import logger;
+
+    export tcp-server;
+}
+
+world proposer-tcp-world {
+    import tcp-serializer;
+    import proposer-agent;
+
+    import logger;
+
+    export tcp-server;
+}
+
+world acceptor-tcp-world {
+    import tcp-serializer;
+    import acceptor-agent;
+
+    import logger;
+
+    export tcp-server;
+}
+
+world learner-tcp-world {
+    import tcp-serializer;
+    import learner-agent;
+
+    import logger;
+
+    export tcp-server;
+}

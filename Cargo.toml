@@ -15,6 +15,10 @@ members = [
     "paxos-wasm/core/leader-detector",
     "paxos-wasm/core/failure-detector",
 
+    "paxos-wasm/core/tcp-serializer",
+    "paxos-wasm/core/tcp-server",
+    "paxos-wasm/core/tcp-client",
+
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
     "paxos-wasm/composed-grpc/client_command_line",
@@ -27,6 +31,9 @@ members = [
     "paxos-wasm/modular-grpc/acceptor-agent",
     "paxos-wasm/modular-grpc/learner-agent",
     "paxos-wasm/modular-grpc/kv-store-agent",
+
+    "paxos-wasm/modular-tcp",
+    "paxos-wasm/modular-tcp/client",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",

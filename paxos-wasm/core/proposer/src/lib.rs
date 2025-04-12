@@ -39,7 +39,6 @@ pub struct MyProposerResource {
     // Values that must be proposed again after a failed accept phase.
     prioritized_values: RefCell<VecDeque<PValue>>, // TODO: Have it indexed by slot instead to enforce slot -> value mapping for re-proposals?
     // Proposals currently in flight, indexed by slot.
-
     prioritized_values_map: RefCell<BTreeMap<Slot, PValue>>,
 
     in_flight_proposals: RefCell<HashMap<Slot, Proposal>>,
@@ -65,7 +64,6 @@ impl MyProposerResource {
     }
 
     fn next_value(&self) -> Option<Value> {
-
         if let Some((_slot, value)) = self.prioritized_values_map.borrow_mut().pop_first() {
             Some(value.value?) // TODO: Enforce the usage of same slot, should be the same though?
         } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
@@ -135,7 +133,7 @@ impl MyProposerResource {
                         is_noop: true,
                         command: None,
                         client_id: 0,
-                        client_seq: 0
+                        client_seq: 0,
                     }), // TODO: No-op. Do this another place?
                 });
                 expected_slot += 1;
@@ -227,7 +225,6 @@ impl GuestProposerResource for MyProposerResource {
     }
     // TODO: Merge these by having a "accepted" field on the Proposal itself?
 
-    
     // since executing order is preserved in learner, we can just pop the next "ready" accepted
     fn get_some_accepted_proposal(&self) -> Option<Proposal> {
         let accepted_proposal = self.accepted_proposals.borrow_mut().pop_first();
@@ -276,16 +273,16 @@ impl GuestProposerResource for MyProposerResource {
 
     /// Processes promise responses and returns a prepare result.
     /// Chooses the highest accepted value if available.
-    /// 
+    ///
     /// If min_slot = 0, we can use it for standalone approach.
     /// Think we need to collect all promises, and add only the no-ops to the quueue for the right slot.
-    /// In a standalone apprach: Every accepted value should have eventually gotten to a learner. 
+    /// In a standalone apprach: Every accepted value should have eventually gotten to a learner.
     /// So we can start new proposals from the highest accepted slot + 1. Capish?
-    /// 
+    ///
     /// What was here before was that we collected all accepted values and pushed them to the queue.
     /// Which meant recommit of all accepted values.
-    /// 
-    /// If min_slot = adu, we can use it for the normal approach. Where we collect the accepted 
+    ///
+    /// If min_slot = adu, we can use it for the normal approach. Where we collect the accepted
     /// values higher than adu to get them recommitted
     fn process_prepare(&self, min_slot: Slot, promises: Vec<Promise>) -> PrepareResult {
         let quorum: usize = self.quorum() as usize;
@@ -332,7 +329,9 @@ impl GuestProposerResource for MyProposerResource {
 
         // the old extend extended the queue for every quorum of promises
         for p in accepted_values {
-            self.prioritized_values_map.borrow_mut().insert(p.slot, p.clone());
+            self.prioritized_values_map
+                .borrow_mut()
+                .insert(p.slot, p.clone());
         }
 
         logger::log_info(&format!(
