@@ -1,0 +1,13 @@
+[package]
+name = "paxos-wasm-bindings-types"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+
+
+[dependencies]
+proto = { path = "../proto", package = "proto" }
+
+wasmtime = "31"
+wasmtime-wasi = "31"

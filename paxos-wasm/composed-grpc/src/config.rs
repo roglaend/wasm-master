@@ -1,4 +1,5 @@
-use crate::paxos_bindings::paxos::default::paxos_types::{Node, PaxosRole::Coordinator};
+use paxos_wasm_bindings_types::paxos::paxos_types::Node;
+use paxos_wasm_bindings_types::paxos::paxos_types::PaxosRole::Coordinator;
 
 /// Shared configuration values for all nodes.
 pub struct SharedConfig {

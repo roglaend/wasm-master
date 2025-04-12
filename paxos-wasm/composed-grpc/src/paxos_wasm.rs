@@ -1,62 +1,31 @@
-use crate::host_logger::HostLogger;
 use crate::host_messenger::HostMessenger;
-use crate::paxos_bindings::paxos::default::paxos_types::Node;
-use crate::paxos_bindings::paxos::default::proposer_agent::RunConfig;
-use crate::paxos_bindings::{self, MessagePayloadExt};
+use crate::traits::{ComponentRunStates, PaxosBindings};
+use paxos_wasm_bindings_types::paxos::network_types::NetworkMessage;
+use paxos_wasm_bindings_types::paxos::paxos_types::{Node, RunConfig};
+use paxos_wasm_bindings_types::{self, MessagePayloadExt};
 use proto::paxos_proto;
 use std::error::Error;
 use std::path::PathBuf;
-use std::sync::Arc;
+use tokio::sync::Mutex;
+
 use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
-pub struct ComponentRunStates {
-    // These two are required basically as a standard way to enable the impl of WasiView
-    pub wasi_ctx: WasiCtx,
-    pub resource_table: ResourceTable,
-    pub logger: Arc<HostLogger>,
-}
-
-impl IoView for ComponentRunStates {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.resource_table
-    }
-}
-
-impl WasiView for ComponentRunStates {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
-    }
-}
-
-impl ComponentRunStates {
-    pub fn new(node: Node) -> Self {
-        ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new()
-                .inherit_stdio()
-                .inherit_env()
-                .inherit_args()
-                .build(),
-            resource_table: ResourceTable::new(),
-            logger: Arc::new(HostLogger::new_from_workspace(node)),
-        }
-    }
-}
-
-pub struct PaxosWasmtime {
+pub struct PaxosWasmtime<B: PaxosBindings> {
     pub _engine: Engine,
     pub store: tokio::sync::Mutex<Store<ComponentRunStates>>,
-    pub bindings: paxos_bindings::PaxosWorld,
+    pub bindings: B,
     pub resource_handle: ResourceAny,
 }
 
-impl PaxosWasmtime {
+use crate::coordinator_bindings;
+
+impl<B: PaxosBindings> PaxosWasmtime<B> {
     pub async fn new(
-        node: paxos_bindings::paxos::default::paxos_types::Node,
-        nodes: Vec<paxos_bindings::paxos::default::paxos_types::Node>,
+        node: B::Node,
+        nodes: Vec<B::Node>,
         is_leader: bool,
-        run_config: RunConfig,
+        run_config: B::RunConfig,
     ) -> Result<Self, Box<dyn Error>> {
         let mut config = wasmtime::Config::default();
         config.async_support(true);
@@ -67,70 +36,59 @@ impl PaxosWasmtime {
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
-
-        paxos_bindings::paxos::default::network::add_to_linker(&mut linker, |s| s)?;
-        paxos_bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
+        coordinator_bindings::paxos::default::network::add_to_linker(&mut linker, |s| s)?;
+        coordinator_bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
 
         let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .expect("Must have a parent")
-            .parent()
-            .expect("Workspace folder")
+            .and_then(|p| p.parent())
+            .ok_or("Workspace folder not found")?
             .to_owned();
 
-        let composed_component = Component::from_file(
-            &engine,
-            workspace_dir.join("target/wasm32-wasip2/release/composed_paxos_coordinator.wasm"),
-        )?;
+        let component_path =
+            workspace_dir.join("target/wasm32-wasip2/release/composed_paxos_coordinator.wasm");
+        let composed_component = Component::from_file(&engine, component_path)?;
 
-        let final_bindings =
-            paxos_bindings::PaxosWorld::instantiate_async(&mut store, &composed_component, &linker)
-                .await?;
-        let paxos_guest = final_bindings.paxos_default_paxos_coordinator();
-        let paxos_resource = paxos_guest.paxos_coordinator_resource();
-        let resource_handle = paxos_resource
-            .call_constructor(&mut store, &node, &nodes, is_leader, run_config)
+        let bindings = B::instantiate_async(&mut store, &composed_component, &linker).await?;
+        let resource_handle = bindings
+            .construct_resource(&mut store, &node, &nodes, is_leader, &run_config)
             .await?;
 
         Ok(Self {
             _engine: engine,
             store: tokio::sync::Mutex::new(store),
-            bindings: final_bindings,
+            bindings,
             resource_handle,
         })
     }
 
-    // Helper methods to access WASM guest.
-    pub fn guest<'a>(
-        &'a self,
-    ) -> &'a paxos_bindings::exports::paxos::default::paxos_coordinator::Guest {
-        self.bindings.paxos_default_paxos_coordinator()
+    pub fn guest(&self) -> &<B as PaxosBindings>::Guest {
+        self.bindings.guest()
     }
 
-    pub fn resource<'a>(
-        &'a self,
-    ) -> paxos_bindings::exports::paxos::default::paxos_coordinator::GuestPaxosCoordinatorResource<'a>
-    {
-        self.guest().paxos_coordinator_resource()
+    pub fn resource<'a>(&'a self) -> <B as PaxosBindings>::GuestResource<'a> {
+        self.bindings.guest_resource()
     }
 }
 
-impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
+impl coordinator_bindings::paxos::default::network::Host for ComponentRunStates {
     async fn send_hello(&mut self) -> String {
         "Hello".to_string()
     }
 
     async fn send_message_forget(
         &mut self,
-        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
-        message: paxos_bindings::paxos::default::network::NetworkMessage,
+        nodes: Vec<coordinator_bindings::paxos::default::paxos_types::Node>,
+        message: coordinator_bindings::paxos::default::network_types::NetworkMessage,
     ) -> () {
+        let shared_wasm_msg: NetworkMessage = message.into();
+
         self.logger.log_info(format!(
             "[Host Messenger] Sending network message, fire-and-forget , with payload type: {}",
-            message.payload.payload_type()
+            shared_wasm_msg.payload.payload_type()
         ));
 
-        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
+        let proto_msg: paxos_proto::NetworkMessage = shared_wasm_msg.clone().into();
         let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
 
         HostMessenger::send_message_forget(endpoints, proto_msg).await
@@ -138,22 +96,30 @@ impl paxos_bindings::paxos::default::network::Host for ComponentRunStates {
 
     async fn send_message(
         &mut self,
-        nodes: Vec<paxos_bindings::paxos::default::network::Node>,
-        message: paxos_bindings::paxos::default::network::NetworkMessage,
-    ) -> Vec<paxos_bindings::paxos::default::network::NetworkMessage> {
+        nodes: Vec<coordinator_bindings::paxos::default::paxos_types::Node>,
+        message: coordinator_bindings::paxos::default::network_types::NetworkMessage,
+    ) -> Vec<coordinator_bindings::paxos::default::network_types::NetworkMessage> {
+        let shared_wasm_msg: NetworkMessage = message.into();
+
         self.logger.log_info(format!(
             "[Host Messenger] Sending network message, and waiting for responses, with payload type: {}",
-            message.payload.payload_type()
+            shared_wasm_msg.payload.payload_type()
         ));
 
-        let proto_msg: paxos_proto::NetworkMessage = message.clone().into();
+        let proto_msg: paxos_proto::NetworkMessage = shared_wasm_msg.into();
+
         let endpoints: Vec<String> = nodes.into_iter().map(|node| node.address).collect();
 
-        HostMessenger::send_message(endpoints, proto_msg).await
+        let shared_msgs = HostMessenger::send_message(endpoints, proto_msg).await;
+
+        let host_msgs: Vec<coordinator_bindings::paxos::default::network_types::NetworkMessage> =
+            shared_msgs.into_iter().map(Into::into).collect();
+
+        host_msgs
     }
 }
 
-impl paxos_bindings::paxos::default::logger::Host for ComponentRunStates {
+impl coordinator_bindings::paxos::default::logger::Host for ComponentRunStates {
     // Delegate the log calls to our stored HostLogger.
     async fn log_debug(&mut self, msg: String) {
         self.logger.log_debug(msg);

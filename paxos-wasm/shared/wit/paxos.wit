@@ -144,16 +144,7 @@ interface paxos-coordinator {
     use network-types.{network-message};
     use learner-types.{learned-entry, learn-result};
     use kv-store-types.{kv-pair};
-
-    record election-result {
-        leader: node,
-        quorum: u64,
-    }
-
-    record paxos-state {
-        learned: list<learned-entry>,
-        kv-state: list<kv-pair>,
-    }
+    use coordinator-types.{election-result, paxos-state};
 
     resource paxos-coordinator-resource {
         constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
@@ -207,12 +198,6 @@ interface paxos-coordinator {
 }
 
 interface logger {
-    enum level {
-        debug,
-        info,
-        warn,
-        error,
-    }
     // log: func(level: level, msg: string); 
 
     log-debug: func(msg: string);

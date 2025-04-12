@@ -1,6 +1,6 @@
 use crate::grpc_service::create_clients;
-use crate::paxos_bindings::paxos::default::network_types::NetworkMessage;
 use futures::future::join_all;
+use paxos_wasm_bindings_types::paxos::network_types::NetworkMessage;
 use proto::paxos_proto;
 use std::time::Duration;
 use tonic;

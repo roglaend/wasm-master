@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 proto = { path = "../shared/proto", package = "proto" }
+paxos-wasm-bindings-types = { path = "../shared/bindings-types", package = "paxos-wasm-bindings-types" }
 
 tonic = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

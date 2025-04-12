@@ -1,3 +1,4 @@
+use paxos_wasm_bindings_types::paxos::paxos_types::Node;
 use proto::paxos_proto::{self, network_message::Payload};
 use std::sync::Arc;
 use std::time::Duration;
@@ -5,7 +6,6 @@ use tokio::time::sleep;
 use tonic::Status;
 use tonic::transport::Channel;
 
-use crate::paxos_bindings::paxos::default::paxos_types::Node;
 use crate::paxos_wasm::PaxosWasmtime;
 
 #[derive(Clone)]

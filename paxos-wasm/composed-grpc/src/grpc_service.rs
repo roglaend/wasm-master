@@ -1,20 +1,21 @@
-use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
-use crate::paxos_bindings::{self, MessagePayloadExt as _};
-use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use dashmap::DashMap;
 use futures::future::join_all;
-use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
+use once_cell::sync::Lazy;
+use paxos_wasm_bindings_types::convert_internal_state_to_proto;
+use paxos_wasm_bindings_types::paxos::network_types::{NetworkMessage, NetworkResponse};
+use paxos_wasm_bindings_types::paxos::paxos_types::{ClientRequest, ClientResponse, Value};
 use proto::paxos_proto;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
-use once_cell::sync::Lazy;
-use tokio::sync::oneshot;
-use dashmap::DashMap;
+
+use crate::coordinator_bindings;
+use crate::paxos_wasm::PaxosWasmtime;
 
 pub static RESPONSE_REGISTRY: Lazy<DashMap<u64, oneshot::Sender<ClientResponse>>> =
     Lazy::new(|| DashMap::new());
-
 
 #[derive(Clone)]
 pub struct PaxosService {
@@ -60,7 +61,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         // TODO: Have a standardize way to do this conversion. Have it per user.
         // let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let client_request: ClientRequest = ClientRequest {
+        let client_request = ClientRequest {
             client_id: "".into(),
             client_seq: 0,
             value: Value {
@@ -71,8 +72,11 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
             },
         };
 
+        // TODO: Make this better?
+        let client_request_shared: coordinator_bindings::paxos::default::paxos_types::ClientRequest = client_request.into();
+
         let request_id = req.client_id * 1000 + req.client_seq;
-        let (response_tx, response_rx) = oneshot::channel(); 
+        let (response_tx, response_rx) = oneshot::channel();
         RESPONSE_REGISTRY.insert(request_id.clone(), response_tx);
 
         {
@@ -82,10 +86,12 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 .call_submit_client_request(
                     &mut *store,
                     self.paxos_wasmtime.resource_handle,
-                    &client_request,
+                    &client_request_shared,
                 )
                 .await
-                .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
+                .map_err(|e| {
+                    Status::internal(format!("Failed to submit client request: {:?}", e))
+                })?;
 
             info!(
                 "[gRPC Service] Finished submitting client request, success: {}).",
@@ -98,12 +104,18 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 "[gRPC Service] Failed to receive response for client_id {}: {:?}",
                 request_id, e
             );
-            Status::internal(format!("Failed to receive response for client_id {}: {:?}", request_id, e))
+            Status::internal(format!(
+                "Failed to receive response for client_id {}: {:?}",
+                request_id, e
+            ))
         })?;
 
         let result_message = &format!("{:?}", result.command_result);
 
-        Ok(Response::new(paxos_proto::ProposeResponse { success: true, message: result_message.to_string() }))
+        Ok(Response::new(paxos_proto::ProposeResponse {
+            success: true,
+            message: result_message.to_string(),
+        }))
     }
 
     // TODO: Make it an option to not send responses back
@@ -113,7 +125,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
     ) -> Result<Response<paxos_proto::NetworkMessage>, Status> {
         debug!("[gRPC Service] Starting process to deliver network message to wasm component.");
         let proto_msg = request.into_inner();
-        let wit_msg = paxos_bindings::paxos::default::network::NetworkMessage::try_from(proto_msg)
+        let wit_msg = NetworkMessage::try_from(proto_msg)
             .map_err(|e| Status::invalid_argument(format!("Invalid network message: {}", e)))?;
 
         let mut store = self.paxos_wasmtime.store.lock().await;
@@ -126,13 +138,15 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 Status::internal(format!("Failed to handle delivered message: {:?}", e))
             })?;
 
+        let shared_response: NetworkResponse = internal_response.into();
+
         debug!(
             "[gRPC Service] Finished finished delivering message to wasm component, payload type: {}.",
-            internal_response.payload.payload_type()
+            shared_response.payload.payload_type()
         );
 
         // Convert our internal response to a proto response.
-        let proto_response: paxos_proto::NetworkMessage = internal_response.into();
+        let proto_response: paxos_proto::NetworkMessage = shared_response.into();
         Ok(Response::new(proto_response))
     }
 
@@ -212,6 +226,8 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
             .call_get_state(&mut *store, self.paxos_wasmtime.resource_handle)
             .await
             .map_err(|e| Status::internal(format!("Get state failed: {:?}", e)))?;
+
+        let shared_internal_state
 
         let proto_state = convert_internal_state_to_proto(internal_state);
         info!("GRPC get_state: finish");

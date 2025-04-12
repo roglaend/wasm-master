@@ -54,9 +54,17 @@ world paxos-world {
     import logger; 
 
     export paxos-coordinator;
-    // export proposer-agent;
-    // export acceptor-agent;
+}
 
+world paxos-types-world {
+    export paxos-types;
+    export proposer-types;
+    export acceptor-types;
+    export learner-types;
+    export kv-store-types;
+    export network-types;
+    export coordinator-types;
+    export logger-types;
 }
 
 // world paxos-client-world {
