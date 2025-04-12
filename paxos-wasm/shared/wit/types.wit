@@ -243,3 +243,28 @@ interface network-types {
     }
 
 }
+
+interface coordinator-types {
+    use paxos-types.{node};
+    use learner-types.{learned-entry};
+    use kv-store-types.{kv-pair};
+
+    record election-result {
+        leader: node,
+        quorum: u64,
+    }
+
+    record paxos-state {
+        learned: list<learned-entry>,
+        kv-state: list<kv-pair>,
+    }
+}
+
+interface logger-types {
+      enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+}

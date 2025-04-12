@@ -1,18 +1,22 @@
 mod config;
+mod coordinator_bindings;
 mod failure_service;
 mod grpc_service;
 mod host_logger;
 mod host_messenger;
-mod paxos_bindings;
 mod paxos_wasm;
 mod run_paxos_service;
+mod traits;
 mod translation_layer;
+
+#[macro_use]
+mod macro_translation;
 
 use clap::Parser;
 use config::Config;
+use coordinator_bindings::paxos::default::paxos_types::RunConfig;
 use failure_service::FailureService;
 use grpc_service::PaxosService;
-use paxos_bindings::paxos::default::paxos_types::RunConfig;
 use paxos_wasm::PaxosWasmtime;
 use proto::paxos_proto;
 use run_paxos_service::RunPaxosService;

@@ -8,7 +8,7 @@ pub mod bindings {
     wit_bindgen::generate!( {
         path: "../../shared/wit",
         world: "paxos-world",
-        // additional_derives: [Clone],
+        additional_derives: [Clone],
     });
 }
 
@@ -20,7 +20,9 @@ use bindings::exports::paxos::default::paxos_coordinator::{
 };
 use bindings::paxos::default::learner_types::LearnResultTest;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{ClientRequest, ClientResponse, Learn, Node, PaxosPhase, Slot, Value};
+use bindings::paxos::default::paxos_types::{
+    ClientRequest, ClientResponse, Learn, Node, PaxosPhase, Slot, Value,
+};
 use bindings::paxos::default::{
     acceptor_agent, failure_detector, kv_store, learner, logger, network, proposer_agent,
 };
@@ -42,7 +44,6 @@ pub struct MyPaxosCoordinatorResource {
     proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
     acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
     // learner_agent: Arc<learner_agent::LearnerAgentResource>,
-
     learner: Arc<learner::LearnerResource>,
     kv_store: Arc<kv_store::KvStoreResource>,
     failure_detector: Arc<failure_detector::FailureDetectorResource>,
@@ -86,10 +87,11 @@ impl MyPaxosCoordinatorResource {
                 // SHOULD ALWAYS BE A MISSING PROPOSAL WHEN THIS HAPPENS
                 if let Some(missing_proposal) = self.proposer_agent.get_in_flight_proposal(slot) {
                     let _ = self.proposer_agent.accept_phase(
-                        &missing_proposal.value, 
-                        missing_proposal.slot, 
-                        missing_proposal.ballot, 
-                    &vec![]);
+                        &missing_proposal.value,
+                        missing_proposal.slot,
+                        missing_proposal.ballot,
+                        &vec![],
+                    );
                     return true;
                 }
             }
@@ -172,17 +174,12 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 for _i in 0..alpha {
                     let res = self.accept_phase();
                     match res {
-                        AcceptResult::Accepted(_) => {
-                            
-                        }
+                        AcceptResult::Accepted(_) => {}
                         AcceptResult::MissingProposal => {
                             break;
                         }
-                        AcceptResult::QuorumFailure => {
-                        }
-                        AcceptResult::IsEventDriven => {
-                        }
-                        
+                        AcceptResult::QuorumFailure => {}
+                        AcceptResult::IsEventDriven => {}
                     }
                 }
                 if !self.config.acceptors_send_learns {
@@ -201,26 +198,22 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         }
                     }
                 }
-                
+
                 let mut executed_list = vec![];
-                for i in 0..10 {
+                for _i in 0..10 {
                     let executed = self.test.borrow_mut().pop_front();
                     if let Some(val) = executed.clone() {
-                        logger::log_info(&format!(
-                            "[Proposer Agent] Executed value: {:?}",
-                            val
-                        ));
+                        logger::log_info(&format!("[Proposer Agent] Executed value: {:?}", val));
                         executed_list.push(val);
                     }
-                   
                 }
                 if executed_list.len() > 0 {
                     return Some(executed_list);
                 }
                 None
             }
-            PaxosPhase::Stop => {None}  // TODO
-            PaxosPhase::Crash => {None} // TODO
+            PaxosPhase::Stop => None,  // TODO
+            PaxosPhase::Crash => None, // TODO
         }
     }
 
@@ -298,7 +291,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
     /// Commits the proposal by updating the learner and key‑value store, then broadcasting a commit message.
     fn commit_phase(&self) -> Option<LearnResult> {
-        
         if self.tickercounter.get() % 5 == 0 {
             // Check if we have a gap in the learned values on timer 5x tickerinterval
             if self.check_and_resend_if_gap() {
@@ -338,13 +330,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 LearnResultTest::Ignore => {
                     // Learend value that cannot be executed yet
                 }
-                
             }
             Some(LearnResult {
                 learned_value: prop.value,
                 quorum: self.get_quorum(),
             })
-
         } else {
             // logger::log_debug(&format!(
             //     "[Coordinator] No accepted proposal found for slot {}.",
@@ -378,7 +368,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     payload.slot, payload.value
                 ));
                 if !self.config.acceptors_send_learns {
-
                     // need some here if you are just a lear replica and miss the learn request
 
                     let learn_result = self.learner.learn(payload.slot, &payload.value);
@@ -391,9 +380,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         LearnResultTest::Ignore => {
                             // Learend value that cannot be executed yet
                         }
-                        
                     }
-
                 }
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -409,7 +396,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
 
             MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
-            
+
             MessagePayload::Heartbeat(payload) => {
                 logger::log_debug(&format!(
                     "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",

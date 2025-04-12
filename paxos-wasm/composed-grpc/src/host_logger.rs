@@ -1,5 +1,5 @@
-use crate::paxos_bindings::paxos::default::logger::Level;
-use crate::paxos_bindings::paxos::default::paxos_types::Node;
+use paxos_wasm_bindings_types::paxos::logger_types::Level;
+use paxos_wasm_bindings_types::paxos::paxos_types::Node;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;

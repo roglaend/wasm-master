@@ -1,10 +1,10 @@
+use paxos_wasm_bindings_types::paxos::paxos_types::ClientResponse;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tonic::Status;
 use tracing::{debug, error, info};
 
-use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
 use crate::paxos_wasm::PaxosWasmtime;
 
 use crate::grpc_service::RESPONSE_REGISTRY;
@@ -41,14 +41,17 @@ impl RunPaxosService {
                             for val in vec {
                                 let id: u64 = val.client_id.clone().parse().unwrap_or(0);
                                 let client_seq = val.client_seq;
-                                handle_response(id, client_seq, val);
+                                handle_response(id, client_seq, val.into());
                             }
                         } else {
                             debug!("[gRPC Service] No value returned from wasm component.");
                         }
                     }
                     Err(e) => {
-                        debug!("[Run-Paxos Service] Failed to call wasm component to run a new paxos loop: {:?}", e);
+                        debug!(
+                            "[Run-Paxos Service] Failed to call wasm component to run a new paxos loop: {:?}",
+                            e
+                        );
                     }
                 }
             }
