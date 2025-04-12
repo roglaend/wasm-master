@@ -10,6 +10,26 @@ use tracing::warn;
 pub struct HostMessenger;
 
 impl HostMessenger {
+    pub async fn send_message_forget(
+        endpoints: Vec<String>,
+        proto_msg: paxos_proto::NetworkMessage,
+    ) -> () {
+        tokio::spawn(async move {
+            // Create gRPC clients.
+            let clients_arc = create_clients(endpoints.clone()).await;
+            let clients: Vec<_> = {
+                let guard = clients_arc.lock();
+                guard.unwrap().clone()
+            };
+            let send_futures = clients.into_iter().map(|mut client| {
+                let req = tonic::Request::new(proto_msg.clone());
+                async move { client.deliver_message(req).await }
+            });
+            join_all(send_futures).await;
+        });
+        ()
+    }
+
     /// Sends a proto network message to the given endpoints and returns the aggregated responses.
     pub async fn send_message(
         endpoints: Vec<String>,

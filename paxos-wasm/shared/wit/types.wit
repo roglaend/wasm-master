@@ -1,4 +1,20 @@
 interface paxos-types {
+    record run-config {
+        is-event-driven: bool,          // Toggles the fire-and-forget or the waiting and handling of messages synchronously.
+        acceptors-send-learns: bool,    // Toggle if the leader proposer or the acceptors should send the learns to the learners.
+        prepare-timeout: u64,           // The timeout period before trying a new prepare-phase in ms e.g., 5000 for 5 seconds
+        // ... Add more?
+    } 
+
+    enum paxos-phase {
+        start,
+        prepare-send,
+        prepare-pending,
+        accept-commit,
+        stop,
+        crash,
+    }
+
     enum paxos-role {
         coordinator,
         proposer,
@@ -20,7 +36,7 @@ interface paxos-types {
 
     /// Represents the command or operation to be executed.
     record value {
-        is-noop: bool,      // Used to fill empty slots if needed. (might not be needed since command can be None)
+        is-noop: bool,  // Used to fill empty slots if needed. (might not be needed since command can be None)
         command: cmd,   // The actual command, executed by the state machine (if any)
         // Add more...?
         // TODO: Change the value to actually fit the usage of our final state machine.
@@ -44,13 +60,13 @@ interface paxos-types {
     record proposal {
         slot: slot,
         ballot: ballot,
-        client-request: client-request,
+        value: value,
     }
 
     /// Prepare message sent by the proposer to initiate a new proposal.
     /// Acceptors respond to this message with a promise.
     record prepare {
-        slot: slot,
+        slot: slot,  // Optional, the acceptors only send accepts with a slot higher than this
         ballot: ballot,
     }
 
@@ -67,8 +83,6 @@ interface paxos-types {
         ballot: ballot,
         value: option<value>,
     }
-
-    // TODO: Some of these types are identical? Reuse or keep separate for clarity and future expansion?
 
     /// Accept message sent by the proposer to ask acceptors to accept a proposal.
     record accept {
@@ -95,18 +109,12 @@ interface paxos-types {
 
 interface proposer-types {
     use paxos-types.{slot, ballot, value, client-request, proposal};
-    
-    /// Outcome of processing promises.
-    record prepare-outcome {
-        chosen-value: value,  // The value that should be used.
-        is-original: bool,    // True if this is the original client proposal.
-    }
 
     /// Result type for the prepare phase.
     variant prepare-result {
-        outcome(prepare-outcome),   // The value outcome of the prepare
-        missing-proposal,           // There was no in-flight proposals matching the slot
+        success,     // Improve?
         quorum-failure,             // Not enough promise responses were received
+        is-event-driven,            // We will handle the result later
     }
 
     /// Result type for the accept phase.
@@ -114,6 +122,7 @@ interface proposer-types {
         accepted(u64),          // Quorum of acceptors accepted with the number of acceptances.
         missing-proposal,       // There was no in-flight proposals matching the slot
         quorum-failure,         // Not enough accept responses were received
+        is-event-driven,            // We will handle the result later
     }
 
         /// The overall state of the proposer.
@@ -152,7 +161,7 @@ interface acceptor-types {
     }
 
     record acceptor-state {
-        promises: list<promise-entry>,
+        promises: list<ballot>,
         accepted: list<p-value>,
     }
 

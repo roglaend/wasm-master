@@ -2,11 +2,13 @@
     "cSpell.words": [
         "accd",
         "Deque",
+        "idempotently",
         "pocs",
         "pollable",
         "pollables",
         "protos",
         "wasi",
+        "wasip",
         "wrpc"
     ]
 }

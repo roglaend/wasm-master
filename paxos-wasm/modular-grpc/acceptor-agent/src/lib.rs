@@ -16,7 +16,9 @@ use bindings::paxos::default::acceptor::AcceptorResource;
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
 use bindings::paxos::default::learner_types::LearnResult;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{Ballot, Learn, Node, PaxosRole, Slot, Value};
+use bindings::paxos::default::paxos_types::{
+    Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
+};
 use bindings::paxos::default::{logger, network};
 
 pub struct MyAcceptorAgent;
@@ -26,19 +28,17 @@ impl GuestAcceptorAgent for MyAcceptorAgent {
 }
 
 pub struct MyAcceptorAgentResource {
+    config: RunConfig,
+
     node: Node,
-
-    // When true, this agent will also broadcast learned values.
-    send_learns: bool,
     learners: Vec<Node>,
-
     acceptor: Arc<AcceptorResource>,
 }
 
 impl MyAcceptorAgentResource {}
 
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
-    fn new(node: Node, nodes: Vec<Node>, send_learns: bool) -> Self {
+    fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
         let garbage_collection_window = Some(100);
         let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
 
@@ -50,8 +50,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {
+            config,
             node,
-            send_learns,
             learners,
             acceptor,
         }
@@ -77,7 +77,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
     // Commit phase: broadcasts a learn message if configured to do so.
     fn commit_phase(&self, slot: Slot, value: Value) -> Option<LearnResult> {
-        if self.send_learns {
+        if self.config.acceptors_send_learns {
             logger::log_info(&format!(
                 "[Acceptor Agent] Committing proposal: slot={}, value={:?}",
                 slot, value
@@ -87,11 +87,13 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 value: value.clone(),
             };
 
+            // TODO: Copy pasted from paxos coordinator, not ready to be used, needs to be reconsidered.
+
             let learn_msg = NetworkMessage {
                 sender: self.node.clone(),
                 payload: MessagePayload::Learn(learn),
             };
-            network::send_message(&vec![], &learn_msg);
+            _ = network::send_message(&vec![], &learn_msg);
             Some(LearnResult {
                 learned_value: value,
                 quorum: self.learners.len() as u64, // TODO: This needed?
@@ -112,7 +114,6 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
         // TODO: Fully implement and make use of the handling of incoming Promise and Accepted, when we use fire and forget messaging
 
-        //* I think this is enough...? */
         match message.payload {
             MessagePayload::Prepare(payload) => {
                 logger::log_info(&format!(
@@ -120,16 +121,25 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     payload.slot, payload.ballot
                 ));
                 let promise_result = self.process_prepare(payload.slot, payload.ballot);
-                match promise_result {
-                    PromiseResult::Promised(promise) => NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::Promise(promise),
-                    },
+                let response = match promise_result {
+                    PromiseResult::Promised(promise) => {
+                        let msg = NetworkMessage {
+                            sender: self.node.clone(),
+                            payload: MessagePayload::Promise(promise),
+                        };
+
+                        //* Fire-and-forget */
+                        if self.config.is_event_driven {
+                            network::send_message_forget(&vec![message.sender.clone()], &msg);
+                        }
+                        msg
+                    }
                     PromiseResult::Rejected(_ballot) => NetworkMessage {
                         sender: self.node.clone(),
                         payload: MessagePayload::Ignore, // TODO: Maybe give a better response?
                     },
-                }
+                };
+                response
             }
             MessagePayload::Accept(payload) => {
                 logger::log_info(&format!(
@@ -138,16 +148,25 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 ));
                 let accepted_result =
                     self.process_accept(payload.slot, payload.ballot, payload.value);
-                match accepted_result {
-                    AcceptedResult::Accepted(accepted) => NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::Accepted(accepted),
-                    },
+                let response = match accepted_result {
+                    AcceptedResult::Accepted(accepted) => {
+                        let msg = NetworkMessage {
+                            sender: self.node.clone(),
+                            payload: MessagePayload::Accepted(accepted),
+                        };
+
+                        //* Fire-and-forget */
+                        if self.config.is_event_driven {
+                            network::send_message_forget(&vec![message.sender.clone()], &msg);
+                        }
+                        msg
+                    }
                     AcceptedResult::Rejected(_ballot) => NetworkMessage {
                         sender: self.node.clone(),
                         payload: MessagePayload::Ignore, // TODO: Maybe give a better response?
                     },
-                }
+                };
+                response
             }
             MessagePayload::Heartbeat(payload) => {
                 logger::log_info(&format!(
@@ -161,11 +180,18 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     timestamp: payload.timestamp,
                 };
                 // TODO: Have a dedicated heartbeat ack payload type?
-                NetworkMessage {
+                let response = NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Heartbeat(response_payload),
-                }
+                };
+                //* Fire-and-forget */
+                // if self.config.is_event_driven { // TODO: Needed?
+                //     network::send_message_forget(&vec![message.sender.clone()], &response);
+                // }
+                response
             }
+
+            // TODO: React to learn-ack if the acceptor agent broadcast learns?
             other_message => {
                 logger::log_warn(&format!(
                     "[Acceptor Agent] Received irrelevant message type: {:?}",
