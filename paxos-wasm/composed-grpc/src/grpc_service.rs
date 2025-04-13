@@ -1,20 +1,19 @@
 use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
 use crate::paxos_bindings::{self, MessagePayloadExt as _};
 use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use dashmap::DashMap;
 use futures::future::join_all;
+use once_cell::sync::Lazy;
 use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
-use once_cell::sync::Lazy;
-use tokio::sync::oneshot;
-use dashmap::DashMap;
 
 pub static RESPONSE_REGISTRY: Lazy<DashMap<u64, oneshot::Sender<ClientResponse>>> =
     Lazy::new(|| DashMap::new());
-
 
 #[derive(Clone)]
 pub struct PaxosService {
@@ -48,6 +47,7 @@ pub async fn create_clients(
 
     Arc::new(Mutex::new(clients_vec))
 }
+
 #[tonic::async_trait]
 impl paxos_proto::paxos_server::Paxos for PaxosService {
     async fn propose_value(
@@ -72,7 +72,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         };
 
         let request_id = req.client_id * 1000 + req.client_seq;
-        let (response_tx, response_rx) = oneshot::channel(); 
+        let (response_tx, response_rx) = oneshot::channel();
         RESPONSE_REGISTRY.insert(request_id.clone(), response_tx);
 
         {
@@ -85,7 +85,9 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                     &client_request,
                 )
                 .await
-                .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
+                .map_err(|e| {
+                    Status::internal(format!("Failed to submit client request: {:?}", e))
+                })?;
 
             info!(
                 "[gRPC Service] Finished submitting client request, success: {}).",
@@ -98,12 +100,18 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 "[gRPC Service] Failed to receive response for client_id {}: {:?}",
                 request_id, e
             );
-            Status::internal(format!("Failed to receive response for client_id {}: {:?}", request_id, e))
+            Status::internal(format!(
+                "Failed to receive response for client_id {}: {:?}",
+                request_id, e
+            ))
         })?;
 
         let result_message = &format!("{:?}", result.command_result);
 
-        Ok(Response::new(paxos_proto::ProposeResponse { success: true, message: result_message.to_string() }))
+        Ok(Response::new(paxos_proto::ProposeResponse {
+            success: true,
+            message: result_message.to_string(),
+        }))
     }
 
     // TODO: Make it an option to not send responses back

@@ -11,23 +11,23 @@ bindings::export!(MyLearnerAgent with_types_in bindings);
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bindings::exports::paxos::default::learner_agent::{
-    Guest as GuestLearnerAgent, GuestLearnerAgentResource
+    Guest as GuestLearnerAgent, GuestLearnerAgentResource,
 };
 
-use bindings::paxos::default::learner_types::{LearnResultTest, LearnedEntry, LearnerState, LearnResult};
+use bindings::paxos::default::learner_types::{LearnResult, LearnResultTest};
 
-use bindings::paxos::default::learner::LearnerResource; 
+use bindings::paxos::default::learner::LearnerResource;
 
 use bindings::paxos::default::{logger, network};
 
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{Node, PaxosRole, RunConfig, Slot, Value, ClientResponse};
-
+use bindings::paxos::default::paxos_types::{
+    ClientResponse, Node, PaxosRole, RunConfig, Slot, Value,
+};
 
 pub struct MyLearnerAgent;
 
@@ -39,7 +39,7 @@ pub struct MyLearnerAgentResource {
     config: RunConfig,
 
     node: Node,
-    
+
     learner: Arc<LearnerResource>,
     proposers: Vec<Node>,
     acceptors: Vec<Node>,
@@ -61,7 +61,7 @@ impl MyLearnerAgentResource {
                 // If we have no entry, then it's the first time we retry
             }
         }
-    
+
         // If we reach here, we should do a retry
         // Update the timestamp to now and return true to indicate a retry happened
         self.retires.borrow_mut().insert(slot, Instant::now());
@@ -76,7 +76,6 @@ impl MyLearnerAgentResource {
     //     false
     // }
 
-
     // simulates getter and setter of a state machine :clownemoji:
     fn execute_command(&self, val: Value) -> String {
         if let Some(cmd) = val.command {
@@ -87,7 +86,9 @@ impl MyLearnerAgentResource {
                 match command {
                     "set" => {
                         let value = string_split[2];
-                        self.simulated_state_machine.borrow_mut().insert(key.to_string(), value.to_string());
+                        self.simulated_state_machine
+                            .borrow_mut()
+                            .insert(key.to_string(), value.to_string());
                         return format!("Set {} to {}", key, value);
                     }
                     "get" => {
@@ -104,20 +105,15 @@ impl MyLearnerAgentResource {
             } else {
                 return "Invalid command".to_string();
             }
-        
         }
 
         // If no command is found, return a default message
-        "Not command found".to_string()        
-
+        "Not command found".to_string()
     }
 }
 
-
 impl GuestLearnerAgentResource for MyLearnerAgentResource {
-
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-
         let learner = Arc::new(LearnerResource::new());
 
         let proposers: Vec<_> = nodes
@@ -125,7 +121,6 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             .into_iter()
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
-
 
         let acceptors: Vec<_> = nodes
             .clone()
@@ -145,15 +140,14 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         }
     }
 
-    fn get_learned_value(&self,) -> Option<String> {
+    fn get_learned_value(&self) -> Option<String> {
         todo!()
     }
 
     // TODO : fix proto for this so that it can actually be used
-    fn get_state(&self,) -> bindings::paxos::default::learner_types::LearnerState {
+    fn get_state(&self) -> bindings::paxos::default::learner_types::LearnerState {
         self.learner.get_state()
     }
-
 
     // Ticker called from host at a slower interval than proposer ticker
     fn run_paxos_loop(&self) -> () {
@@ -179,12 +173,10 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     ));
                 }
             }
-
         }
     }
-    
+
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
-    
         match message.payload {
             MessagePayload::Learn(payload) => {
                 logger::log_debug(&format!(
@@ -192,13 +184,11 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload.slot, payload.value
                 ));
                 if !self.config.acceptors_send_learns {
-
                     let learn_result = self.learner.learn(payload.slot, &payload.value);
                     match learn_result {
                         LearnResultTest::Execute(learns) => {
-
-                            // TODO: Learns is a list of ready-to-execute-commands. 
-                            // This is where we would call the state machine 
+                            // TODO: Learns is a list of ready-to-execute-commands.
+                            // This is where we would call the state machine
 
                             for learn_entry in learns {
                                 let executed_value = learn_entry.value.clone();
@@ -206,13 +196,12 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                                 // Execute command at "state machine"
                                 let res = self.execute_command(executed_value.clone());
 
-
                                 // quickfix let only one learner send to leader
                                 // TODO: proposer should handle this but my brain is too small (wtf copilot)
                                 if self.node.node_id == 1 {
                                     let network_message = NetworkMessage {
                                         sender: self.node.clone(),
-                                        payload: MessagePayload::Ignore
+                                        payload: MessagePayload::Ignore,
                                     };
                                     return network_message;
                                 }
@@ -227,18 +216,16 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
                                 let network_message = NetworkMessage {
                                     sender: self.node.clone(),
-                                    payload: MessagePayload::Executed(client_response)
+                                    payload: MessagePayload::Executed(client_response),
                                 };
-                            
+
                                 network::send_message_forget(&self.proposers, &network_message);
                             }
                         }
                         LearnResultTest::Ignore => {
                             // Learend value that cannot be executed yet
                         }
-                        
                     }
-
                 }
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -255,7 +242,6 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-        }   
+        }
     }
-
 }

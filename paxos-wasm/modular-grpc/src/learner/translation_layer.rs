@@ -5,8 +5,6 @@ use std::convert::TryFrom;
 use crate::learner::paxos_bindings::paxos::default::network_types;
 use crate::learner::paxos_bindings::paxos::default::paxos_types;
 
-use super::paxos_bindings::exports::paxos;
-
 // Conversion for Node.
 impl From<paxos_types::Node> for paxos_proto::Node {
     fn from(node: paxos_types::Node) -> Self {
@@ -50,7 +48,7 @@ impl From<paxos_types::Value> for paxos_proto::Value {
             is_noop: val.is_noop,
             command: val.command.unwrap_or_default(),
             client_id: val.client_id,
-            client_seq: val.client_seq
+            client_seq: val.client_seq,
         }
     }
 }
@@ -65,7 +63,7 @@ impl From<paxos_proto::Value> for paxos_types::Value {
                 Some(value.command)
             },
             client_id: value.client_id,
-            client_seq: value.client_seq
+            client_seq: value.client_seq,
         }
     }
 }
@@ -185,7 +183,7 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                         is_noop: true,
                         command: None,
                         client_id: 0,
-                        client_seq: 0
+                        client_seq: 0,
                     });
                 Ok(network_types::MessagePayload::Accept(paxos_types::Accept {
                     slot: acc.slot,
@@ -208,7 +206,7 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
                         is_noop: true,
                         command: None,
                         client_id: 0,
-                        client_seq: 0
+                        client_seq: 0,
                     });
                 Ok(network_types::MessagePayload::Learn(paxos_types::Learn {
                     slot: learn.slot,
@@ -238,8 +236,6 @@ impl TryFrom<paxos_proto::network_message::Payload> for network_types::MessagePa
             }
 
             paxos_proto::network_message::Payload::Executed(executed) => {
-        
-
                 Ok(network_types::MessagePayload::Executed(
                     paxos_types::ClientResponse {
                         client_id: executed.client_id,
@@ -277,7 +273,6 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
     }
 }
 
-
 // pub fn convert_internal_state_to_proto(
 //     internal_state: paxos::LearnerState,
 // ) -> paxos_proto::PaxosState {
@@ -299,7 +294,6 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
 //         .collect();
 //     paxos_proto::PaxosState { learned, kv_state }
 // }
-
 
 // Converts proto-defined PaxosState into internal Paxos state (WIT type).
 // pub fn _convert_proto_state_to_internal(

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
-use futures_executor::block_on;
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
@@ -34,7 +33,7 @@ impl Guest for MyProposerTcp {
 pub struct MyTcpServerResource {
     config: RunConfig,
     node: Node,
-    _nodes: Vec<Node>,
+    nodes: Vec<Node>, // TODO: might be be useful
     proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
     acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
     learner_agent: Arc<learner_agent::LearnerAgentResource>,
@@ -62,14 +61,16 @@ impl GuestTcpServerResource for MyTcpServerResource {
             nodes.len()
         ));
         Self {
-            config: config,
+            config,
             node,
-            _nodes: nodes,
+            nodes: nodes,
             proposer_agent,
             acceptor_agent,
             learner_agent,
         }
     }
+
+    // TODO: Also add logic for heartbeats, failure service etc.
 
     fn run(&self) {
         // Use the node's full socket address (e.g., "127.0.0.1:8080") as the bind address.

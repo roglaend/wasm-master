@@ -19,3 +19,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }
+agents = { path = "../agents" }

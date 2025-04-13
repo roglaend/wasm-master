@@ -1,11 +1,12 @@
 [package]
-name = "tcp-client"
+name = "tcp-server"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
 
+# TODO: Remove the dependencies that are not needed.
 [dependencies]
 wit-bindgen = "0.41"
 futures-executor = "0.3.31"

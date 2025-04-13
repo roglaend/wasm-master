@@ -1,6 +1,4 @@
 use clap::Parser;
-use env_logger;
-use log::info;
 use proto::paxos_proto;
 use proto::paxos_proto::paxos_client::PaxosClient;
 
@@ -13,7 +11,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let mut learner = PaxosClient::connect("http://127.0.0.1:50054").await?;
 
-    
     let my_id = 1;
     let mut seq = 100;
     loop {
@@ -35,9 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for entry in state.learned {
                 println!("Slot {}: value = {:?}", entry.slot, entry.value);
             }
-        
-        } else if input.eq_ignore_ascii_case("30"){
-
+        } else if input.eq_ignore_ascii_case("30") {
             for i in 0..30 {
                 let request = tonic::Request::new(paxos_proto::ProposeRequest {
                     value: i.to_string(),
@@ -46,9 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
                 let _ = client.propose_value(request).await?;
             }
-        } 
-        
-        else {
+        } else {
             // Create a request from the user's input
             let request = tonic::Request::new(paxos_proto::ProposeRequest {
                 value: input.to_string(),
@@ -58,11 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             seq += 1;
 
-
             let latency = std::time::Instant::now();
 
             let response = client.propose_value(request).await?;
-            
+
             let elapsed = latency.elapsed();
 
             let rsp_msg = response.into_inner();
@@ -72,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Latency: {:?}", elapsed);
             }
         }
-
     }
     Ok(())
 }

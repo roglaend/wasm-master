@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tonic::Status;
 use tracing::debug;
 
 use crate::acceptor::paxos_wasm::PaxosWasmtime;

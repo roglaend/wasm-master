@@ -1,7 +1,6 @@
 use crate::acceptor::host_logger::{self, HostLogger};
 use crate::acceptor::host_messenger::HostMessenger;
 use crate::acceptor::paxos_bindings::paxos::default::paxos_types::{Node, RunConfig};
-use crate::acceptor::paxos_bindings::paxos::default::acceptor;
 // use crate::paxos_bindings::paxos::default::proposer_agent::RunConfig;
 use crate::acceptor::paxos_bindings::{self, MessagePayloadExt};
 use proto::paxos_proto;
@@ -45,7 +44,7 @@ impl ComponentRunStates {
                 .inherit_args()
                 .build(),
             resource_table: ResourceTable::new(),
-            
+
             logger: Arc::new(HostLogger::new_from_workspace(host_node)),
         }
     }
@@ -90,10 +89,12 @@ impl PaxosWasmtime {
             workspace_dir.join("target/wasm32-wasip2/release/composed_acceptor_agent.wasm"),
         )?;
 
-
-        let final_bindings =
-            paxos_bindings::AcceptorAgentWorld::instantiate_async(&mut store, &composed_component, &linker)
-                .await?;
+        let final_bindings = paxos_bindings::AcceptorAgentWorld::instantiate_async(
+            &mut store,
+            &composed_component,
+            &linker,
+        )
+        .await?;
 
         let proposer_guest = final_bindings.paxos_default_acceptor_agent();
         let proposer_resource = proposer_guest.acceptor_agent_resource();
