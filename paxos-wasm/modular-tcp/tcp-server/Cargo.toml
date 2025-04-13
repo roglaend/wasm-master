@@ -1,0 +1,22 @@
+[package]
+name = "tcp-server"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+# TODO: Remove the dependencies that are not needed.
+[dependencies]
+wit-bindgen = "0.41"
+futures-executor = "0.3.31"
+futures = "0.3.31"
+tokio = { version = "1.44.1", features = [
+    # All allowed tokio features
+    "sync",
+    "macros",
+    "io-util",
+    "rt",
+    "time",
+] }
+wasi = "0.14.2"

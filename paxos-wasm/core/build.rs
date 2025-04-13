@@ -3,6 +3,7 @@ use paxos_wasm_utils::build_helpers::{build_and_plug, build_wasm_components};
 fn main() {
     let target = "wasm32-wasip2";
 
+    // Build the base components.
     let base_components = &["proposer", "acceptor", "learner", "kv-store"];
     build_wasm_components(target, base_components);
 

@@ -33,8 +33,6 @@ pub struct MyAcceptorAgentResource {
     node: Node,
     learners: Vec<Node>,
     acceptor: Arc<AcceptorResource>,
-
-    proposers: Vec<Node>,
 }
 
 impl MyAcceptorAgentResource {}
@@ -51,19 +49,11 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
             .collect();
 
-        // do not remember why I added this
-        let proposers: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
-            .collect();
-
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
             learners,
-            proposers,
             acceptor,
         }
     }

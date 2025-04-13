@@ -10,7 +10,6 @@ use crate::proposer::paxos_bindings::exports::paxos;
 //     pub role: NodeRole,
 // }
 
-
 #[derive(Debug, Clone)]
 pub enum NodeRole {
     Coordinator,
@@ -19,7 +18,6 @@ pub enum NodeRole {
     Learner,
 }
 
-
 pub struct SharedConfig {
     // The leader is by default node 1, but can be set dynamically.
     pub leader_id: u64,
@@ -27,13 +25,11 @@ pub struct SharedConfig {
     pub endpoints: Vec<paxos_proto::Node>,
 }
 
-
-
 fn get_role_by_index(i: usize) -> i32 {
     match i {
-        0 | 1 => 3,        // first two
-        2 | 3 | 4 => 2,    // next three
-        5 | 6 => 1,        // last two
+        0 | 1 => 3,     // first two
+        2 | 3 | 4 => 2, // next three
+        5 | 6 => 1,     // last two
         _ => panic!("Index out of range for assigned roles!"),
     }
 }
@@ -65,7 +61,6 @@ impl SharedConfig {
                 }
             })
             .collect();
-
 
         // Leader ID. Defaults to 1 if not provided.
         let leader_id: u64 = std::env::var("LEADER_ID")
@@ -108,7 +103,6 @@ impl Config {
         let node_info = shared.endpoints[(node_id - 1) as usize].clone();
 
         // Build the Node for this current node.
-
 
         // Create a Node for every endpoint except for the current one.
         let remote_nodes: Vec<paxos_proto::Node> = shared

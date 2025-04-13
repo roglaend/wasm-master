@@ -1,6 +1,16 @@
 [workspace]
 resolver = "3"
 
+default-members = [
+    "paxos-rust",
+
+    "paxos-wasm/core",
+    "paxos-wasm/agents",
+    "paxos-wasm/composed-grpc",
+    "paxos-wasm/modular-grpc",
+    "paxos-wasm/modular-tcp",
+]
+
 members = [
     "paxos-rust",
 
@@ -15,6 +25,12 @@ members = [
     "paxos-wasm/core/leader-detector",
     "paxos-wasm/core/failure-detector",
 
+    "paxos-wasm/agents",
+    "paxos-wasm/agents/proposer-agent",
+    "paxos-wasm/agents/acceptor-agent",
+    "paxos-wasm/agents/learner-agent",
+    "paxos-wasm/agents/kv-store-agent",
+
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
     "paxos-wasm/composed-grpc/client_command_line",
@@ -23,10 +39,12 @@ members = [
 
     "paxos-wasm/modular-grpc",
     "paxos-wasm/modular-grpc/client",
-    "paxos-wasm/modular-grpc/proposer-agent",
-    "paxos-wasm/modular-grpc/acceptor-agent",
-    "paxos-wasm/modular-grpc/learner-agent",
-    "paxos-wasm/modular-grpc/kv-store-agent",
+
+    "paxos-wasm/modular-tcp",
+    "paxos-wasm/modular-tcp/client",
+    "paxos-wasm/modular-tcp/tcp-serializer",
+    "paxos-wasm/modular-tcp/tcp-server",
+    "paxos-wasm/modular-tcp/tcp-client",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",
