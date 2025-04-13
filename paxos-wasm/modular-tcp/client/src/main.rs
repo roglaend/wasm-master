@@ -1,16 +1,10 @@
-use std::env;
-use std::time::{Duration, Instant};
-
-use clap::Parser;
-use env_logger;
-use log::info;
 use futures::future::join_all;
 use proto::paxos_proto;
 use proto::paxos_proto::paxos_client::PaxosClient;
+use std::env;
+use std::time::{Duration, Instant};
 
-// use modular_grpc::proposer::grpc_service::LATENCIES_INSIDE_WASM;
-
-
+// TODO: Change this to use tcp instead of grpc
 
 /// Function representing a single client.
 /// It connects to the leader and sends `num_requests` proposals.
@@ -18,34 +12,32 @@ async fn run_client(
     client_id: u64,
     num_requests: u64,
     leader_url: String,
-) -> Result<Vec<Duration>,  Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<Vec<Duration>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     // Connect to the Paxos leader.
     let mut client = PaxosClient::connect(leader_url.clone()).await?;
-    
 
     let mut latencies = Vec::with_capacity(num_requests as usize);
 
     for i in 0..num_requests {
         // Create a unique value per request.
 
-
         // value = set 1:i i
         // every client will set different keys to value of index
         let value = &format!("set {}:{} {}", client_id, i, i);
         let client_seq = i;
 
-            let request = tonic::Request::new(paxos_proto::ProposeRequest {
+        let request = tonic::Request::new(paxos_proto::ProposeRequest {
             value: value.to_string(),
             client_id,
-            client_seq
+            client_seq,
         });
-        
+
         // Record the start time.
         let start = Instant::now();
-        
+
         // Send the propose request asynchronously.
         let response = client.propose_value(request).await?;
-        
+
         // Calculate and log the elapsed time.
         let elapsed = start.elapsed();
         latencies.push(elapsed);
@@ -59,7 +51,7 @@ async fn run_client(
             client_id, client_average
         );
     }
-    
+
     Ok(latencies)
 }
 
@@ -85,10 +77,10 @@ async fn run_client_concurrent(
             client_id,
             client_seq,
         });
-        
+
         // Sleep for a short duration to simulate a delay between requests.
         // if i % 10 == 0 {
-            tokio::time::sleep(Duration::from_micros(10)).await;
+        tokio::time::sleep(Duration::from_micros(10)).await;
         // }
         request_tasks.push(tokio::spawn(async move {
             // Start the timer for this request.
@@ -114,7 +106,10 @@ async fn run_client_concurrent(
                 latencies.push(duration);
             }
             Ok(Err(e)) => {
-                eprintln!("Client {}: Request encountered an error: {:?}", client_id, e);
+                eprintln!(
+                    "Client {}: Request encountered an error: {:?}",
+                    client_id, e
+                );
             }
             Err(e) => {
                 // This error means the spawned task itself panicked.
@@ -134,7 +129,7 @@ async fn run_client_concurrent(
             latencies.len()
         );
     }
-    
+
     Ok(latencies)
 }
 
@@ -142,20 +137,23 @@ async fn run_client_concurrent(
 /// Each client sends a number of requests to the Paxos leader.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let args: Vec<String> = env::args().collect();
-    let nodeid: u8 = args[1].parse().expect("Failed to parse node id as a number");
-    let concurrrent: u8 = args[2].parse().expect("Failed to parse concurrent as a number");
+    let nodeid: u8 = args[1]
+        .parse()
+        .expect("Failed to parse node id as a number");
+    let concurrrent: u8 = args[2]
+        .parse()
+        .expect("Failed to parse concurrent as a number");
     let concurrent = concurrrent == 1;
 
     // Configuration
     let leader_url = format!("http://127.0.0.1:5005{}", nodeid);
     let num_clients = 3;
     let requests_per_client = 100;
-    
+
     // Vector to hold all spawned client tasks.
     let mut tasks = Vec::with_capacity(num_clients as usize);
-    
+
     let start_time = Instant::now();
 
     if concurrent {
@@ -177,15 +175,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }));
         }
     }
-    
-    
+
     // Aggregate latency results from all client tasks.
     let mut all_latencies = Vec::new();
-    
+
     for task in tasks {
         match task.await {
             Ok((client_id, Ok(latencies))) => {
-                println!("Client {} completed successfully with {} requests.", client_id, latencies.len());
+                println!(
+                    "Client {} completed successfully with {} requests.",
+                    client_id,
+                    latencies.len()
+                );
                 all_latencies.extend(latencies);
             }
             Ok((client_id, Err(e))) => {
@@ -199,7 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let elapsed_time = start_time.elapsed();
     println!("Total elapsed time for all clients: {:?}", elapsed_time);
-    
+
     // Compute and display overall metrics if any measurements were recorded.
     if !all_latencies.is_empty() {
         let total_count = all_latencies.len();
@@ -217,6 +218,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("No successful latency measurements recorded.");
     }
-    
+
     Ok(())
 }

@@ -38,6 +38,9 @@ impl bindings::exports::paxos::default::tcp_serializer::Guest for MySerializer {
         NetworkMessage { sender, payload }
     }
 }
+
+// TODO: Add serialization for client communication too.
+
 /// We choose a simple textual encoding:
 ///
 /// - A **Node** is encoded as:

@@ -1,7 +1,6 @@
 use crate::learner::host_logger::{self, HostLogger};
 use crate::learner::host_messenger::HostMessenger;
 use crate::learner::paxos_bindings::paxos::default::paxos_types::{Node, RunConfig};
-use crate::learner::paxos_bindings::paxos::default::learner;
 // use crate::paxos_bindings::paxos::default::proposer_agent::RunConfig;
 use crate::learner::paxos_bindings::{self, MessagePayloadExt};
 use proto::paxos_proto;
@@ -45,7 +44,7 @@ impl ComponentRunStates {
                 .inherit_args()
                 .build(),
             resource_table: ResourceTable::new(),
-            
+
             logger: Arc::new(HostLogger::new_from_workspace(host_node)),
         }
     }
@@ -90,10 +89,12 @@ impl PaxosWasmtime {
             workspace_dir.join("target/wasm32-wasip2/release/composed_learner_agent.wasm"),
         )?;
 
-
-        let final_bindings =
-            paxos_bindings::LearnerAgentWorld::instantiate_async(&mut store, &composed_component, &linker)
-                .await?;
+        let final_bindings = paxos_bindings::LearnerAgentWorld::instantiate_async(
+            &mut store,
+            &composed_component,
+            &linker,
+        )
+        .await?;
 
         let proposer_guest = final_bindings.paxos_default_learner_agent();
         let proposer_resource = proposer_guest.learner_agent_resource();
@@ -119,8 +120,7 @@ impl PaxosWasmtime {
 
     pub fn resource<'a>(
         &'a self,
-    ) -> paxos_bindings::exports::paxos::default::learner_agent::GuestLearnerAgentResource<'a>
-    {
+    ) -> paxos_bindings::exports::paxos::default::learner_agent::GuestLearnerAgentResource<'a> {
         self.guest().learner_agent_resource()
     }
 }

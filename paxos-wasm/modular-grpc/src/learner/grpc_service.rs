@@ -1,9 +1,8 @@
 use crate::learner::paxos_bindings::{self, MessagePayloadExt as _};
-use crate::learner::{paxos_wasm::PaxosWasmtime};
+use crate::learner::paxos_wasm::PaxosWasmtime;
 use futures::future::join_all;
-use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};

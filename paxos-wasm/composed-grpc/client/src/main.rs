@@ -1,8 +1,4 @@
 use clap::Parser;
-use env_logger;
-use log::info;
-use proto::paxos_proto;
-use proto::paxos_proto::paxos_client::PaxosClient;
 
 #[derive(Parser)]
 struct Args {

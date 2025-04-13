@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tonic::Status;
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 
 use crate::proposer::paxos_bindings::paxos::default::paxos_types::ClientResponse;
 use crate::proposer::paxos_wasm::PaxosWasmtime;
@@ -10,8 +10,6 @@ use crate::proposer::paxos_wasm::PaxosWasmtime;
 use crate::proposer::grpc_service::RESPONSE_REGISTRY;
 // use crate::proposer::grpc_service::LATENCY_START_TIMES;
 // use crate::proposer::grpc_service::LATENCIES_INSIDE_WASM;
-
-use super::paxos_bindings::paxos::default::paxos_types::Value;
 
 #[derive(Clone)]
 pub struct RunPaxosService {
@@ -53,7 +51,10 @@ impl RunPaxosService {
                         }
                     }
                     Err(e) => {
-                        debug!("[Run-Paxos Service] Failed to call wasm component to run a new paxos loop: {:?}", e);
+                        debug!(
+                            "[Run-Paxos Service] Failed to call wasm component to run a new paxos loop: {:?}",
+                            e
+                        );
                     }
                 }
             }

@@ -1,5 +1,4 @@
 use crate::proposer::paxos_bindings::paxos::default::logger::Level;
-use crate::proposer::paxos_bindings::paxos::default::paxos_types::Node;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -15,7 +14,6 @@ pub struct HostNode {
     pub address: String,
     pub role: u64,
 }
-
 
 pub struct HostLogger {
     pub node: HostNode,
@@ -61,7 +59,11 @@ impl HostLogger {
     // TODO: Then make the "truly global" log be created by a third
 
     /// Create a new HostLogger given a node ID, node file path, and a shared global file.
-    pub fn new(node: HostNode, node_file_path: &str, global_file: Arc<Mutex<std::fs::File>>) -> Self {
+    pub fn new(
+        node: HostNode,
+        node_file_path: &str,
+        global_file: Arc<Mutex<std::fs::File>>,
+    ) -> Self {
         let node_file = OpenOptions::new()
             .write(true)
             .create(true)

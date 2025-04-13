@@ -2,7 +2,6 @@ use proto::paxos_proto::{self, network_message::Payload};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tonic::Status;
 use tonic::transport::Channel;
 
 use crate::learner::paxos_bindings::paxos::default::paxos_types::Node;
