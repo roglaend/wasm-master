@@ -1,4 +1,4 @@
-use paxos_wasm_utils::build_helpers::{build_wasm_components, get_target_dir, plug_modules};
+use paxos_wasm_utils::build_helpers::{build_and_plug, build_wasm_components};
 
 fn main() {
     let target_triple = "wasm32-wasip2";
@@ -15,35 +15,50 @@ fn main() {
     );
     println!("Agents built successfully\n");
 
-    // Compute the target directory using the helper.
-    let target_dir = get_target_dir(target_triple);
-
-    // Define plug jobs with a clear separation:
-    //   - plugs: a slice of plug module names,
-    //   - socket: the module to be used as the socket,
-    //   - output: the name of the composite module.
-    let plug_jobs: &[(&[&str], &str, &str)] = &[
-        (&["proposer"], "proposer_agent", "temp_composed_proposer_agent"),
-        (&["acceptor"], "acceptor_agent", "composed_acceptor_agent"),
-        ( &["learner"], "learner_agent", "composed_learner_agent" ),
-        ( &["composed_failure_service"], "temp_composed_proposer_agent", "composed_proposer_agent" ),
-        // ( &["kv_store"], "kv_store_agent", "composed_kv_store_agent" ),
-    ];
-
     println!("Plugging core components into agents…");
-    for (plugs, socket, output) in plug_jobs {
-        println!(
-            "Plugging plugs: {:?} with socket: {} -> {}",
-            plugs, socket, output
-        );
-        plug_modules(&target_dir, plugs, socket, output);
-        println!(
-            "Created {}",
-            target_dir
-                .join("release")
-                .join(format!("{}.wasm", output))
-                .display()
-        );
-    }
+
+    // Build composite proposer agent:
+    // Plug "proposer" into "proposer_agent" to yield "temp_composed_proposer_agent".
+    build_and_plug(
+        target_triple,
+        &[],
+        &["proposer"],
+        "proposer_agent",
+        "temp_composed_proposer_agent",
+    );
+    println!("Created temp_composed_proposer_agent");
+
+    // Build composite acceptor agent:
+    build_and_plug(
+        target_triple,
+        &[],
+        &["acceptor"],
+        "acceptor_agent",
+        "composed_acceptor_agent",
+    );
+    println!("Created composed_acceptor_agent");
+
+    // Build composite learner agent:
+    build_and_plug(
+        target_triple,
+        &[],
+        &["learner"],
+        "learner_agent",
+        "composed_learner_agent",
+    );
+    println!("Created composed_learner_agent");
+
+    // Re-plug the failure service composition:
+    // Plug "composed_failure_service" into the previously built temp_composed_proposer_agent
+    // to yield the final composed proposer agent.
+    build_and_plug(
+        target_triple,
+        &[],
+        &["composed_failure_service"],
+        "temp_composed_proposer_agent",
+        "composed_proposer_agent",
+    );
+    println!("Created composed_proposer_agent");
+
     println!("All compose jobs complete");
 }
