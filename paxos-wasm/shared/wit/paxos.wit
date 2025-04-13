@@ -25,6 +25,8 @@ interface proposer {
         /// Retrieves the up-to-date accepted proposal for the given slot from the core proposer, if exists.
         get-accepted-proposal: func(slot: slot) -> option<proposal>;
 
+        get-some-accepted-proposal: func() -> option<proposal>;
+
         /// Creates the next proposal from the pending queue (if available).
         create-proposal: func() -> option<proposal>;
 
@@ -65,13 +67,14 @@ interface acceptor {
 
 interface learner {
     use paxos-types.{slot, value};
-    use learner-types.{learned-entry, learner-state};
+    use learner-types.{learned-entry, learner-state, learn-result-test};
 
     resource learner-resource {
         constructor();
         get-state: func() -> learner-state;
-        learn: func(slot: slot, value: value);
+        learn: func(slot: slot, value: value) -> learn-result-test;
         get-learned: func(slot: slot) -> option<learned-entry>;
+        check-for-gap: func() -> option<slot>;
     }
 }
 
@@ -136,7 +139,7 @@ interface network {
 }
 
 interface paxos-coordinator {
-    use paxos-types.{run-config, node, slot, ballot, client-request, value};
+    use paxos-types.{run-config, node, slot, ballot, client-request, value, client-response};
     use proposer-types.{prepare-result, accept-result};
     use network-types.{network-message};
     use learner-types.{learned-entry, learn-result};
@@ -185,7 +188,7 @@ interface paxos-coordinator {
 
         failure-service: func();
 
-        run-paxos-loop: func();
+        run-paxos-loop: func() -> option<list<client-response>>;
 
         // Mergebart blanding 
 
@@ -227,7 +230,7 @@ interface logger {
 /// THIS IS FOR THE MODULAR GRPC MODEL ///
 
 interface proposer-agent {
-    use paxos-types.{node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase};
+    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn};
     use proposer-types.{prepare-result, accept-result};
     use network-types.{network-message};
 
@@ -244,6 +247,10 @@ interface proposer-agent {
         /// Retrieves the up-to-date accepted proposal for the given slot from the core proposer, if exists.
         get-accepted-proposal: func(slot: slot) -> option<proposal>;
 
+        get-some-accepted-proposal: func() -> option<proposal>;
+
+        get-in-flight-proposal: func(slot: slot) -> option<proposal>;
+
         get-current-slot: func() -> slot;
 
         get-current-ballot: func() -> ballot;
@@ -258,6 +265,9 @@ interface proposer-agent {
         /// Broadcasts accept messages and merges optional local accepted payloads with remote responses,
         /// then invokes the core proposer’s process-accept.
         accept-phase: func(proposal-value: value, slot: slot, ballot: ballot, accepts: list<accepted>) -> accept-result;
+
+
+        commit-phase: func(learn: learn);
 
         /// Finalizes the proposal
         finalize-proposal: func(slot: slot) -> option<value>;
@@ -280,10 +290,12 @@ interface proposer-agent {
         /// Relinquishes leadership.
         resign-leader: func() -> bool;
 
-        run-paxos-loop: func();
+        run-paxos-loop: func() -> option<list<client-response>>;
 
         /// (Old) runs a single instance of the Paxos protocol synchronously from the proposer agent pov.
         run-paxos-instance-sync: func(client-request: client-request) -> bool;
+
+        failure-service: func();
 
     }
 }
@@ -309,21 +321,27 @@ interface acceptor-agent {
 }
 
 interface learner-agent {
-    use paxos-coordinator.{paxos-state};
+    // use paxos-coordinator.{paxos-state};
+    use paxos-types.{node, slot, ballot, value, run-config};
     use network.{network-message};
+    use learner-types.{learn-result, learn-result-test, learned-entry, learner-state};
 
     resource learner-agent-resource {
-        constructor();
+        constructor(node: node, nodes: list<node>, config: run-config);
 
         /// Retrieves the most recently learned value (if any). Change this to be per ballot/slot
         get-learned-value: func() -> option<string>;
 
         /// Returns a snapshot of the full Paxos state (e.g. learned entries, kv-store state).
-        get-state: func() -> paxos-state;
+        get-state: func() -> learner-state;
 
         /// Processes incoming network messages (such as commit notifications and accepted responses).
         handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
+    
+        run-paxos-loop: func();
     }
+
+
 
 }
 

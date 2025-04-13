@@ -2,12 +2,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tonic::Status;
-use tracing::{debug, error, info};
+use tracing::{debug, info, error};
 
-use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
-use crate::paxos_wasm::PaxosWasmtime;
+use crate::proposer::paxos_bindings::paxos::default::paxos_types::ClientResponse;
+use crate::proposer::paxos_wasm::PaxosWasmtime;
 
-use crate::grpc_service::RESPONSE_REGISTRY;
+use crate::proposer::grpc_service::RESPONSE_REGISTRY;
+// use crate::proposer::grpc_service::LATENCY_START_TIMES;
+// use crate::proposer::grpc_service::LATENCIES_INSIDE_WASM;
+
+use super::paxos_bindings::paxos::default::paxos_types::Value;
 
 #[derive(Clone)]
 pub struct RunPaxosService {
@@ -41,6 +45,7 @@ impl RunPaxosService {
                             for val in vec {
                                 let id: u64 = val.client_id.clone().parse().unwrap_or(0);
                                 let client_seq = val.client_seq;
+                                // handle_latency(id, client_seq);
                                 handle_response(id, client_seq, val);
                             }
                         } else {
@@ -65,3 +70,14 @@ fn handle_response(client_id: u64, client_seq: u64, result: ClientResponse) {
         error!("No active sender found for request_id: {}", request_id);
     }
 }
+
+// fn handle_latency(client_id: u64, client_seq: u64) {
+//     let request_id = client_id * 1000 + client_seq;
+//     if let Some((_, start_time)) = LATENCY_START_TIMES.remove(&request_id) {
+//         let elapsed_time = start_time.elapsed();
+//         LATENCIES_INSIDE_WASM.insert(request_id, elapsed_time);
+//         error!("Recorded latency for request_id {}: {:?}", request_id, elapsed_time);
+//     } else {
+//         error!("No start time found for request_id: {}", request_id);
+//     }
+// }

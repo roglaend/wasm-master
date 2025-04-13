@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 proto = { path = "../../shared/proto", package = "proto" }
-
 log = "0.4"
 env_logger = "0.10"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-tonic = { version = "0.9", features = ["transport"] }
+tonic = { version = "0.13", features = ["transport"] }
+futures = "0.3"

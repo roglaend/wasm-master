@@ -1,9 +1,13 @@
 use proto::paxos_proto;
 use std::convert::TryFrom;
 
-use crate::paxos_bindings::exports::paxos::default::paxos_coordinator;
-use crate::paxos_bindings::paxos::default::network_types;
-use crate::paxos_bindings::paxos::default::paxos_types;
+// use crate::paxos_bindings::exports::paxos::default::paxos_coordinator;
+use crate::proposer::paxos_bindings::paxos::default::network_types;
+use crate::proposer::paxos_bindings::paxos::default::paxos_types;
+
+use super::paxos_bindings::exports::paxos;
+
+// Conversion for Node.
 impl From<paxos_types::Node> for paxos_proto::Node {
     fn from(node: paxos_types::Node) -> Self {
         paxos_proto::Node {
@@ -273,51 +277,50 @@ impl TryFrom<paxos_proto::NetworkMessage> for network_types::NetworkMessage {
     }
 }
 
+// /// Converts internal Paxos state (WIT type) to proto-defined PaxosState.
+// pub fn convert_internal_state_to_proto(
+//     internal_state: paxos_coordinator::PaxosState,
+// ) -> paxos_proto::PaxosState {
+//     let learned = internal_state
+//         .learned
+//         .into_iter()
+//         .map(|entry| paxos_proto::LearnedEntry {
+//             slot: entry.slot,
+//             value: Some(entry.value.into()),
+//         })
+//         .collect();
+//     let kv_state = internal_state
+//         .kv_state
+//         .into_iter()
+//         .map(|pair| paxos_proto::KvPair {
+//             key: pair.key,
+//             value: Some(pair.value.into()),
+//         })
+//         .collect();
+//     paxos_proto::PaxosState { learned, kv_state }
+// }
 
-pub fn convert_internal_state_to_proto(
-    internal_state: paxos_coordinator::PaxosState,
-) -> paxos_proto::PaxosState {
-    let learned = internal_state
-        .learned
-        .into_iter()
-        .map(|entry| paxos_proto::LearnedEntry {
-            slot: entry.slot,
-            value: Some(entry.value.into()),
-        })
-        .collect();
-    let kv_state = internal_state
-        .kv_state
-        .into_iter()
-        .map(|pair| paxos_proto::KvPair {
-            key: pair.key,
-            value: Some(pair.value.into()),
-        })
-        .collect();
-    paxos_proto::PaxosState { learned, kv_state }
-}
-
-
-/// Converts proto-defined PaxosState into internal Paxos state (WIT type).
-pub fn _convert_proto_state_to_internal(
-    proto_state: paxos_proto::PaxosState,
-) -> paxos_coordinator::PaxosState {
-    let learned = proto_state
-        .learned
-        .into_iter()
-        .map(|entry| paxos_coordinator::LearnedEntry {
-            slot: entry.slot,
-            value: paxos_types::Value::try_from(entry.value.unwrap_or_default())
-                .expect("Failed to convert Value for LearnedEntry"),
-        })
-        .collect();
-    let kv_state = proto_state
-        .kv_state
-        .into_iter()
-        .map(|pair| paxos_coordinator::KvPair {
-            key: pair.key,
-            value: paxos_types::Value::try_from(pair.value.unwrap_or_default())
-                .expect("Failed to convert KvPair"),
-        })
-        .collect();
-    paxos_coordinator::PaxosState { learned, kv_state }
-}
+// /// Converts proto-defined PaxosState into internal Paxos state (WIT type).
+// pub fn _convert_proto_state_to_internal(
+//     proto_state: paxos_proto::PaxosState,
+// ) -> paxos_coordinator::PaxosState {
+//     let learned = proto_state
+//         .learned
+//         .into_iter()
+//         .map(|entry| paxos_coordinator::LearnedEntry {
+//             slot: entry.slot,
+//             value: paxos_types::Value::try_from(entry.value.unwrap_or_default())
+//                 .expect("Failed to convert Value for LearnedEntry"),
+//         })
+//         .collect();
+//     let kv_state = proto_state
+//         .kv_state
+//         .into_iter()
+//         .map(|pair| paxos_coordinator::KvPair {
+//             key: pair.key,
+//             value: paxos_types::Value::try_from(pair.value.unwrap_or_default())
+//                 .expect("Failed to convert KvPair"),
+//         })
+//         .collect();
+//     paxos_coordinator::PaxosState { learned, kv_state }
+// }

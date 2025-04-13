@@ -22,47 +22,47 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    // env_logger::init();
 
-    let args = Args::parse();
-    let mut client = PaxosClient::connect(args.server_addr).await?;
+    // let args = Args::parse();
+    // let mut client = PaxosClient::connect(args.server_addr).await?;
 
-    if args.fetch_logs {
-        info!(
-            "Fetching logs from server with last_offset: {}",
-            args.last_offset
-        );
-        let request = tonic::Request::new(paxos_proto::GetLogsRequest {
-            last_offset: args.last_offset,
-        });
-        let response = client.get_logs(request).await?;
-        let logs = response.into_inner();
-        info!(
-            "Fetched {} log entries, new_offset: {}",
-            logs.entries.len(),
-            logs.new_offset
-        );
-        for entry in logs.entries {
-            info!("Offset {}: {}", entry.offset, entry.message);
-        }
-    } else if let Some(val) = args.value {
-        info!("Sending propose request with value: {}", val);
-        let request = tonic::Request::new(paxos_proto::ProposeRequest { value: val });
-        let response = client.propose_value(request).await?;
-        info!("Propose response: {:?}", response.into_inner());
-    } else {
-        info!("Requesting current Paxos state...");
-        let request = tonic::Request::new(paxos_proto::Empty {});
-        let response = client.get_state(request).await?;
-        let state = response.into_inner();
-        info!("Learned entries:");
-        for entry in state.learned {
-            info!("  Slot {}: value = {:?}", entry.slot, entry.value);
-        }
-        info!("KV-Store state:");
-        for pair in state.kv_state {
-            info!("  {} => {:?}", pair.key, pair.value);
-        }
-    }
+    // if args.fetch_logs {
+    //     info!(
+    //         "Fetching logs from server with last_offset: {}",
+    //         args.last_offset
+    //     );
+    //     let request = tonic::Request::new(paxos_proto::GetLogsRequest {
+    //         last_offset: args.last_offset,
+    //     });
+    //     let response = client.get_logs(request).await?;
+    //     let logs = response.into_inner();
+    //     info!(
+    //         "Fetched {} log entries, new_offset: {}",
+    //         logs.entries.len(),
+    //         logs.new_offset
+    //     );
+    //     for entry in logs.entries {
+    //         info!("Offset {}: {}", entry.offset, entry.message);
+    //     }
+    // } else if let Some(val) = args.value {
+    //     info!("Sending propose request with value: {}", val);
+    //     let request = tonic::Request::new(paxos_proto::ProposeRequest { value: val });
+    //     let response = client.propose_value(request).await?;
+    //     info!("Propose response: {:?}", response.into_inner());
+    // } else {
+    //     info!("Requesting current Paxos state...");
+    //     let request = tonic::Request::new(paxos_proto::Empty {});
+    //     let response = client.get_state(request).await?;
+    //     let state = response.into_inner();
+    //     info!("Learned entries:");
+    //     for entry in state.learned {
+    //         info!("  Slot {}: value = {:?}", entry.slot, entry.value);
+    //     }
+    //     info!("KV-Store state:");
+    //     for pair in state.kv_state {
+    //         info!("  {} => {:?}", pair.key, pair.value);
+    //     }
+    // }
     Ok(())
 }

@@ -102,11 +102,15 @@ impl GuestAcceptorResource for MyAcceptorResource {
 
         // Collect all accepted proposals (PValue) with slot >= the input slot.
         let accepted = self.collect_accepted_from(slot);
-        logger::log_info(&format!(
-            "[Core Acceptor] Collected {} accepted proposals for slots >= {}",
-            accepted.len(),
-            slot
-        ));
+        // logger::log_info(&format!(
+        //     "[Core Acceptor] Collected {} accepted proposals for slot: {:?}",
+        //     accepted.len(),
+        //     accepted
+        //         .iter()
+        //         .map(|p| format!("(slot: {})", p.slot))
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // ));
 
         let promise = Promise {
             slot,
@@ -114,7 +118,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
             accepted,
         };
 
-        self.auto_garbage_collect(slot);
+        // self.auto_garbage_collect(slot);
         PromiseResult::Promised(promise)
     }
 
@@ -144,7 +148,18 @@ impl GuestAcceptorResource for MyAcceptorResource {
                     ballot,
                     success: true,
                 });
-            } else {
+            } else if existing.value == Some(value.clone()) {
+                // this could happen on leader failure where leader proposes values from promises to get them executed
+                // the leader could probably directly commit such a value but then we cant use them in the 
+                // priority queue as we have now
+                return AcceptedResult::Accepted(Accepted {
+                    slot,
+                    ballot,
+                    success: true,
+                });
+            }
+            
+            else {
                 // A conflicting proposal exists for this slot; reject the new request.
                 logger::log_warn(&format!(
                     "[Core Acceptor] Rejected accept for slot {} with ballot {} because a conflicting proposal already exists (existing ballot: {}, value: {:?})",
@@ -164,7 +179,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 "[Core Acceptor] Accepted proposal for slot {} with ballot {}",
                 slot, ballot
             ));
-            self.auto_garbage_collect(slot);
+            // self.auto_garbage_collect(slot);
             return AcceptedResult::Accepted(Accepted {
                 slot,
                 ballot,

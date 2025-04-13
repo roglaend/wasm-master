@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -15,7 +15,7 @@ bindings::export!(MyLearner with_types_in bindings);
 use bindings::paxos::default::paxos_types::{Slot, Value};
 
 use crate::bindings::exports::paxos::default::learner::{
-    Guest, GuestLearnerResource, LearnedEntry, LearnerState,
+    Guest, GuestLearnerResource, LearnedEntry, LearnerState, LearnResultTest
 };
 use crate::bindings::paxos::default::logger;
 
@@ -29,6 +29,9 @@ impl Guest for MyLearner {
 /// This ensures that each slot only has one learned value and that the entries remain ordered.
 pub struct MyLearnerResource {
     learned: RefCell<BTreeMap<Slot, Value>>,
+    next_to_execute: Cell<Slot>,
+    execution_log: RefCell<BTreeMap<Slot, Value>>,
+    // executed_order: RefCell<Vec<LearnedEntry>>,
 }
 
 impl GuestLearnerResource for MyLearnerResource {
@@ -36,13 +39,15 @@ impl GuestLearnerResource for MyLearnerResource {
     fn new() -> Self {
         Self {
             learned: RefCell::new(BTreeMap::new()),
+            next_to_execute: Cell::new(1),
+            execution_log: RefCell::new(BTreeMap::new()),
+            // executed_order: RefCell::new(Vec::new()),
         }
     }
 
-    /// Returns the current state as a list of learned entries, sorted by slot.
     fn get_state(&self) -> LearnerState {
         let learned_list: Vec<LearnedEntry> = self
-            .learned
+            .execution_log
             .borrow()
             .iter()
             .map(|(&slot, value)| LearnedEntry {
@@ -57,11 +62,16 @@ impl GuestLearnerResource for MyLearnerResource {
 
     /// Record that a value has been learned for a given slot.
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
-    fn learn(&self, slot: Slot, value: Value) {
+    /// Can only execute consecutive slots starting from the next_to_execute slot.
+    fn learn(&self, slot: Slot, value: Value) -> LearnResultTest {
         let mut learned_map = self.learned.borrow_mut();
-        if !learned_map.contains_key(&slot) {
+        let mut next_to_execute = self.next_to_execute.get();
+        let mut execution_log = self.execution_log.borrow_mut();
+
+        // Insert learn if have not learned yet
+        if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
             logger::log_info(&format!(
-                "Learner: For slot {}, learned value {:?}",
+                "[Core Learner]: For slot {}, learned value {:?}",
                 slot, value
             ));
             learned_map.insert(slot, value);
@@ -70,6 +80,47 @@ impl GuestLearnerResource for MyLearnerResource {
                 "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
                 slot, value
             ));
+
+        }
+
+        // Check if some learns are ready to be executed in order
+        let mut to_be_executed = Vec::new();
+        if learned_map.contains_key(&next_to_execute) {
+            // Execute as many contiguous slots as possible.
+            while let Some(val) = learned_map.remove(&next_to_execute) {
+                execution_log.insert(next_to_execute, val.clone());
+                to_be_executed.push(LearnedEntry {
+                    slot: next_to_execute,
+                    value: val.clone(),
+                });
+
+                next_to_execute += 1;
+                self.next_to_execute.set(next_to_execute);
+            }
+
+            return LearnResultTest::Execute(to_be_executed);
+        } else { 
+            LearnResultTest::Ignore
+        }
+    }
+
+
+    // Checker for gaps in the learned slots. Should be called at reasoinable a interval.
+    fn check_for_gap(&self) -> Option<Slot> {
+        let learned_map = self.learned.borrow_mut();
+        let next_to_execute = self.next_to_execute.get();
+        let max_learned_slot = learned_map.keys().max().copied().unwrap_or(0);
+
+        if max_learned_slot < next_to_execute {
+            return None; 
+        }
+
+        if !learned_map.contains_key(&next_to_execute) {
+            // If the next slot to execute is not present, return it as a gap.
+            return Some(next_to_execute);
+        }
+        else {
+            None
         }
     }
 

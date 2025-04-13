@@ -1,13 +1,13 @@
 // TODO: Create a shared package for this
 wasmtime::component::bindgen! {{
     path: "../shared/wit",
-    world: "paxos-world",
+    world: "learner-agent-world",
     additional_derives: [Clone],
     async: true,
     // TODO: Try async again later
 }}
 
-use crate::paxos_bindings::paxos::default::network_types::MessagePayload;
+use crate::learner::paxos_bindings::paxos::default::network_types::MessagePayload;
 
 // Helper function to get a string conversion for MessagePayload without considering content.
 pub trait MessagePayloadExt {

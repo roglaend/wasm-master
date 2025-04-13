@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Dynamic configuration values.
-NUM_NODES=4
+NUM_NODES=3
 BASE_PORT=50051
 BASE_IP="127.0.0.1"
 LEADER_ID=$NUM_NODES

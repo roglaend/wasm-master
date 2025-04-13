@@ -1,20 +1,32 @@
-use crate::paxos_bindings::paxos::default::paxos_types::ClientResponse;
-use crate::paxos_bindings::{self, MessagePayloadExt as _};
-use crate::{paxos_wasm::PaxosWasmtime, translation_layer::convert_internal_state_to_proto};
+use crate::proposer::paxos_bindings::{self, MessagePayloadExt as _};
+use crate::proposer::{paxos_wasm::PaxosWasmtime};
 use futures::future::join_all;
 use paxos_bindings::paxos::default::paxos_types::{ClientRequest, Value};
 use proto::paxos_proto;
+use tokio::time::{self, Duration};
+use tracing_subscriber::fmt::format;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+// use std::time::Duration;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
+use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use tokio::sync::oneshot;
-use dashmap::DashMap;
+
+use super::paxos_bindings::paxos::default::paxos_types::ClientResponse;
 
 pub static RESPONSE_REGISTRY: Lazy<DashMap<u64, oneshot::Sender<ClientResponse>>> =
     Lazy::new(|| DashMap::new());
 
+
+// pub static LATENCY_START_TIMES: Lazy<DashMap<u64, Instant>> =
+//     Lazy::new(|| DashMap::new());
+
+// /// A global map to store computed latencies.
+// pub static LATENCIES_INSIDE_WASM: Lazy<DashMap<u64, Duration>> =
+//     Lazy::new(|| DashMap::new());
 
 #[derive(Clone)]
 pub struct PaxosService {
@@ -56,12 +68,13 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
     ) -> Result<Response<paxos_proto::ProposeResponse>, Status> {
         info!("[gRPC Service] Starting process to submit client request to wasm component.");
         let req = request.into_inner();
+        
 
         // TODO: Have a standardize way to do this conversion. Have it per user.
         // let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
         let client_request: ClientRequest = ClientRequest {
-            client_id: "".into(),
+            client_id: "".to_string(),
             client_seq: 0,
             value: Value {
                 is_noop: false,
@@ -74,6 +87,9 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         let request_id = req.client_id * 1000 + req.client_seq;
         let (response_tx, response_rx) = oneshot::channel(); 
         RESPONSE_REGISTRY.insert(request_id.clone(), response_tx);
+
+
+        // LATENCY_START_TIMES.insert(request_id.clone(), Instant::now());
 
         {
             let mut store = self.paxos_wasmtime.store.lock().await;
@@ -92,7 +108,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 success
             );
         }
-
+        
         let result = response_rx.await.map_err(|e| {
             info!(
                 "[gRPC Service] Failed to receive response for client_id {}: {:?}",
@@ -136,86 +152,17 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         Ok(Response::new(proto_response))
     }
 
-    //* Old way to run a single synchronous paxos instance. */
-    // async fn run_paxos_instance_sync(
-    //     &self,
-    //     request: Request<paxos_proto::ProposeRequest>,
-    // ) -> Result<Response<paxos_proto::ProposeResponse>, Status> {
-    //     info!(
-    //         "[gRPC Service] Starting process to run a single instance of the paxos algorithm synchronously."
-    //     );
-    //     let req = request.into_inner();
-    //     let mut store = self.paxos_wasmtime.store.lock().await;
-    //     let resource = self.paxos_wasmtime.resource();
-
-    //     // TODO: Have a standardize way to do this conversion. Have it per user.
-    //     let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
-
-    //     let request: ClientRequest = ClientRequest {
-    //         client_id: "Client 1".into(),
-    //         client_seq: seq,
-    //         value: Value {
-    //             is_noop: false,
-    //             command: Some(req.value),
-    //         },
-    //     };
-
-    //     let success = resource
-    //         .run_paxos_instance_sync(&mut *store, self.paxos_wasmtime.resource_handle, &req)
-    //         .await
-    //         .map_err(|e| Status::internal(format!("Failed to submit client request: {:?}", e)))?;
-
-    //     info!(
-    //         "[gRPC Service] Finished running the single synchronous instance of paxos algorithm, success: {}).",
-    //         success
-    //     );
-    //     Ok(Response::new(paxos_proto::ProposeResponse { success }))
-    // }
-
     async fn get_value(
         &self,
         _request: Request<paxos_proto::Empty>,
     ) -> Result<Response<paxos_proto::GetValueResponse>, Status> {
-        info!("GRPC get_value: start");
-        let mut store = self.paxos_wasmtime.store.lock().await;
-        let resource = self.paxos_wasmtime.resource();
-
-        let value = resource
-            .call_get_learned_value(&mut *store, self.paxos_wasmtime.resource_handle)
-            .await
-            .map_err(|e| Status::internal(format!("Get value failed: {:?}", e)))?;
-
-        // TODO: This is wrong. Should instead get a "ClientResponse" instead of a "Value"
-        let proto_value = paxos_proto::Value {
-            is_noop: value.is_noop,
-            command: value.command.unwrap_or_default(),
-            client_id: value.client_id,
-            client_seq: value.client_seq,
-        };
-
-        let response = paxos_proto::GetValueResponse {
-            value: Some(proto_value),
-        };
-        info!("GRPC get_value: finish (value: {:?})", response.value);
-        Ok(Response::new(response))
+        todo!()
     }
-
     async fn get_state(
         &self,
         _request: Request<paxos_proto::Empty>,
     ) -> Result<Response<paxos_proto::PaxosState>, Status> {
-        info!("GRPC get_state: start");
-        let mut store = self.paxos_wasmtime.store.lock().await;
-        let resource = self.paxos_wasmtime.resource();
-
-        let internal_state = resource
-            .call_get_state(&mut *store, self.paxos_wasmtime.resource_handle)
-            .await
-            .map_err(|e| Status::internal(format!("Get state failed: {:?}", e)))?;
-
-        let proto_state = convert_internal_state_to_proto(internal_state);
-        info!("GRPC get_state: finish");
-        Ok(Response::new(proto_state))
+        todo!()
     }
 
     async fn get_logs(
