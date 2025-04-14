@@ -430,7 +430,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     /// Submits a client request to the core proposer.
-    fn submit_client_request(&self, req: ClientRequest) -> bool {
+    fn submit_client_request(&self, req: Value) -> bool {
         let result = self.proposer.enqueue_client_request(&req);
         logger::log_info(&format!(
             "[Proposer Agent] Submitted client request '{:?}': {}.",
@@ -862,52 +862,53 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     // * Keep this, just as a reference for the logic order */
     /// (Old) Executes a full Paxos instance from the proposers pov by creating a proposal and running prepare and accept phases.
     fn run_paxos_instance_sync(&self, req: ClientRequest) -> bool {
-        self.submit_client_request(req.clone());
+        // self.submit_client_request(req.clone());
 
-        logger::log_debug(&format!(
-            "[Proposer Agent] Starting Paxos round for client value {:?}.",
-            req.value
-        ));
+        // logger::log_debug(&format!(
+        //     "[Proposer Agent] Starting Paxos round for client value {:?}.",
+        //     req.value
+        // ));
 
-        let slot = self.proposer.get_current_slot();
-        let ballot = self.proposer.get_current_ballot();
+        // let slot = self.proposer.get_current_slot();
+        // let ballot = self.proposer.get_current_ballot();
 
-        // Synchronous prepare phase.
-        let prepare_result = self.prepare_phase(slot, ballot, vec![]);
-        if let PrepareResult::Success = prepare_result {
-            // Continue.
-        } else {
-            logger::log_error("[Proposer Agent] Prepare phase quorum failure.");
-            return false;
-        }
+        // // Synchronous prepare phase.
+        // let prepare_result = self.prepare_phase(slot, ballot, vec![]);
+        // if let PrepareResult::Success = prepare_result {
+        //     // Continue.
+        // } else {
+        //     logger::log_error("[Proposer Agent] Prepare phase quorum failure.");
+        //     return false;
+        // }
 
-        let proposal = match self.create_proposal() {
-            Some(p) => p,
-            None => return false,
-        };
+        // let proposal = match self.create_proposal() {
+        //     Some(p) => p,
+        //     None => return false,
+        // };
 
-        // Synchronous accept phase.
-        match self.accept_phase(proposal.value, proposal.slot, proposal.ballot, vec![]) {
-            AcceptResult::Accepted(_) => {
-                logger::log_debug(&format!(
-                    "[Proposer Agent] Paxos round for slot {} completed successfully.",
-                    proposal.slot
-                ));
-                self.finalize_proposal(slot);
-                true
-            }
-            AcceptResult::QuorumFailure | AcceptResult::MissingProposal => {
-                logger::log_error(
-                    "[Proposer Agent] Accept phase failed to reach quorum or proposal missing.",
-                );
-                false
-            }
-            AcceptResult::IsEventDriven => {
-                logger::log_error(
-                    "[Proposer Agent] Event-driven mode not supported in synchronous run.",
-                );
-                panic!("Unexpected event-driven result in sync mode");
-            }
-        }
+        // // Synchronous accept phase.
+        // match self.accept_phase(proposal.value, proposal.slot, proposal.ballot, vec![]) {
+        //     AcceptResult::Accepted(_) => {
+        //         logger::log_debug(&format!(
+        //             "[Proposer Agent] Paxos round for slot {} completed successfully.",
+        //             proposal.slot
+        //         ));
+        //         self.finalize_proposal(slot);
+        //         true
+        //     }
+        //     AcceptResult::QuorumFailure | AcceptResult::MissingProposal => {
+        //         logger::log_error(
+        //             "[Proposer Agent] Accept phase failed to reach quorum or proposal missing.",
+        //         );
+        //         false
+        //     }
+        //     AcceptResult::IsEventDriven => {
+        //         logger::log_error(
+        //             "[Proposer Agent] Event-driven mode not supported in synchronous run.",
+        //         );
+        //         panic!("Unexpected event-driven result in sync mode");
+        //     }
+        // }
+        todo!()
     }
 }

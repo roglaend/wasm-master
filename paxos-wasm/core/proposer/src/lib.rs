@@ -35,7 +35,7 @@ pub struct MyProposerResource {
     // adu: Cell<Ballot>,
 
     // New values submitted by clients.
-    pending_client_requests: RefCell<VecDeque<ClientRequest>>,
+    pending_client_requests: RefCell<VecDeque<Value>>,
     // Values that must be proposed again after a failed accept phase.
     prioritized_values: RefCell<VecDeque<PValue>>, // TODO: Have it indexed by slot instead to enforce slot -> value mapping for re-proposals?
     // Proposals currently in flight, indexed by slot.
@@ -67,7 +67,7 @@ impl MyProposerResource {
         if let Some((_slot, value)) = self.prioritized_values_map.borrow_mut().pop_first() {
             Some(value.value?) // TODO: Enforce the usage of same slot, should be the same though?
         } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
-            Some(req.value)
+            Some(req)
         } else {
             None
         }
@@ -175,31 +175,32 @@ impl GuestProposerResource for MyProposerResource {
     }
 
     fn get_state(&self) -> ProposerState {
-        ProposerState {
-            is_leader: self.is_leader.get(),
-            num_acceptors: self.num_acceptors,
+        // ProposerState {
+        //     is_leader: self.is_leader.get(),
+        //     num_acceptors: self.num_acceptors,
 
-            current_slot: self.current_slot.get(),
-            current_ballot: self.current_ballot.get(),
+        //     current_slot: self.current_slot.get(),
+        //     current_ballot: self.current_ballot.get(),
 
-            pending_client_requests: self
-                .pending_client_requests
-                .borrow()
-                .iter()
-                .cloned()
-                .collect(),
-            in_flight: self
-                .in_flight_proposals
-                .borrow()
-                .values()
-                .cloned()
-                .collect(),
-            last_proposal: self.in_flight_proposals.borrow().values().last().cloned(),
-        }
+        //     pending_client_requests: self
+        //         .pending_client_requests
+        //         .borrow()
+        //         .iter()
+        //         .cloned()
+        //         .collect(),
+        //     in_flight: self
+        //         .in_flight_proposals
+        //         .borrow()
+        //         .values()
+        //         .cloned()
+        //         .collect(),
+        //     last_proposal: self.in_flight_proposals.borrow().values().last().cloned(),
+        // }
+        todo!()
     }
 
     /// Enqueues a client request for later proposal creation.
-    fn enqueue_client_request(&self, req: ClientRequest) -> bool {
+    fn enqueue_client_request(&self, req: Value) -> bool {
         self.pending_client_requests.borrow_mut().push_back(req);
         logger::log_debug("[Core Proposer] Enqueued client request.");
 
