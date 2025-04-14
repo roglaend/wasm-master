@@ -140,7 +140,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         }
     }
 
-    fn submit_client_request(&self, req: ClientRequest) -> bool {
+    fn submit_client_request(&self, req: Value) -> bool {
         self.proposer_agent.submit_client_request(&req)
     }
 

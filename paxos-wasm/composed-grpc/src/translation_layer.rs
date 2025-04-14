@@ -149,6 +149,9 @@ impl From<network_types::MessagePayload> for paxos_proto::network_message::Paylo
                     slot: val.slot,
                 })
             }
+            _ => {
+                panic!("Unknown MessagePayload type");
+            }
         }
     }
 }
