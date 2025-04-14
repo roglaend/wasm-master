@@ -45,9 +45,6 @@ interface paxos-types {
     }
 
     record client-request {
-        client-id: string,
-        client-seq: u64,
-        // timestamp: u64,
         value: value,
     }
 
@@ -229,6 +226,8 @@ interface network-types {
         heartbeat(heartbeat),   // Heartbeat.
         retry-learn(u64), // Retry learn.
         executed(client-response), // Executed value.
+
+        client-request(value)
     }
 
     record heartbeat {

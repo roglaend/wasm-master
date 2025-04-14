@@ -3,8 +3,9 @@ use paxos_wasm_utils::build_helpers::{build_and_plug, build_wasm_components};
 fn main() {
     let target = "wasm32-wasip2";
 
-    let base_components = &["tcp-serializer", "tcp-server", "tcp-client"];
+    let base_components = &["tcp-serializer", "tcp-server", "tcp-client", "paxos-tcp-client"];
     build_wasm_components(target, base_components);
+
 
     let build_list_server: &[&str] = &[];
     let plugs_server = &["tcp_serializer"];
@@ -29,6 +30,31 @@ fn main() {
         socket_client,
         output_client,
     );
+
+    let build_list_paxos_client: &[&str] = &[];
+    let plugs_client = &["tcp_serializer"];
+    let socket_client = "paxos_tcp_client";
+    let output_client = "composed_paxos_tcp_client";
+    build_and_plug(
+        target,
+        build_list_paxos_client,
+        plugs_client,
+        socket_client,
+        output_client,
+    );
+
+    // let build_list_paxos_modular_client: &[&str] = &[];
+    // let plugs_client = &["composed_paxos_tcp_client"];
+    // let socket_client = "command_paxos_tcp_client";
+    // let output_client = "composed_command_paxos_tcp_client";
+    // build_and_plug(
+    //     target,
+    //     build_list_paxos_modular_client,
+    //     plugs_client,
+    //     socket_client,
+    //     output_client,
+    // );
+
 
     let build_list: &[&str] = &[];
     let plugs = &["composed_tcp_client"];

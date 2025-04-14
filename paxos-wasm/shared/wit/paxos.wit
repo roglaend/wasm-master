@@ -13,7 +13,7 @@ interface proposer {
         get-state: func() -> proposer-state;
 
         /// Enqueues a client request for later processing.
-        enqueue-client-request: func(request: client-request) -> bool;
+        enqueue-client-request: func(request: value) -> bool;
 
         get-current-slot: func() -> slot;
 
@@ -184,7 +184,7 @@ interface paxos-coordinator {
 
         // Mergebart blanding 
 
-        submit-client-request: func(request: client-request) -> bool;
+        submit-client-request: func(request: value) -> bool;
 
         failure-service: func();
 
@@ -242,7 +242,7 @@ interface proposer-agent {
         get-paxos-phase: func() -> paxos-phase;
 
         /// Submits a client request to the system.
-        submit-client-request: func(request: client-request) -> bool;
+        submit-client-request: func(request: value) -> bool;
 
         /// Retrieves the up-to-date accepted proposal for the given slot from the core proposer, if exists.
         get-accepted-proposal: func(slot: slot) -> option<proposal>;
@@ -361,3 +361,12 @@ interface tcp-serializer {
     /// Convert bytes into a NetworkMessage.
     deserialize: func(serialized: list<u8>) -> network-message;
 }
+
+
+interface paxos-tcp-client {
+    use network-types.{network-message};
+
+    perform-request: func(message: network-message) -> option<network-message>;
+
+}
+

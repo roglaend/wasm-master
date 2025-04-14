@@ -20,6 +20,7 @@ impl bindings::exports::paxos::default::tcp_serializer::Guest for MySerializer {
         let sender_str = serialize_node(&message.sender);
         let payload_str = serialize_message_payload(&message.payload);
         let formatted = format!("sender={}||payload={}", sender_str, payload_str);
+        println!("-----------------------DEZERIALIZED MESSAGE---------------------------: {}", formatted);
         formatted.into_bytes()
     }
 
@@ -27,6 +28,7 @@ impl bindings::exports::paxos::default::tcp_serializer::Guest for MySerializer {
         let serialized_string =
             String::from_utf8(serialized.to_vec()).expect("Invalid UTF-8 sequence");
         let parts: Vec<&str> = serialized_string.split("||").collect();
+        println!("----------------------SERIALIZED MESSAGE------------------------------: {}", serialized_string);
         if parts.len() != 2 {
             panic!("Invalid serialized message format");
         }
@@ -158,6 +160,13 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 cr.client_id, cr.client_seq, cr.success, cmd_res, cr.slot
             )
         }
+        MessagePayload::ClientRequest(v) => {
+            let cmd = v.command.clone().unwrap_or_else(|| "none".into());
+            format!(
+                "client-request,client_id:{},client_seq:{},command:{}",
+                v.client_id, v.client_seq, cmd
+            )
+        }   
     }
 }
 
@@ -381,6 +390,34 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                 Ok(MessagePayload::Executed(cr))
             } else {
                 Err("Failed to parse executed payload")
+            }
+        }
+        "client-request" => {
+            let mut client_id: Option<u64> = None;
+            let mut client_seq: Option<u64> = None;
+            let mut command: Option<String> = None;
+            for part in &parts[1..] {
+                let mut kv = part.splitn(2, ':');
+                let key = kv.next().unwrap_or("");
+                let value = kv.next().unwrap_or("");
+                match key {
+                    "client_id" => client_id = value.parse().ok(),
+                    "client_seq" => client_seq = value.parse().ok(),
+                    "command" => command = Some(value.to_string()),
+                    _ => {}
+                }
+            }
+            if let (Some(cid), Some(cseq), Some(cmd)) =
+                (client_id, client_seq, command)
+            {
+                Ok(MessagePayload::ClientRequest(Value {
+                    is_noop: false,
+                    client_id: cid,
+                    client_seq: cseq,
+                    command: if cmd == "none" { None } else { Some(cmd) },
+                }))
+            } else {
+                Err("Failed to parse client-request payload")
             }
         }
         _ => Err("Unknown payload variant"),

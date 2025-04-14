@@ -108,11 +108,25 @@ world tcp-client-world {
     export network;
 }
 
+world paxos-tcp-client-world {
+    import tcp-serializer;
+
+    // import logger;
+
+    export paxos-tcp-client;
+}
+
+world command-paxos-tcp-world {
+    import paxos-tcp-client;
+}
+
 world paxos-tcp-world {
     import tcp-serializer;
     import proposer-agent;
     import acceptor-agent;
     import learner-agent;
+
+    // import paxos-coordinator;
 
     import logger;
 

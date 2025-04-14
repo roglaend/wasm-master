@@ -99,14 +99,28 @@ impl Guest for TcpClient {
 
     /// send-message-forget opens a connection to each node, sends the message, and does not wait for a reply.
     fn send_message_forget(nodes: Vec<Node>, message: NetworkMessage) {
-        let msg_bytes = tcp_serializer::serialize(&message);
+        let msg_bytes = tcp_serializer::serialize(&message); 
         for node in nodes.iter() {
             logger::log_info(&format!(
                 "[TCP Client] send_message_forget: Trying to send message to node {} with message {:?}",
                 node.address, message
             ));
-            if let Ok((_socket, _input, output)) = create_client_socket(&node.address) {
-                if output.write(&msg_bytes).is_ok() {
+            if let Ok((socket, _input, output)) = create_client_socket(&node.address) {
+                if output.blocking_write_and_flush(&msg_bytes).is_ok() {
+                    match socket.shutdown(wasi::sockets::tcp::ShutdownType::Both) {
+                        Ok(_) => {
+                            logger::log_info(&format!(
+                                "[TCP Client] send_message_forget: Successfully shut down send on node {}",
+                                node.address
+                            ));
+                        }
+                        Err(e) => {
+                            logger::log_warn(&format!(
+                                "[TCP Client] send_message_forget: Failed to shut down send on node {}: {:?}",
+                                node.address, e
+                            ));
+                        }
+                    }
                     logger::log_info(&format!(
                         "[TCP Client] send_message_forget: Successfully sent message to node {}",
                         node.address
@@ -117,7 +131,6 @@ impl Guest for TcpClient {
                         node.address
                     ));
                 }
-                // Immediately dropping the connection.
             } else {
                 logger::log_warn(&format!(
                     "[TCP Client] send_message_forget: Failed to connect to node {}",

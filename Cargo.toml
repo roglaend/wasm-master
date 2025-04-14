@@ -45,6 +45,7 @@ members = [
     "paxos-wasm/modular-tcp/tcp-serializer",
     "paxos-wasm/modular-tcp/tcp-server",
     "paxos-wasm/modular-tcp/tcp-client",
+    "paxos-wasm/modular-tcp/paxos-tcp-client",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",
