@@ -26,6 +26,7 @@ impl MessagePayloadExt for MessagePayload {
             MessagePayload::Ignore => "Ignore",
             MessagePayload::RetryLearn(_) => "RetryLearn",
             MessagePayload::Executed(_) => "Executed",
+            _ => "Unknown",
         }
     }
 }

@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             AcceptorPaxosWasmtime::new(node.clone(), nodes.clone(), is_leader, run_config).await?,
         );
         let paxos_service = AcceptorPaxosService {
-            _client_seq: Arc::new(AtomicU32::new(0)), // TODO: Make this user specific and properly handled
+            client_seq: Arc::new(AtomicU32::new(0)), // TODO: Make this user specific and properly handled
             paxos_wasmtime: paxos_wasmtime.clone(), // TODO: Technically bad practice to make multiple copies of an Arc
         };
 
@@ -186,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             LearnerPaxosWasmtime::new(node.clone(), nodes.clone(), is_leader, run_config).await?,
         );
         let paxos_service = LearnerPaxosService {
-            _client_seq: Arc::new(AtomicU32::new(0)), // TODO: Make this user specific and properly handled
+            client_seq: Arc::new(AtomicU32::new(0)), // TODO: Make this user specific and properly handled
             paxos_wasmtime: paxos_wasmtime.clone(), // TODO: Technically bad practice to make multiple copies of an Arc
         };
 

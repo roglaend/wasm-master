@@ -68,15 +68,11 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
         // TODO: Have a standardize way to do this conversion. Have it per user.
         // let seq: u32 = self.client_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let client_request: ClientRequest = ClientRequest {
-            client_id: "".to_string(),
-            client_seq: 0,
-            value: Value {
-                is_noop: false,
-                command: Some(req.value),
-                client_id: req.client_id,
-                client_seq: req.client_seq,
-            },
+        let value = Value {
+            is_noop: false,
+            command: Some(req.value),
+            client_id: req.client_id,
+            client_seq: req.client_seq,
         };
 
         let request_id = req.client_id * 1000 + req.client_seq;
@@ -92,7 +88,7 @@ impl paxos_proto::paxos_server::Paxos for PaxosService {
                 .call_submit_client_request(
                     &mut *store,
                     self.paxos_wasmtime.resource_handle,
-                    &client_request,
+                    &value,
                 )
                 .await
                 .map_err(|e| {
