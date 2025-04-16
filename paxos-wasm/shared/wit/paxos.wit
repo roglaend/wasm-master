@@ -341,18 +341,18 @@ interface learner-agent {
     }
 }
 
-interface tcp-server {
+interface ws-server {
     use paxos-types.{node, run-config};
     use network-types.{network-message};
 
-    resource tcp-server-resource {
+    resource ws-server-resource {
         constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
         
         run: func();
     }
 }
 
-interface tcp-serializer {
+interface serializer {
     use network-types.{network-message};
 
     /// Convert a NetworkMessage into bytes.

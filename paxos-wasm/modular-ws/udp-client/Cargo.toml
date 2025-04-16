@@ -1,11 +1,12 @@
 [package]
-name = "learner"
+name = "udp-client"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "src/learner.rs"
+path = "src/udp-client.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.41"
+wasi = "0.14.2"

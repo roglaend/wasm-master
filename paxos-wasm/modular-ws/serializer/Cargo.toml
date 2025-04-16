@@ -1,10 +1,10 @@
 [package]
-name = "learner"
+name = "serializer"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "src/learner.rs"
+path = "src/serializer.rs"
 crate-type = ["cdylib"]
 
 [dependencies]

@@ -96,52 +96,56 @@ world learner-agent-world {
     export learner-agent;
 }
 
-world tcp-serializer-world {
-    export tcp-serializer;
+world serializer-world {
+    import logger;
+    
+    export serializer;
 }
 
-world tcp-client-world {
-    import tcp-serializer;
+world ws-client-world {
+    import serializer;
 
     import logger;
 
     export network;
 }
 
-world paxos-tcp-world {
-    import tcp-serializer;
+world paxos-ws-world {
+    import serializer;
     import proposer-agent;
     import acceptor-agent;
     import learner-agent;
 
     import logger;
 
-    export tcp-server;
+    export ws-server;
 }
 
-world proposer-tcp-world {
-    import tcp-serializer;
+// TODO: Could instead import the ws-server directly inside the proposer-agent
+
+world proposer-ws-world {
+    import serializer;
     import proposer-agent;
 
     import logger;
 
-    export tcp-server;
+    export ws-server;
 }
 
-world acceptor-tcp-world {
-    import tcp-serializer;
+world acceptor-ws-world {
+    import serializer;
     import acceptor-agent;
 
     import logger;
 
-    export tcp-server;
+    export ws-server;
 }
 
-world learner-tcp-world {
-    import tcp-serializer;
+world learner-ws-world {
+    import serializer;
     import learner-agent;
 
     import logger;
 
-    export tcp-server;
+    export ws-server;
 }
