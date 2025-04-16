@@ -126,7 +126,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
     fn accept(&self, slot: Slot, ballot: Ballot, value: Value) -> AcceptedResult {
         let current_promised = self.highest_promised_ballot();
 
-        if ballot != current_promised {
+        if ballot < current_promised {
             logger::log_warn(&format!(
                 "[Core Acceptor] Rejected accept for slot {} with ballot {} (current highest promised ballot: {})",
                 slot, ballot, current_promised

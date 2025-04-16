@@ -19,7 +19,7 @@ use bindings::exports::paxos::default::proposer_agent::{
 };
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, Ballot, ClientRequest, ClientResponse, Learn, Node, PaxosPhase, PaxosRole,
+    Accept, Accepted, Ballot, ClientResponse, Learn, Node, PaxosPhase, PaxosRole,
     Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult};
@@ -430,7 +430,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     /// Submits a client request to the core proposer.
-    fn submit_client_request(&self, req: ClientRequest) -> bool {
+    fn submit_client_request(&self, req: Value) -> bool {
         let result = self.proposer.enqueue_client_request(&req);
         logger::log_info(&format!(
             "[Proposer Agent] Submitted client request '{:?}': {}.",
@@ -652,7 +652,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     };
                 }
 
-                // 1 of 2 reasons:
+                // 1 of 3 reasons:
                 // 1. We have accepted it, the learn message did not reach the learners
                 // 2. It is still in flight, could be that this specific propsal did not reach the acceptors
 
@@ -855,58 +855,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
             if leader == self.node.node_id {
                 self.become_leader();
-            }
-        }
-    }
-
-    // * Keep this, just as a reference for the logic order */
-    /// (Old) Executes a full Paxos instance from the proposers pov by creating a proposal and running prepare and accept phases.
-    fn run_paxos_instance_sync(&self, req: ClientRequest) -> bool {
-        self.submit_client_request(req.clone());
-
-        logger::log_debug(&format!(
-            "[Proposer Agent] Starting Paxos round for client value {:?}.",
-            req.value
-        ));
-
-        let slot = self.proposer.get_current_slot();
-        let ballot = self.proposer.get_current_ballot();
-
-        // Synchronous prepare phase.
-        let prepare_result = self.prepare_phase(slot, ballot, vec![]);
-        if let PrepareResult::Success = prepare_result {
-            // Continue.
-        } else {
-            logger::log_error("[Proposer Agent] Prepare phase quorum failure.");
-            return false;
-        }
-
-        let proposal = match self.create_proposal() {
-            Some(p) => p,
-            None => return false,
-        };
-
-        // Synchronous accept phase.
-        match self.accept_phase(proposal.value, proposal.slot, proposal.ballot, vec![]) {
-            AcceptResult::Accepted(_) => {
-                logger::log_debug(&format!(
-                    "[Proposer Agent] Paxos round for slot {} completed successfully.",
-                    proposal.slot
-                ));
-                self.finalize_proposal(slot);
-                true
-            }
-            AcceptResult::QuorumFailure | AcceptResult::MissingProposal => {
-                logger::log_error(
-                    "[Proposer Agent] Accept phase failed to reach quorum or proposal missing.",
-                );
-                false
-            }
-            AcceptResult::IsEventDriven => {
-                logger::log_error(
-                    "[Proposer Agent] Event-driven mode not supported in synchronous run.",
-                );
-                panic!("Unexpected event-driven result in sync mode");
             }
         }
     }

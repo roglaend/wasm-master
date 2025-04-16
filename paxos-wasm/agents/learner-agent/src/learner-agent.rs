@@ -68,14 +68,6 @@ impl MyLearnerAgentResource {
         true
     }
 
-    // //quickfix check for standalone or monolth
-    // fn is_mnonolith(&self) -> bool {
-    //     if self.proposers.iter().any(|x| x.role == PaxosRole::Coordinator) {
-    //         return true
-    //     }
-    //     false
-    // }
-
     // simulates getter and setter of a state machine :clownemoji:
     fn execute_command(&self, val: Value) -> String {
         if let Some(cmd) = val.command {

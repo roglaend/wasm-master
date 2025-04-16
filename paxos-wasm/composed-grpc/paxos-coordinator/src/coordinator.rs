@@ -20,7 +20,7 @@ use bindings::exports::paxos::default::paxos_coordinator::{
 };
 use bindings::paxos::default::learner_types::LearnResultTest;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{ClientRequest, ClientResponse, Learn, Node, PaxosPhase, Slot, Value};
+use bindings::paxos::default::paxos_types::{ClientResponse, Learn, Node, PaxosPhase, Slot, Value};
 use bindings::paxos::default::{
     acceptor_agent, failure_detector, kv_store, learner, logger, network, proposer_agent,
 };
@@ -140,7 +140,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         }
     }
 
-    fn submit_client_request(&self, req: ClientRequest) -> bool {
+    fn submit_client_request(&self, req: Value) -> bool {
         self.proposer_agent.submit_client_request(&req)
     }
 

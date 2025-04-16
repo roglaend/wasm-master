@@ -1,5 +1,4 @@
 use bindings::paxos::default::network_types::NetworkMessage;
-use bindings::paxos::default::paxos_types::ClientRequest;
 use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
 use std::net::SocketAddr;
@@ -195,24 +194,19 @@ impl GuestWsServerResource for MyTcpServerResource {
                 // Streams go out of scope and are dropped here.
             }
 
-            if (self.config.demo_client) {
+            if self.config.demo_client {
                 // Periodically submit a client request if enough time has elapsed.
                 if last_request_time.elapsed() > next_request_interval {
                     if let Agent::Proposer(agent) = &self.agent {
                         if agent.is_leader() {
                             // for _ in 0..10 {
                             client_seq += 1;
-                            let cmd_value = Value {
+
+                            let request = Value{
                                 is_noop: false,
                                 command: Some("cmd".to_string()),
                                 client_id: 1,
                                 client_seq,
-                            };
-
-                            let request = ClientRequest {
-                                client_id: client_id.clone(),
-                                client_seq,
-                                value: cmd_value,
                             };
 
                             let submitted = agent.submit_client_request(&request);

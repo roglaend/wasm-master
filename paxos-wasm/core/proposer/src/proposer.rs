@@ -15,7 +15,7 @@ bindings::export!(MyProposer with_types_in bindings);
 use bindings::exports::paxos::default::proposer::{Guest, GuestProposerResource, ProposerState};
 use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{
-    Accepted, Ballot, ClientRequest, PValue, Promise, Proposal, Slot, Value,
+    Accepted, Ballot, PValue, Promise, Proposal, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult};
 
@@ -35,7 +35,7 @@ pub struct MyProposerResource {
     // adu: Cell<Ballot>,
 
     // New values submitted by clients.
-    pending_client_requests: RefCell<VecDeque<ClientRequest>>,
+    pending_client_requests: RefCell<VecDeque<Value>>,
     // Values that must be proposed again after a failed accept phase.
     prioritized_values: RefCell<VecDeque<PValue>>, // TODO: Have it indexed by slot instead to enforce slot -> value mapping for re-proposals?
     // Proposals currently in flight, indexed by slot.
@@ -45,6 +45,8 @@ pub struct MyProposerResource {
 
     accepted_proposals: RefCell<BTreeMap<Slot, Proposal>>, // Adu, just per slot and with the proposal
                                                            // TODO: Move the state and handling of in_flight_accepted on the proposer agent here?
+
+    finished_proposals: RefCell<HashMap<Slot, Proposal>>,
 }
 
 impl MyProposerResource {
@@ -67,7 +69,7 @@ impl MyProposerResource {
         if let Some((_slot, value)) = self.prioritized_values_map.borrow_mut().pop_first() {
             Some(value.value?) // TODO: Enforce the usage of same slot, should be the same though?
         } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
-            Some(req.value)
+            Some(req)
         } else {
             None
         }
@@ -171,6 +173,7 @@ impl GuestProposerResource for MyProposerResource {
             // in_flight_accepted: RefCell::new(BTreeMap::new()),
             accepted_proposals: RefCell::new(BTreeMap::new()),
             prioritized_values_map: RefCell::new(BTreeMap::new()),
+            finished_proposals: RefCell::new(HashMap::new()),
         }
     }
 
@@ -199,7 +202,7 @@ impl GuestProposerResource for MyProposerResource {
     }
 
     /// Enqueues a client request for later proposal creation.
-    fn enqueue_client_request(&self, req: ClientRequest) -> bool {
+    fn enqueue_client_request(&self, req: Value) -> bool {
         self.pending_client_requests.borrow_mut().push_back(req);
         logger::log_debug("[Core Proposer] Enqueued client request.");
 
@@ -232,7 +235,7 @@ impl GuestProposerResource for MyProposerResource {
     }
 
     fn get_accepted_proposal(&self, slot: Slot) -> Option<Proposal> {
-        return self.accepted_proposals.borrow().get(&slot).cloned();
+        return self.finished_proposals.borrow().get(&slot).cloned();
     }
 
     /// Returns Some(proposal) if created; otherwise, None.
@@ -419,6 +422,11 @@ impl GuestProposerResource for MyProposerResource {
         self.accepted_proposals
             .borrow_mut()
             .insert(slot, prop.clone()); // TODO: Merge these by having a "accepted" field on the Proposal itself?
+
+        self.finished_proposals
+            .borrow_mut()
+            .insert(slot, prop.clone()); // TODO: Merge these by having a "accepted" field on the Proposal itself?
+
 
         logger::log_info(&format!(
             "[Core Proposer] Finalized accepted slot {} with value {:?}.",

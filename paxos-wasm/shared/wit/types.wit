@@ -136,7 +136,7 @@ interface proposer-types {
         current-slot: slot,
         current-ballot: ballot,
         
-        pending-client-requests: list<client-request>,  // Queue of pending client requests.
+        pending-client-requests: list<value>,  // Queue of pending client requests.
         in-flight: list<proposal>,                      // Tracking state for proposals that are currently in flight.
         last-proposal: option<proposal>,                // Last in-flight proposal
     }

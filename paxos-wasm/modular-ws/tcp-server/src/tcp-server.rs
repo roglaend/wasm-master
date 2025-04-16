@@ -1,5 +1,4 @@
 use bindings::paxos::default::network_types::NetworkMessage;
-use bindings::paxos::default::paxos_types::ClientRequest;
 use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
 use std::net::SocketAddr;
@@ -141,7 +140,6 @@ impl GuestWsServerResource for MyTcpServerResource {
         ));
 
         let mut client_seq: u64 = 0;
-        let client_id = "client-1".to_string();
         let interval = 5..10;
 
         let mut rng = rand::rng();
@@ -152,7 +150,9 @@ impl GuestWsServerResource for MyTcpServerResource {
 
         loop {
             // Accept incoming TCP messages
-            if let Ok((_, input, output)) = listener.accept() {
+            match listener.accept() {
+                
+            Ok((_, input, output)) => {
                 match input.blocking_read(1024) {
                     Ok(buf) if !buf.is_empty() => {
                         let net_msg = serializer::deserialize(&buf);
@@ -177,43 +177,43 @@ impl GuestWsServerResource for MyTcpServerResource {
                     }
                 }
             }
-
-            if self.config.demo_client {
-                // Generate a random client request if the elapsed time exceeds the random interval.
-                if last_request_time.elapsed() > next_request_interval {
-                    if let Agent::Proposer(agent) = &self.agent {
-                        if agent.is_leader() {
-                            client_seq += 1;
-
-                            let cmd_value = Value {
-                                is_noop: false,
-                                command: Some("cmd".to_string()), // Use a constant command
-                                client_id: 1,                     // consistent ID as u64 for Value
-                                client_seq,
-                            };
-
-                            let request = ClientRequest {
-                                client_id: client_id.clone(),
-                                client_seq,
-                                value: cmd_value,
-                            };
-
-                            let submitted = agent.submit_client_request(&request);
-                            logger::log_info(&format!(
-                                "[TCP Server] Submitted fixed client request seq={} success={}",
-                                client_seq, submitted
-                            ));
+            Err(e) if e == TcpErrorCode::WouldBlock => {
+                if self.config.demo_client {
+                    // Generate a random client request if the elapsed time exceeds the random interval.
+                    if last_request_time.elapsed() > next_request_interval {
+                        if let Agent::Proposer(agent) = &self.agent {
+                            if agent.is_leader() {
+                                client_seq += 1;
+    
+                                let request = Value {
+                                    is_noop: false,
+                                    command: Some("cmd".to_string()), // Use a constant command
+                                    client_id: 1,                     // consistent ID as u64 for Value
+                                    client_seq,
+                                };
+    
+                                let submitted = agent.submit_client_request(&request);
+                                logger::log_info(&format!(
+                                    "[TCP Server] Submitted fixed client request seq={} success={}",
+                                    client_seq, submitted
+                                ));
+                            }
+    
+                            // Reset the timer and pick a new random interval between 0.5 and 1.5 seconds.
+                            last_request_time = Instant::now();
+                            next_request_interval =
+                                Duration::from_millis(rng.random_range(interval.clone()));
                         }
-
-                        // Reset the timer and pick a new random interval between 0.5 and 1.5 seconds.
-                        last_request_time = Instant::now();
-                        next_request_interval =
-                            Duration::from_millis(rng.random_range(interval.clone()));
                     }
                 }
+    
+                self.agent.run_paxos_loop();
             }
-
-            self.agent.run_paxos_loop();
+            Err(e) => {
+                logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
+            }
+        }
+            
             sleep(Duration::from_millis(1));
         }
     }
