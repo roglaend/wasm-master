@@ -13,7 +13,7 @@ interface proposer {
         get-state: func() -> proposer-state;
 
         /// Enqueues a client request for later processing.
-        enqueue-client-request: func(request: client-request) -> bool;
+        enqueue-client-request: func(request: value) -> bool;
 
         get-current-slot: func() -> slot;
 
@@ -184,7 +184,7 @@ interface paxos-coordinator {
 
         // Mergebart blanding 
 
-        submit-client-request: func(request: client-request) -> bool;
+        submit-client-request: func(request: value) -> bool;
 
         failure-service: func();
 
@@ -242,7 +242,7 @@ interface proposer-agent {
         get-paxos-phase: func() -> paxos-phase;
 
         /// Submits a client request to the system.
-        submit-client-request: func(request: client-request) -> bool;
+        submit-client-request: func(request: value) -> bool;
 
         /// Retrieves the up-to-date accepted proposal for the given slot from the core proposer, if exists.
         get-accepted-proposal: func(slot: slot) -> option<proposal>;
@@ -292,9 +292,6 @@ interface proposer-agent {
 
         run-paxos-loop: func() -> option<list<client-response>>;
 
-        /// (Old) runs a single instance of the Paxos protocol synchronously from the proposer agent pov.
-        run-paxos-instance-sync: func(client-request: client-request) -> bool;
-
         failure-service: func();
     }
 }
@@ -341,18 +338,18 @@ interface learner-agent {
     }
 }
 
-interface tcp-server {
+interface ws-server {
     use paxos-types.{node, run-config};
     use network-types.{network-message};
 
-    resource tcp-server-resource {
+    resource ws-server-resource {
         constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
         
         run: func();
     }
 }
 
-interface tcp-serializer {
+interface serializer {
     use network-types.{network-message};
 
     /// Convert a NetworkMessage into bytes.

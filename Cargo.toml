@@ -7,8 +7,8 @@ default-members = [
     "paxos-wasm/core",
     "paxos-wasm/agents",
     "paxos-wasm/composed-grpc",
-    "paxos-wasm/modular-grpc",
-    "paxos-wasm/modular-tcp",
+    # "paxos-wasm/modular-grpc",
+    "paxos-wasm/modular-ws",
 ]
 
 members = [
@@ -33,18 +33,22 @@ members = [
 
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
-    "paxos-wasm/composed-grpc/client_command_line",
+    "paxos-wasm/composed-grpc/client-cli",
     "paxos-wasm/composed-grpc/command",
     "paxos-wasm/composed-grpc/paxos-coordinator",
 
-    "paxos-wasm/modular-grpc",
-    "paxos-wasm/modular-grpc/client",
+    # TODO: Enable when fixed
 
-    "paxos-wasm/modular-tcp",
-    "paxos-wasm/modular-tcp/client",
-    "paxos-wasm/modular-tcp/tcp-serializer",
-    "paxos-wasm/modular-tcp/tcp-server",
-    "paxos-wasm/modular-tcp/tcp-client",
+    # "paxos-wasm/modular-grpc",
+    # "paxos-wasm/modular-grpc/client",
+
+    "paxos-wasm/modular-ws",
+    "paxos-wasm/modular-ws/client",
+    "paxos-wasm/modular-ws/serializer",
+    "paxos-wasm/modular-ws/tcp-server",
+    "paxos-wasm/modular-ws/tcp-client",
+    "paxos-wasm/modular-ws/udp-server",
+    "paxos-wasm/modular-ws/udp-client",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",

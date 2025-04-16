@@ -4,12 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
+path = "src/kv-store.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.41"
-
-# shared-utils = { path = "../../shared/utils" }
-
-[package.metadata]
-# cargo.build-disabled = true  # Custom flag to indicate this shouldn't be built by default

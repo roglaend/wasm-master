@@ -2,12 +2,16 @@
     "cSpell.words": [
         "accd",
         "bindgen",
+        "cseq",
+        "datagram",
+        "datagrams",
         "Deque",
         "idempotently",
         "pocs",
         "pollable",
         "pollables",
         "protos",
+        "splitn",
         "wasi",
         "wasip",
         "wrpc"
