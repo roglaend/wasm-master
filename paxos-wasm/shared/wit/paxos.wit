@@ -358,3 +358,10 @@ interface serializer {
     /// Convert bytes into a NetworkMessage.
     deserialize: func(serialized: list<u8>) -> network-message;
 }
+
+interface paxos-client {
+    use paxos-types.{client-response, value};
+
+    perform-request: func(leader-url: string, value: value)-> option<client-response>;
+
+}
