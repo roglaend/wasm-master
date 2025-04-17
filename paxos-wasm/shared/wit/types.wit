@@ -21,6 +21,7 @@ interface paxos-types {
         proposer,
         acceptor,
         learner,
+        client,
     }
 
     record node {
@@ -229,7 +230,8 @@ interface network-types {
         // learn-ack(learn),    // A learn ack. // TODO: Use or not to use, with custom payload? 
         heartbeat(heartbeat),   // Heartbeat.
         retry-learn(u64), // Retry learn.
-        executed(client-response), // Executed value.
+        executed(client-response),
+        client-request(value),
     }
 
     record heartbeat {

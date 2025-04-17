@@ -6,9 +6,10 @@ default-members = [
 
     "paxos-wasm/core",
     "paxos-wasm/agents",
-    "paxos-wasm/composed-grpc",
+    # "paxos-wasm/composed-grpc",
     # "paxos-wasm/modular-grpc",
     "paxos-wasm/modular-ws",
+    "paxos-wasm/modular-ws-test",
 ]
 
 members = [
@@ -49,6 +50,9 @@ members = [
     "paxos-wasm/modular-ws/tcp-client",
     "paxos-wasm/modular-ws/udp-server",
     "paxos-wasm/modular-ws/udp-client",
+
+    "paxos-wasm/modular-ws-test",
+    "paxos-wasm/modular-ws-test/paxos-client-test",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",

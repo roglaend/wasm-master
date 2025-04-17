@@ -97,7 +97,7 @@ world learner-agent-world {
 }
 
 world serializer-world {
-    import logger;
+    // import logger;
     
     export serializer;
 }
@@ -119,6 +119,14 @@ world paxos-ws-world {
     import logger;
 
     export ws-server;
+}
+
+world paxos-client-world {
+    import serializer;
+
+    // import logger;
+
+    export paxos-client;
 }
 
 // TODO: Could instead import the ws-server directly inside the proposer-agent

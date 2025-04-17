@@ -798,7 +798,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Proposer Agent] Run loop: Running in phase two.");
 
-                for _i in 0..10 {
+                for _i in 0..20 {
                     if let Some(proposal) = self.create_proposal() {
                         let accept_result = self.accept_phase(
                             proposal.value,
@@ -814,26 +814,32 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                             );
                             panic!("Lol");
                         }
+                    } else {
+                        break;
                     }
                 }
 
                 // Always check commit phase
-                for _i in 0..10 {
+                for _i in 0..20 {
                     if let Some(accepted_proposal) = self.proposer.get_some_accepted_proposal() {
                         let learn = Learn {
                             slot: accepted_proposal.slot,
                             value: accepted_proposal.value.clone(),
                         };
                         self.commit_phase(learn);
+                    } else {
+                        break;
                     }
                 }
 
                 let mut executed_list = vec![];
-                for _i in 0..10 {
+                for _i in 0..20 {
                     let executed = self.client_responses.borrow_mut().pop_front();
                     if let Some(val) = executed.clone() {
                         logger::log_info(&format!("[Proposer Agent] Executed value: {:?}", val));
                         executed_list.push(val);
+                    } else {
+                        break;
                     }
                 }
                 if executed_list.len() > 0 {

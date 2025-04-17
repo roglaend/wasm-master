@@ -207,7 +207,7 @@ impl GuestProposerResource for MyProposerResource {
         logger::log_debug("[Core Proposer] Enqueued client request.");
 
         let queue = self.pending_client_requests.borrow();
-        logger::log_debug(&format!(
+        logger::log_info(&format!(
             "[Core Proposer] Current queue size: {}",
             queue.len()
         ));

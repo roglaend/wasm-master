@@ -9,7 +9,7 @@ pub mod bindings {
 bindings::export!(MySerializer with_types_in bindings);
 
 use bindings::exports::paxos::default::serializer::Guest;
-use bindings::paxos::default::logger;
+// use bindings::paxos::default::logger;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, Learn, Node, PaxosRole, Prepare, Promise, Value,
@@ -96,12 +96,13 @@ impl Guest for MySerializer {
         match try_deserialize(serialized) {
             Ok(msg) => msg,
             Err(e) => {
-                logger::log_error(&format!("[TCP Serializer] Deserialization error: {}", e));
+                // logger::log_error(&format!("[TCP Serializer] Deserialization error: {}", e));
                 // Return a dummy message that the server can recognize and ignore.
-                NetworkMessage {
-                    sender: default_node(),
-                    payload: MessagePayload::Ignore,
-                }
+                panic!("[TCP Serializer] Deserialization error: {}", e);
+                // NetworkMessage {
+                //     sender: default_node(),
+                //     payload: MessagePayload::Ignore,
+                // }
             }
         }
     }
@@ -114,6 +115,7 @@ fn serialize_node(n: &Node) -> String {
         PaxosRole::Proposer => "proposer",
         PaxosRole::Acceptor => "acceptor",
         PaxosRole::Learner => "learner",
+        PaxosRole::Client => "client",
     };
     format!(
         "node_id:{},address:{},role:{}",
@@ -139,6 +141,7 @@ fn deserialize_node(s: &str) -> Result<Node, &'static str> {
                     "proposer" => Some(PaxosRole::Proposer),
                     "acceptor" => Some(PaxosRole::Acceptor),
                     "learner" => Some(PaxosRole::Learner),
+                    "client" => Some(PaxosRole::Client),
                     _ => None,
                 }
             }
@@ -152,6 +155,7 @@ fn deserialize_node(s: &str) -> Result<Node, &'static str> {
             role: r,
         })
     } else {
+        
         Err("Failed to deserialize Node")
     }
 }
@@ -194,6 +198,13 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             format!(
                 "executed,client_id:{},client_seq:{},success:{},command_result:{},slot:{}",
                 cr.client_id, cr.client_seq, cr.success, cmd_res, cr.slot
+            )
+        }
+        MessagePayload::ClientRequest(value) => {
+            let cmd = value.command.clone().unwrap_or_else(|| "none".into());
+            format!(
+                "client-request,client_id:{},client_seq:{},command:{}",
+                value.client_id, value.client_seq, cmd
             )
         }
         _ => "unknown".to_string(),
@@ -422,6 +433,34 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                 Err("Failed to parse executed payload")
             }
         }
+        "client-request" => {
+             let mut client_id: Option<u64> = None;
+             let mut client_seq: Option<u64> = None;
+             let mut command: Option<String> = None;
+             for part in &parts[1..] {
+                 let mut kv = part.splitn(2, ':');
+                 let key = kv.next().unwrap_or("");
+                 let value = kv.next().unwrap_or("");
+                 match key {
+                     "client_id" => client_id = value.parse().ok(),
+                     "client_seq" => client_seq = value.parse().ok(),
+                     "command" => command = Some(value.to_string()),
+                     _ => {}
+                 }
+             }
+             if let (Some(cid), Some(cseq), Some(cmd)) =
+                 (client_id, client_seq, command)
+             {
+                 Ok(MessagePayload::ClientRequest(Value {
+                     is_noop: false,
+                     client_id: cid,
+                     client_seq: cseq,
+                     command: if cmd == "none" { None } else { Some(cmd) },
+                 }))
+             } else {
+                 Err("Failed to parse client-request payload")
+             }
+         }
         _ => Err("Unknown payload variant"),
     }
 }
