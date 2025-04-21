@@ -43,7 +43,7 @@ impl GuestLearnerResource for MyLearnerResource {
             next_to_execute: Cell::new(1),
             execution_log: RefCell::new(BTreeMap::new()),
             // executed_order: RefCell::new(Vec::new()),
-            max_gap_size: 100,
+            max_gap_size: 10,
         }
     }
 

@@ -56,41 +56,6 @@ async fn run_requests(
     Ok((init_latencies, request_latencies))
 }
 
-/// Spawns `concurrency` parallel tasks, each calling `run_requests`.
-/// Returns a vector of `(init_latencies, request_latencies)`—one per task.
-async fn run_simulations(
-    engine: Arc<Engine>,
-    pre: &bindings::PaxosClientWorldPre<ComponentRunStates>,
-    leader_address: &str,
-    num_requests: usize,
-    concurrency: usize,
-) -> Result<Vec<(Vec<Duration>, Vec<Duration>)>, AnyError> {
-    let mut handles = Vec::with_capacity(concurrency);
-
-    for i in 0..concurrency {
-        let e_clone = Arc::clone(&engine);
-        let pre_clone = pre.clone();
-        let leader_addr_str = leader_address.to_string(); // For moving into task
-        let client_id = i as u64;
-
-        let handle: JoinHandle<Result<(Vec<Duration>, Vec<Duration>), AnyError>> =
-            tokio::spawn(async move {
-                run_requests(&e_clone, &pre_clone, client_id, &leader_addr_str, num_requests).await
-            });
-        handles.push(handle);
-    }
-
-    // Collect results from each parallel task
-    let mut results = Vec::with_capacity(concurrency);
-    for handle in handles {
-        let (init_lats, request_lats) = handle.await??;
-        results.push((init_lats, request_lats));
-    }
-
-    Ok(results)
-}
-
-
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -119,10 +84,9 @@ async fn main() -> Result<(), AnyError> {
     config.async_support(true);
     let engine = Engine::new(&config)?;
 
-    // 2) Configure how many requests per simulation, concurrency, leader address, etc.
-    // let num_requests = 50;
-    // let concurrency = 20;
-    let leader_address = "127.0.0.1:7777"; // Example leader
+
+    let leader_address = "127.0.0.1:7777"; // For udp 
+    // let leader_addreess = "127.0.0.1:50053"; // For tcp
 
     // 3) Load your WASM component
     let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -143,32 +107,14 @@ async fn main() -> Result<(), AnyError> {
     let pre_instance = linker.instantiate_pre(&composed_component)?;
     let paxos_client_pre = bindings::PaxosClientWorldPre::new(pre_instance)?;
 
-    // 5) Wrap the engine in Arc and run the simulations concurrently
     let arc_engine = Arc::new(engine);
 
     let time = Instant::now();
-    // let all_results = run_simulations(
-    //     arc_engine,
-    //     &paxos_client_pre,
-    //     leader_address,
-    //     num_requests,
-    //     concurrency,
-    // )
-    // .await?;
 
     let all_results = run_requests(&arc_engine, &paxos_client_pre, client_id, leader_address, num_requests).await?;
 
     let elapsed = time.elapsed();
 
-    // // 6) Merge all latencies from all tasks
-    // let mut combined_init = Vec::new();
-    // let mut combined_req = Vec::new();
-    // for (init_lats, request_lats) in all_results {
-    //     combined_init.extend(init_lats);
-    //     combined_req.extend(request_lats);
-    // }
-
-    // 7) Summarize combined latencies
 
     println!("Total elapsed time for all requests: {:?}", elapsed);
 
@@ -199,3 +145,35 @@ fn summarize_latencies(label: &str, durations: &[Duration]) {
     println!("  Max   = {:?}", max);
     println!();
 }
+
+// async fn run_simulations(
+//     engine: Arc<Engine>,
+//     pre: &bindings::PaxosClientWorldPre<ComponentRunStates>,
+//     leader_address: &str,
+//     num_requests: usize,
+//     concurrency: usize,
+// ) -> Result<Vec<(Vec<Duration>, Vec<Duration>)>, AnyError> {
+//     let mut handles = Vec::with_capacity(concurrency);
+
+//     for i in 0..concurrency {
+//         let e_clone = Arc::clone(&engine);
+//         let pre_clone = pre.clone();
+//         let leader_addr_str = leader_address.to_string(); // For moving into task
+//         let client_id = i as u64;
+
+//         let handle: JoinHandle<Result<(Vec<Duration>, Vec<Duration>), AnyError>> =
+//             tokio::spawn(async move {
+//                 run_requests(&e_clone, &pre_clone, client_id, &leader_addr_str, num_requests).await
+//             });
+//         handles.push(handle);
+//     }
+
+//     // Collect results from each parallel task
+//     let mut results = Vec::with_capacity(concurrency);
+//     for handle in handles {
+//         let (init_lats, request_lats) = handle.await??;
+//         results.push((init_lats, request_lats));
+//     }
+
+//     Ok(results)
+// }

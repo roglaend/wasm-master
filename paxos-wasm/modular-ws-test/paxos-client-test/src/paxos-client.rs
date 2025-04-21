@@ -55,11 +55,40 @@ fn create_client_socket(
     socket.start_connect(&network, remote_address)?;
     socket.subscribe().block();
     let (input, output) = socket.finish_connect()?;
+    
     Ok((socket, input, output))
 }
 
 /// Our TCP client component.
 pub struct PaxosClient;
+
+impl  PaxosClient {
+    /// Create a new PaxosClient instance.
+    fn read_with_timeout(input: &mut InputStream, timeout: Duration) -> Result<Vec<u8>, &'static str> {
+        // Start the timer.
+        let start = std::time::Instant::now();
+        // let mut buf = vec![0u8; 1024];
+    
+        loop {
+            match input.read(1024) {
+                Ok(buf) if !buf.is_empty() => {
+                    return Ok(buf);
+                },
+                Ok(_) => { /* No data available yet */ },
+                Err(_) => return Err("Encountered an error while reading"),
+            }
+            
+            // Check if we have exceeded the timeout.
+            if start.elapsed() >= timeout {
+                return Err("Read timed out");
+            }
+    
+            // Sleep briefly to avoid a busy loop.
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    
+}
 
 
 
@@ -67,7 +96,7 @@ pub struct PaxosClient;
 impl Guest for PaxosClient {
     /// send-hello simply returns a static greeting.
     fn perform_request(leader_address: String, value: Value) -> Option<ClientResponse> {
-        let (_socket, input, output) = create_client_socket(&leader_address).unwrap();
+        let (_socket, mut input, output) = create_client_socket(&leader_address).unwrap();
 
         // create network message
         let paxos_role = PaxosRole::Proposer;
@@ -85,23 +114,22 @@ impl Guest for PaxosClient {
         let msg_bytes = serializer::serialize(&message);
 
         if output.write(&msg_bytes).is_ok() {
-            match input.blocking_read(1024) {
-                Ok(buf) if !buf.is_empty() => {
+            let timeout = Duration::from_secs(1);
+            match PaxosClient::read_with_timeout(&mut input, timeout) {
+                Ok(buf) => {
                     let net_msg = serializer::deserialize(&buf);
 
                     println!("Received message: {:?}", net_msg);
 
                     match net_msg.payload {
                         MessagePayload::Executed(client_response) => {
-                            Some(client_response)
+                            return Some(client_response);
                         }
-                        _ => None,
+                        _ => return None,
                     };
-                    
                 }
-                Ok(_) => { return None;}
                 Err(e) => {
-                    println!("Read error: {:?}", e);
+                    println!("Error: {:?}", e);
                     return None;
                 }
             }
