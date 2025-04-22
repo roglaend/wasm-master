@@ -1,6 +1,15 @@
+use std::env;
 use paxos_wasm_utils::build_helpers::build_and_plug;
 
 fn main() {
+    // Cargo sets PROFILE to "debug" or "release"
+    let profile = env::var("PROFILE").unwrap();
+    if profile == "release" {
+        // don’t do your wasm‑build work in `cargo build --release`
+        println!("cargo:warning=Skipping wasm build in release profile");
+        return;
+    }
+
     let target_triple = "wasm32-wasip2";
 
     // List of crates to build.
