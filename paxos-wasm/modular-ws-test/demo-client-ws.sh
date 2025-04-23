@@ -12,8 +12,8 @@
 # wait
 # echo "All clients finished."
 
-NUM_CLIENTS=10
-NUM_REQUESTS=100
+NUM_CLIENTS=1
+NUM_REQUESTS=10
 DEADLINE=20
 
 pids=()
@@ -21,7 +21,7 @@ pids=()
 # 1) launch them in background and collect PIDs
 for (( i=0; i<NUM_CLIENTS; i++ )); do
   echo "Starting client $i…"
-  ./target/debug/modular-ws-test \
+  ./target/release/modular-ws-test \
     --client-id "$i" \
     --num-requests "$NUM_REQUESTS" \
   > "client_${i}.log" 2>&1 &

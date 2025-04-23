@@ -86,7 +86,7 @@ async fn main() -> Result<(), AnyError> {
 
 
     let leader_address = "127.0.0.1:7777"; // For udp 
-    // let leader_addreess = "127.0.0.1:50053"; // For tcp
+    // let leader_address = "127.0.0.1:50057"; // For tcp
 
     // 3) Load your WASM component
     let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
