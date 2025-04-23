@@ -1,6 +1,15 @@
+use bindings::paxos::default::network_types::MessagePayload;
 use bindings::paxos::default::network_types::NetworkMessage;
+use bindings::paxos::default::paxos_types::ClientResponse;
 use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
+use wasi::sockets::tcp::InputStream;
+use wasi::sockets::tcp::OutputStream;
+use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
+
+use wasi::sockets::tcp_create_socket::create_tcp_socket;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -31,6 +40,31 @@ impl Guest for MyTcpServer {
     type WsServerResource = MyTcpServerResource;
 }
 
+pub struct Connection {
+    socket: TcpSocket,
+    // input: InputStream,
+    input: Option<InputStream>,
+    output: Option<OutputStream>,
+}
+
+impl Connection {
+    pub fn new(socket: TcpSocket, input: InputStream, output: OutputStream) -> Self {
+        Self { 
+            socket, 
+            input: Some(input), 
+            output: Some(output) 
+        }
+    }
+
+    pub fn shutdown(mut self) {
+        // Take the streams out of the struct so they are dropped here.
+        let _ = self.input.take();
+        let _ = self.output.take();
+        // When self goes out of scope, socket gets dropped after its children.
+        // Optionally, you can try to invoke any shutdown on the socket if available.
+    }
+}
+
 enum Agent {
     Proposer(Arc<proposer_agent::ProposerAgentResource>),
     Acceptor(Arc<acceptor_agent::AcceptorAgentResource>),
@@ -47,20 +81,33 @@ impl Agent {
         }
     }
 
+    fn submit_client_request(&self, value: &Value) -> bool {
+        match self {
+            Agent::Proposer(agent) => agent.submit_client_request(value),
+            Agent::Acceptor(_agent) => false,
+            Agent::Learner(_agent) => false,
+        }
+    }
+
     /// Runs the Paxos algorithm loop if needed.
-    fn run_paxos_loop(&self) {
+    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         match self {
             Agent::Proposer(agent) => {
-                if let Some(responses) = agent.run_paxos_loop() {
+                let response = agent.run_paxos_loop();
+                if let Some(responses) = response.clone() {
                     for resp in responses {
-                        logger::log_error(&format!("[UDP Server] Paxos response: {:?}", resp));
+                        logger::log_error(&format!("[TCP Server] Paxos response: {:?}", resp));
                     }
                 }
+                response.clone()
             }
-            Agent::Acceptor(_agent) => { /* No continuous loop needed for Acceptor */ }
-            Agent::Learner(_agent) => {
-                /* No continuous loop needed for Learner */
+            Agent::Acceptor(_agent) => {
                 // let _ = agent.run_paxos_loop();
+                None
+            }
+            Agent::Learner(agent) => {
+                let _ = agent.run_paxos_loop();
+                None
             }
         }
     }
@@ -73,6 +120,8 @@ pub struct MyTcpServerResource {
     agent: Agent,
     // We now store only the UdpSocket.
     socket: UdpSocket,
+    client_connections: RefCell<HashMap<u64, Connection>>,
+
 }
 
 impl MyTcpServerResource {}
@@ -127,6 +176,7 @@ impl GuestWsServerResource for MyTcpServerResource {
             nodes,
             agent,
             socket: udp_socket,
+            client_connections: RefCell::new(HashMap::new()),
         }
     }
 
@@ -144,10 +194,89 @@ impl GuestWsServerResource for MyTcpServerResource {
         let mut next_request_interval = Duration::from_millis(rng.random_range(interval.clone()));
         let mut last_request_time = Instant::now();
 
+        let mut completed_requests = 0;
+        let mut last_log = Instant::now();
+
+
+        let client_listener: Option<TcpSocket> = match &self.agent {
+            Agent::Proposer(agent) => {
+                if agent.is_leader() {
+                    match create_tcp_listener("127.0.0.1:7777") {
+                        Ok(sock) => Some(sock),
+                        Err(e) => {
+                            logger::log_warn(&format!("[Hybrid Server] Failed to create TCP listener: {:?}", e));
+                            None
+                        }
+                    }
+                } else {
+                    logger::log_info("[Hybrid Server] Proposer is not leader; no TCP listener.");
+                    None
+                }
+            }
+            _ => {
+                logger::log_info("[Hybrid Server] This node is not a Proposer; skipping TCP listener.");
+                None
+            }
+        };
+
         // Delay to allow all nodes to be ready.
         sleep(Duration::from_secs(1));
 
         loop {
+
+           
+            if let Some(ref client_listener) = client_listener {
+                // accept as many clients requests as possible
+                loop {
+                    match client_listener.accept() {
+                        Ok((socket, input, output)) => {
+                            match input.blocking_read(1024) {
+                                Ok(buf) if !buf.is_empty() => {
+                                    let net_msg = serializer::deserialize(&buf);
+                                    match net_msg.payload {
+                                        MessagePayload::ClientRequest(value) => {
+            
+                                            if self.agent.submit_client_request(&value) {
+                                                let request_id = value.client_id * 1000 + value.client_seq;
+            
+                                                if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
+                                                    connection.shutdown();
+                                                }
+            
+                                                let connection = Connection::new(socket, input, output);
+                
+                                                self.client_connections.borrow_mut().insert(request_id, connection);
+                                                logger::log_info(&format!(
+                                                    "[TCP Server] Connection inserted successfully. Request ID: {}",
+                                                    request_id
+                                                ));
+                                            }
+                                        }
+                                        _ => {
+                                            logger::log_warn(&format!(
+                                                "[TCP Server] Received unexpected message: {:?}",
+                                                net_msg
+                                            ));
+                                        }
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    logger::log_warn(&format!("[TCP Server] Read error: {:?}", e));
+                                }
+                            } 
+                        }
+                        Err(e) if e == TcpErrorCode::WouldBlock => { 
+                            break;
+                        }
+                        Err(e) => {
+                            logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
+                        }
+                    }
+                }
+            }
+            
+
             // Each loop iteration we obtain new datagram streams from the UDP socket.
             // This is required since we cannot store the streams permanently.
             if let Ok((incoming, outgoing)) = self.socket.stream(None) {
@@ -193,9 +322,11 @@ impl GuestWsServerResource for MyTcpServerResource {
                 }
                 // Streams go out of scope and are dropped here.
             }
-
+            
+            let resp = self.agent.run_paxos_loop();
             if self.config.demo_client {
                 // Periodically submit a client request if enough time has elapsed.
+
                 if last_request_time.elapsed() > next_request_interval {
                     if let Agent::Proposer(agent) = &self.agent {
                         if agent.is_leader() {
@@ -222,10 +353,52 @@ impl GuestWsServerResource for MyTcpServerResource {
                             Duration::from_millis(rng.random_range(interval.clone()));
                     }
                 }
+            } else {
+                if let Agent::Proposer(agent) = &self.agent {
+                    if agent.is_leader() {
+                        if let Some(responses) = resp {
+                            for response in responses {
+                                let client_id: u64 = response.client_id.clone().parse().unwrap_or(0);
+                                let request_id = client_id * 1000 + response.client_seq;
+                                logger::log_info(&format!(
+                                    "[UDP Server] Received response for request ID: {}",
+                                    request_id
+                                ));
+                                if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
+                                    let response_msg = NetworkMessage {
+                                        sender: self.node.clone(),
+                                        payload: MessagePayload::Executed(response),
+                                    };
+                                    let response_bytes = serializer::serialize(&response_msg);
+                                    if let Err(e) = connection.output.as_ref().unwrap().blocking_write_and_flush(response_bytes.as_slice()) {
+                                        logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
+                                    } else {
+                                        completed_requests += 1;
+                                        logger::log_info("[TCP Server] Response sent back to client.");
+                                    }
+                                    connection.shutdown();
+                                }
+                                
+                            }
+                            if last_log.elapsed() >= Duration::from_millis(500) {
+                                let elapsed_secs = last_log.elapsed().as_secs_f64();
+                                let throughput = (completed_requests as f64) / elapsed_secs;
+                            
+                                logger::log_info(&format!(
+                                    "[TCP Server] Throughput: {:.2} responses/sec",
+                                    throughput
+                                ));
+                            
+                                completed_requests = 0;
+                                last_log = Instant::now();
+                            }
+                        }
+                    } 
+                }
             }
 
-            self.agent.run_paxos_loop();
-            sleep(Duration::from_millis(1));
+            // self.agent.run_paxos_loop();
+            // sleep(Duration::from_millis(1));
         }
     }
 }
@@ -258,6 +431,40 @@ fn create_udp_listener(bind_address: &str) -> Result<UdpSocket, UdpErrorCode> {
     socket.start_bind(&network, local_address)?;
     pollable.block();
     socket.finish_bind()?;
+
+    Ok(socket)
+}
+
+fn create_tcp_listener(bind_address: &str) -> Result<TcpSocket, TcpErrorCode> {
+    let network = instance_network();
+    let socket = create_tcp_socket(IpAddressFamily::Ipv4)?;
+    // Subscribe to a pollable so we can wait for binding and listening.
+    let pollable = socket.subscribe();
+
+    // Parse the full socket address.
+    let std_socket_addr: SocketAddr = bind_address
+        .parse()
+        .expect("Invalid socket address format in node");
+
+    // Ensure we have an IPv4 address.
+    let local_address = match std_socket_addr {
+        SocketAddr::V4(v4_addr) => {
+            let octets = v4_addr.ip().octets();
+            IpSocketAddress::Ipv4(Ipv4SocketAddress {
+                address: (octets[0], octets[1], octets[2], octets[3]),
+                port: v4_addr.port(),
+            })
+        }
+        _ => panic!("Expected an IPv4 address"),
+    };
+
+    socket.start_bind(&network, local_address)?;
+    pollable.block();
+    socket.finish_bind()?;
+
+    socket.start_listen()?;
+    pollable.block();
+    socket.finish_listen()?;
 
     Ok(socket)
 }

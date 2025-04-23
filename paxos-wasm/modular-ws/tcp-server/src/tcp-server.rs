@@ -1,6 +1,13 @@
+use bindings::paxos::default::network_types::ClientResponse;
+use bindings::paxos::default::network_types::MessagePayload;
 use bindings::paxos::default::network_types::NetworkMessage;
 use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
+use wasi::sockets::tcp::InputStream;
+use wasi::sockets::tcp::OutputStream;
+use std::cell::Ref;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -32,6 +39,31 @@ impl Guest for MyProposerTcp {
     type WsServerResource = MyTcpServerResource;
 }
 
+pub struct Connection {
+    socket: TcpSocket,
+    // input: InputStream,
+    input: Option<InputStream>,
+    output: Option<OutputStream>,
+}
+
+impl Connection {
+    pub fn new(socket: TcpSocket, input: InputStream, output: OutputStream) -> Self {
+        Self { 
+            socket, 
+            input: Some(input), 
+            output: Some(output) 
+        }
+    }
+
+    pub fn shutdown(mut self) {
+        // Take the streams out of the struct so they are dropped here.
+        let _ = self.input.take();
+        let _ = self.output.take();
+        // When self goes out of scope, socket gets dropped after its children.
+        // Optionally, you can try to invoke any shutdown on the socket if available.
+    }
+}
+
 enum Agent {
     Proposer(Arc<proposer_agent::ProposerAgentResource>),
     Acceptor(Arc<acceptor_agent::AcceptorAgentResource>),
@@ -48,23 +80,34 @@ impl Agent {
         }
     }
 
+    fn submit_client_request(&self, value: &Value) -> bool {
+        match self {
+            Agent::Proposer(agent) => agent.submit_client_request(value),
+            Agent::Acceptor(_agent) => false,
+            Agent::Learner(_agent) => false,
+        }
+    }
+
     /// Runs the agent’s Paxos loop.
     /// (If a particular role does not need a continuous loop, you can adjust this behavior.)
-    fn run_paxos_loop(&self) {
+    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         match self {
             Agent::Proposer(agent) => {
                 let response = agent.run_paxos_loop();
-                if let Some(responses) = response {
+                if let Some(responses) = response.clone() {
                     for resp in responses {
                         logger::log_error(&format!("[TCP Server] Paxos response: {:?}", resp));
                     }
                 }
+                response.clone()
             }
             Agent::Acceptor(_agent) => {
                 // let _ = agent.run_paxos_loop();
+                None
             }
             Agent::Learner(_agent) => {
                 // let _ = agent.run_paxos_loop();
+                None
             }
         }
     }
@@ -75,6 +118,7 @@ pub struct MyTcpServerResource {
     node: Node,
     nodes: Vec<Node>, // TODO: might be be useful
     agent: Agent,
+    client_connections: RefCell<HashMap<u64, Connection>>,
 }
 
 impl MyTcpServerResource {}
@@ -125,6 +169,7 @@ impl GuestWsServerResource for MyTcpServerResource {
             node,
             nodes,
             agent,
+            client_connections: RefCell::new(HashMap::new()),
         }
     }
 
@@ -146,30 +191,58 @@ impl GuestWsServerResource for MyTcpServerResource {
         let mut next_request_interval = Duration::from_millis(rng.random_range(interval.clone()));
         let mut last_request_time = Instant::now();
 
+        
+        let mut completed_requests = 0;
+        let mut last_log = Instant::now();
+
         sleep(Duration::from_secs(1)); // To make all nodes ready
+
+
 
         loop {
             // Accept incoming TCP messages
             match listener.accept() {
                 
-            Ok((_, input, output)) => {
+            Ok((socket, input, output)) => {
                 match input.blocking_read(1024) {
                     Ok(buf) if !buf.is_empty() => {
                         let net_msg = serializer::deserialize(&buf);
                         logger::log_info(&format!("[TCP Server] Received message: {:?}", net_msg));
 
-                        let response_msg = self.agent.handle_message(net_msg);
+                        
 
-                        if !self.config.is_event_driven {
-                            let response_bytes = serializer::serialize(&response_msg);
-                            if let Err(e) =
-                                output.blocking_write_and_flush(response_bytes.as_slice())
-                            {
-                                logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
-                            } else {
-                                logger::log_info("[TCP Server] Response sent back to client.");
+                        match net_msg.payload {
+                            MessagePayload::ClientRequest(value) => {
+
+                                if self.agent.submit_client_request(&value) {
+                                    let request_id = value.client_id * 1000 + value.client_seq;
+
+                                    if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
+                                        connection.shutdown();
+                                    }
+
+                                    let connection = Connection::new(socket, input, output);
+    
+                                    self.client_connections.borrow_mut().insert(request_id, connection);
+                                }
+                            }
+                            _ => { 
+                                let _ = self.agent.handle_message(net_msg.clone());
                             }
                         }
+
+                            
+
+                        // if !self.config.is_event_driven {
+                        //     let response_bytes = serializer::serialize(&response_msg);
+                        //     if let Err(e) =
+                        //         output.blocking_write_and_flush(response_bytes.as_slice())
+                        //     {
+                        //         logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
+                        //     } else {
+                        //         logger::log_info("[TCP Server] Response sent back to client.");
+                        //     }
+                        // }
                     }
                     Ok(_) => {}
                     Err(e) => {
@@ -178,6 +251,9 @@ impl GuestWsServerResource for MyTcpServerResource {
                 }
             }
             Err(e) if e == TcpErrorCode::WouldBlock => {
+
+                let resp = self.agent.run_paxos_loop();
+
                 if self.config.demo_client {
                     // Generate a random client request if the elapsed time exceeds the random interval.
                     if last_request_time.elapsed() > next_request_interval {
@@ -205,16 +281,54 @@ impl GuestWsServerResource for MyTcpServerResource {
                                 Duration::from_millis(rng.random_range(interval.clone()));
                         }
                     }
+                } else {
+                    // If not in demo mode, run the agent's Paxos loop.
+                    if let Agent::Proposer(agent) = &self.agent {
+                        if agent.is_leader() {
+                            if let Some(responses) = resp {
+                                for response in responses {
+                                    let client_id: u64 = response.client_id.clone().parse().unwrap_or(0);
+                                    let request_id = client_id * 1000 + response.client_seq;
+                                    if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
+                                        let response_msg = NetworkMessage {
+                                            sender: self.node.clone(),
+                                            payload: MessagePayload::Executed(response),
+                                        };
+                                        let response_bytes = serializer::serialize(&response_msg);
+                                        if let Err(e) = connection.output.as_ref().unwrap().blocking_write_and_flush(response_bytes.as_slice()) {
+                                            logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
+                                        } else {
+                                            completed_requests += 1;
+                                            logger::log_info("[TCP Server] Response sent back to client.");
+                                        }
+                                        connection.shutdown();
+                                    }
+                                    
+                                }
+                                if last_log.elapsed() >= Duration::from_millis(500) {
+                                    let elapsed_secs = last_log.elapsed().as_secs_f64();
+                                    let throughput = (completed_requests as f64) / elapsed_secs;
+                                
+                                    logger::log_info(&format!(
+                                        "[TCP Server] Throughput: {:.2} responses/sec",
+                                        throughput
+                                    ));
+                                
+                                    completed_requests = 0;
+                                    last_log = Instant::now();
+                                }
+                            }
+                        } 
+                    }
                 }
     
-                self.agent.run_paxos_loop();
             }
             Err(e) => {
                 logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
             }
         }
             
-            sleep(Duration::from_millis(1));
+        // sleep(Duration::from_millis(1));
         }
     }
 }
