@@ -18,11 +18,10 @@ use bindings::exports::paxos::default::paxos_coordinator::{
     AcceptResult, ElectionResult, Guest as CoordinatorGuest, GuestPaxosCoordinatorResource,
     LearnResult, PaxosState, PrepareResult, RunConfig,
 };
-use bindings::paxos::default::learner_types::LearnResultTest;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{ClientResponse, Learn, Node, PaxosPhase, Slot, Value};
 use bindings::paxos::default::{
-    acceptor_agent, failure_detector, kv_store, learner, logger, network, proposer_agent,
+    acceptor_agent, failure_detector, learner_agent, logger, network, proposer_agent,
 };
 
 pub struct MyPaxosCoordinator;
@@ -41,22 +40,17 @@ pub struct MyPaxosCoordinatorResource {
     // Uses the agents
     proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
     acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
-    // learner_agent: Arc<learner_agent::LearnerAgentResource>,
+    learner_agent: Arc<learner_agent::LearnerAgentResource>,
 
-    learner: Arc<learner::LearnerResource>,
-    kv_store: Arc<kv_store::KvStoreResource>,
     failure_detector: Arc<failure_detector::FailureDetectorResource>,
-    // A key for storing committed Paxos values in the key/value store.
-    paxos_key: String,
+
     // heartbeats: Arc<Mutex<HashMap<u64, u64>>>,
     // node_id: u64,
     // leader_id: Cell<u64>,
     // election_in_progress: Cell<bool>
-    next_commit_slot: Cell<Slot>, // Adu
-
     time_startup: Cell<Instant>,
 
-    tickercounter: Cell<u64>,
+    ticker_counter: Cell<u64>,
 
     test: RefCell<VecDeque<ClientResponse>>,
 }
@@ -68,7 +62,7 @@ impl MyPaxosCoordinatorResource {
     }
 
     fn check_and_resend_if_gap(&self) -> bool {
-        if let Some(slot) = self.learner.check_for_gap() {
+        if let Some(slot) = self.learner_agent.check_for_gap() {
             if let Some(accepted) = self.proposer_agent.get_accepted_proposal(slot) {
                 // We have accepted it, just broadcast it to the learners
                 let learn = Learn {
@@ -108,12 +102,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             &node, &nodes, config,
         ));
 
-        // let learner_agent = Arc::new(learner_agent::LearnerAgentResource::new(
-        //     &node, &nodes, config,
-        // ));
-
-        let learner = Arc::new(learner::LearnerResource::new());
-        let kv_store = Arc::new(kv_store::KvStoreResource::new());
+        let learner_agent = Arc::new(learner_agent::LearnerAgentResource::new(
+            &node, &nodes, config,
+        ));
 
         let failure_delta = 10; // TODO: Make this dynamic
         let failure_detector = Arc::new(failure_detector::FailureDetectorResource::new(
@@ -128,14 +119,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             nodes,
             proposer_agent,
             acceptor_agent,
-            // learner_agent,
-            learner,
-            kv_store,
+            learner_agent,
             failure_detector,
-            paxos_key: "paxos_values".to_string(), // TODO: Change the kv-store to save paxos values for slots instead of using the "history"
-            next_commit_slot: Cell::new(1),
             time_startup: Cell::new(Instant::now()),
-            tickercounter: Cell::new(0),
+            ticker_counter: Cell::new(0),
             test: RefCell::new(VecDeque::new()),
         }
     }
@@ -146,7 +133,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
     // Ticker called from host
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        self.tickercounter.set(self.tickercounter.get() + 1);
+        self.ticker_counter.set(self.ticker_counter.get() + 1);
         match self.proposer_agent.get_paxos_phase() {
             PaxosPhase::Start => {
                 logger::log_debug("[Coordinator] Run loop: started.");
@@ -167,67 +154,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             }
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Coordinator] Run loop: Running in phase two.");
-                // Quick fix to allow 10 accept messages to be sent out at once
-                let alpha = 10;
-                for _i in 0..alpha {
-                    let res = self.accept_phase();
-                    match res {
-                        AcceptResult::Accepted(_) => {
-                            
-                        }
-                        AcceptResult::MissingProposal => {
-                            break;
-                        }
-                        AcceptResult::QuorumFailure => {
-                        }
-                        AcceptResult::IsEventDriven => {
-                        }
-                        
-                    }
-                }
-                if !self.config.acceptors_send_learns {
-                    for _i in 0..alpha {
-                        let learn_result = self.commit_phase();
-                        match learn_result {
-                            Some(learn) => {
-                                logger::log_info(&format!(
-                                    "[Coordinator] Committed value: {:?}",
-                                    learn.learned_value
-                                ));
-                            }
-                            None => {
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                let mut executed_list = vec![];
-                for i in 0..10 {
-                    let executed = self.test.borrow_mut().pop_front();
-                    if let Some(val) = executed.clone() {
-                        logger::log_info(&format!(
-                            "[Proposer Agent] Executed value: {:?}",
-                            val
-                        ));
-                        executed_list.push(val);
-                    }
-                   
-                }
-                if executed_list.len() > 0 {
-                    return Some(executed_list);
-                }
-                None
+                self.proposer_agent.accept_commit()
             }
-            PaxosPhase::Stop => {None}  // TODO
-            PaxosPhase::Crash => {None} // TODO
+            PaxosPhase::Stop => None,  // TODO
+            PaxosPhase::Crash => None, // TODO
         }
     }
 
     /// Executes the prepare phase by merging local and remote promise responses.
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self) -> PrepareResult {
-        let slot = self.next_commit_slot.get(); // Starts from 1, or the number the learner has "executed" on leader change
+        let slot = self.proposer_agent.get_current_slot(); // Starts from 1, or the number the learner has "executed" on leader change // TODO
         let ballot = self.proposer_agent.get_current_ballot();
 
         // Query local acceptor.
@@ -298,8 +235,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
     /// Commits the proposal by updating the learner and key‑value store, then broadcasting a commit message.
     fn commit_phase(&self) -> Option<LearnResult> {
-        
-        if self.tickercounter.get() % 5 == 0 {
+        if self.ticker_counter.get() % 5 == 0 {
             // Check if we have a gap in the learned values on timer 5x tickerinterval
             if self.check_and_resend_if_gap() {
                 return None;
@@ -338,13 +274,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 LearnResultTest::Ignore => {
                     // Learend value that cannot be executed yet
                 }
-                
             }
             Some(LearnResult {
                 learned_value: prop.value,
                 quorum: self.get_quorum(),
             })
-
         } else {
             // logger::log_debug(&format!(
             //     "[Coordinator] No accepted proposal found for slot {}.",
@@ -354,62 +288,23 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         }
     }
 
-    /// Retrieves the current learned value from the learner.
-    fn get_learned_value(&self) -> Value {
-        let state = self.learner.get_state();
-        state
-            .learned
-            .first()
-            .map(|entry| entry.value.clone())
-            .expect("No learned value found!")
-    }
-
     /// Handles the message from a remote coordinator.
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
         logger::log_debug(&format!(
             "[Coordinator] Received network message: {:?}",
             message
         ));
-        //* Moved the Promise and Accepted handle to the proposer agent. As will also be done by all the other handles to their respective agent. */
         match message.payload {
-            MessagePayload::Learn(payload) => {
-                logger::log_info(&format!(
-                    "Handling LEARN: slot={}, value={:?}",
-                    payload.slot, payload.value
-                ));
-                if !self.config.acceptors_send_learns {
-
-                    // need some here if you are just a lear replica and miss the learn request
-
-                    let learn_result = self.learner.learn(payload.slot, &payload.value);
-                    match learn_result {
-                        LearnResultTest::Execute(learns) => {
-                            for learn_entry in learns {
-                                self.next_commit_slot.set(learn_entry.slot + 1);
-                            }
-                        }
-                        LearnResultTest::Ignore => {
-                            // Learend value that cannot be executed yet
-                        }
-                        
-                    }
-
-                }
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Learn(payload), // TODO: Use custom learn-ack type? Needed?
-                }
-            }
-
             //* Forward the relevant messages to the respective agents */
             MessagePayload::Promise(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::Accepted(_) => self.proposer_agent.handle_message(&message),
+            MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
 
             MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
             MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
 
-            MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
-            
+            MessagePayload::Learn(_) => self.learner_agent.handle_message(&message),
+
             MessagePayload::Heartbeat(payload) => {
                 logger::log_debug(&format!(
                     "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
@@ -439,8 +334,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Expose a snapshot of the current Paxos state.
     /// This aggregates the learner state (learned entries) and the key/value store state.
     fn get_state(&self) -> PaxosState {
-        let learner_state = self.learner.get_state();
-        let kv_state = self.kv_store.get_state();
+        let (learner_state, kv_state) = self.learner_agent.get_state();
         PaxosState {
             learned: learner_state.learned,
             kv_state,

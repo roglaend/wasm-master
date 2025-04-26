@@ -15,7 +15,7 @@ bindings::export!(MyLearner with_types_in bindings);
 use bindings::paxos::default::paxos_types::{Slot, Value};
 
 use crate::bindings::exports::paxos::default::learner::{
-    Guest, GuestLearnerResource, LearnResultTest, LearnedEntry, LearnerState,
+    Guest, GuestLearnerResource, LearnResult, LearnedEntry, LearnerState,
 };
 use crate::bindings::paxos::default::logger;
 
@@ -65,7 +65,7 @@ impl GuestLearnerResource for MyLearnerResource {
     /// Record that a value has been learned for a given slot.
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
     /// Can only execute consecutive slots starting from the next_to_execute slot.
-    fn learn(&self, slot: Slot, value: Value) -> LearnResultTest {
+    fn learn(&self, slot: Slot, value: Value) -> LearnResult {
         let mut learned_map = self.learned.borrow_mut();
         let mut next_to_execute = self.next_to_execute.get();
         let mut execution_log = self.execution_log.borrow_mut();
@@ -99,9 +99,9 @@ impl GuestLearnerResource for MyLearnerResource {
                 self.next_to_execute.set(next_to_execute);
             }
 
-            return LearnResultTest::Execute(to_be_executed);
+            return LearnResult::Execute(to_be_executed);
         } else {
-            LearnResultTest::Ignore
+            LearnResult::Ignore
         }
     }
 

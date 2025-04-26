@@ -2,7 +2,6 @@ use paxos_wasm_utils::build_helpers::{build_and_plug, build_wasm_components};
 use std::env;
 
 fn main() {
-
     let profile = env::var("PROFILE").unwrap();
     if profile == "release" {
         // don’t do your wasm‑build work in `cargo build --release`
@@ -12,9 +11,7 @@ fn main() {
 
     let target = "wasm32-wasip2";
 
-    let base_components = &[
-        "paxos-client-test",
-    ];
+    let base_components = &["paxos-client-test"];
     build_wasm_components(target, base_components);
 
     // --- Build and Plug WS Components ---
@@ -30,5 +27,4 @@ fn main() {
         socket_server,
         output_server,
     );
-;
 }

@@ -1,11 +1,4 @@
-use bindings::paxos::default::network_types::ClientResponse;
-use bindings::paxos::default::network_types::MessagePayload;
-use bindings::paxos::default::network_types::NetworkMessage;
-use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
-use wasi::sockets::tcp::InputStream;
-use wasi::sockets::tcp::OutputStream;
-use std::cell::Ref;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,6 +6,8 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
+use wasi::sockets::tcp::InputStream;
+use wasi::sockets::tcp::OutputStream;
 
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
@@ -30,7 +25,8 @@ pub mod bindings {
 bindings::export!(MyProposerTcp with_types_in bindings);
 
 use bindings::exports::paxos::default::ws_server::{Guest, GuestWsServerResource, RunConfig};
-use bindings::paxos::default::paxos_types::{Node, PaxosRole};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
+use bindings::paxos::default::paxos_types::{ClientResponse, Node, Operation, PaxosRole, Value};
 use bindings::paxos::default::{acceptor_agent, learner_agent, logger, proposer_agent, serializer};
 
 pub struct MyProposerTcp;
@@ -46,12 +42,14 @@ pub struct Connection {
     output: Option<OutputStream>,
 }
 
+type RequestKey = (String, u64);
+
 impl Connection {
     pub fn new(socket: TcpSocket, input: InputStream, output: OutputStream) -> Self {
-        Self { 
-            socket, 
-            input: Some(input), 
-            output: Some(output) 
+        Self {
+            socket,
+            input: Some(input),
+            output: Some(output),
         }
     }
 
@@ -118,7 +116,7 @@ pub struct MyTcpServerResource {
     node: Node,
     nodes: Vec<Node>, // TODO: might be be useful
     agent: Agent,
-    client_connections: RefCell<HashMap<u64, Connection>>,
+    client_connections: RefCell<HashMap<RequestKey, Connection>>,
 }
 
 impl MyTcpServerResource {}
@@ -185,150 +183,167 @@ impl GuestWsServerResource for MyTcpServerResource {
         ));
 
         let mut client_seq: u64 = 0;
+        let client_id = "client-1".to_string();
         let interval = 5..10;
 
         let mut rng = rand::rng();
         let mut next_request_interval = Duration::from_millis(rng.random_range(interval.clone()));
         let mut last_request_time = Instant::now();
 
-        
         let mut completed_requests = 0;
         let mut last_log = Instant::now();
 
         sleep(Duration::from_secs(1)); // To make all nodes ready
 
-
-
         loop {
             // Accept incoming TCP messages
             match listener.accept() {
-                
-            Ok((socket, input, output)) => {
-                match input.blocking_read(1024) {
-                    Ok(buf) if !buf.is_empty() => {
-                        let net_msg = serializer::deserialize(&buf);
-                        logger::log_info(&format!("[TCP Server] Received message: {:?}", net_msg));
+                Ok((socket, input, output)) => {
+                    match input.blocking_read(1024) {
+                        Ok(buf) if !buf.is_empty() => {
+                            let net_msg = serializer::deserialize(&buf);
+                            logger::log_info(&format!(
+                                "[TCP Server] Received message: {:?}",
+                                net_msg
+                            ));
 
-                        
+                            match net_msg.payload {
+                                MessagePayload::ClientRequest(value) => {
+                                    if self.agent.submit_client_request(&value) {
+                                        let request_key =
+                                            (value.client_id.clone(), value.client_seq);
 
-                        match net_msg.payload {
-                            MessagePayload::ClientRequest(value) => {
+                                        if let Some(connection) = self
+                                            .client_connections
+                                            .borrow_mut()
+                                            .remove(&request_key)
+                                        {
+                                            connection.shutdown();
+                                        }
 
-                                if self.agent.submit_client_request(&value) {
-                                    let request_id = value.client_id * 1000 + value.client_seq;
+                                        let connection = Connection::new(socket, input, output);
 
-                                    if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
-                                        connection.shutdown();
+                                        self.client_connections
+                                            .borrow_mut()
+                                            .insert(request_key.clone(), connection);
+                                        logger::log_info(&format!(
+                                            "[TCP Server] Connection inserted successfully. Request Key: {:?}",
+                                            request_key
+                                        ));
                                     }
-
-                                    let connection = Connection::new(socket, input, output);
-    
-                                    self.client_connections.borrow_mut().insert(request_id, connection);
+                                }
+                                _ => {
+                                    let _ = self.agent.handle_message(net_msg.clone());
                                 }
                             }
-                            _ => { 
-                                let _ = self.agent.handle_message(net_msg.clone());
-                            }
+
+                            // TODO
+                            // if !self.config.is_event_driven {
+                            //     let response_bytes = serializer::serialize(&response_msg);
+                            //     if let Err(e) =
+                            //         output.blocking_write_and_flush(response_bytes.as_slice())
+                            //     {
+                            //         logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
+                            //     } else {
+                            //         logger::log_info("[TCP Server] Response sent back to client.");
+                            //     }
+                            // }
                         }
-
-                            
-
-                        // if !self.config.is_event_driven {
-                        //     let response_bytes = serializer::serialize(&response_msg);
-                        //     if let Err(e) =
-                        //         output.blocking_write_and_flush(response_bytes.as_slice())
-                        //     {
-                        //         logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
-                        //     } else {
-                        //         logger::log_info("[TCP Server] Response sent back to client.");
-                        //     }
-                        // }
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        logger::log_warn(&format!("[TCP Server] Read error: {:?}", e));
+                        Ok(_) => {}
+                        Err(e) => {
+                            logger::log_warn(&format!("[TCP Server] Read error: {:?}", e));
+                        }
                     }
                 }
-            }
-            Err(e) if e == TcpErrorCode::WouldBlock => {
+                Err(e) if e == TcpErrorCode::WouldBlock => {
+                    let resp = self.agent.run_paxos_loop();
 
-                let resp = self.agent.run_paxos_loop();
+                    if self.config.demo_client {
+                        // Generate a random client request if the elapsed time exceeds the random interval.
+                        if last_request_time.elapsed() > next_request_interval {
+                            if let Agent::Proposer(agent) = &self.agent {
+                                if agent.is_leader() {
+                                    client_seq += 1;
 
-                if self.config.demo_client {
-                    // Generate a random client request if the elapsed time exceeds the random interval.
-                    if last_request_time.elapsed() > next_request_interval {
+                                    let request = Value {
+                                        command: Some(Operation::Demo),
+                                        client_id: client_id.clone(),
+                                        client_seq,
+                                    };
+
+                                    let submitted = agent.submit_client_request(&request);
+                                    logger::log_info(&format!(
+                                        "[TCP Server] Submitted fixed client request seq={} success={}",
+                                        client_seq, submitted
+                                    ));
+                                }
+                                // Reset timer and choose a new random interval.
+                                last_request_time = Instant::now();
+                                next_request_interval =
+                                    Duration::from_millis(rng.random_range(interval.clone()));
+                            }
+                        }
+                    } else {
+                        // If not in demo mode, run the agent's Paxos loop.
                         if let Agent::Proposer(agent) = &self.agent {
                             if agent.is_leader() {
-                                client_seq += 1;
-    
-                                let request = Value {
-                                    is_noop: false,
-                                    command: Some("cmd".to_string()), // Use a constant command
-                                    client_id: 1,                     // consistent ID as u64 for Value
-                                    client_seq,
-                                };
-    
-                                let submitted = agent.submit_client_request(&request);
-                                logger::log_info(&format!(
-                                    "[TCP Server] Submitted fixed client request seq={} success={}",
-                                    client_seq, submitted
-                                ));
+                                if let Some(responses) = resp {
+                                    for response in responses {
+                                        let request_key =
+                                            (response.client_id.clone(), response.client_seq);
+                                        if let Some(connection) = self
+                                            .client_connections
+                                            .borrow_mut()
+                                            .remove(&request_key)
+                                        {
+                                            let response_msg = NetworkMessage {
+                                                sender: self.node.clone(),
+                                                payload: MessagePayload::ClientResponse(response),
+                                            };
+                                            let response_bytes =
+                                                serializer::serialize(&response_msg);
+                                            if let Err(e) = connection
+                                                .output
+                                                .as_ref()
+                                                .unwrap()
+                                                .blocking_write_and_flush(response_bytes.as_slice())
+                                            {
+                                                logger::log_warn(&format!(
+                                                    "[TCP Server] Write error: {:?}",
+                                                    e
+                                                ));
+                                            } else {
+                                                completed_requests += 1;
+                                                logger::log_info(
+                                                    "[TCP Server] Response sent back to client.",
+                                                );
+                                            }
+                                            connection.shutdown();
+                                        }
+                                    }
+                                    if last_log.elapsed() >= Duration::from_millis(500) {
+                                        let elapsed_secs = last_log.elapsed().as_secs_f64();
+                                        let throughput = (completed_requests as f64) / elapsed_secs;
+
+                                        logger::log_info(&format!(
+                                            "[TCP Server] Throughput: {:.2} responses/sec",
+                                            throughput
+                                        ));
+
+                                        completed_requests = 0;
+                                        last_log = Instant::now();
+                                    }
+                                }
                             }
-    
-                            // Reset the timer and pick a new random interval between 0.5 and 1.5 seconds.
-                            last_request_time = Instant::now();
-                            next_request_interval =
-                                Duration::from_millis(rng.random_range(interval.clone()));
                         }
                     }
-                } else {
-                    // If not in demo mode, run the agent's Paxos loop.
-                    if let Agent::Proposer(agent) = &self.agent {
-                        if agent.is_leader() {
-                            if let Some(responses) = resp {
-                                for response in responses {
-                                    let client_id: u64 = response.client_id.clone().parse().unwrap_or(0);
-                                    let request_id = client_id * 1000 + response.client_seq;
-                                    if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
-                                        let response_msg = NetworkMessage {
-                                            sender: self.node.clone(),
-                                            payload: MessagePayload::Executed(response),
-                                        };
-                                        let response_bytes = serializer::serialize(&response_msg);
-                                        if let Err(e) = connection.output.as_ref().unwrap().blocking_write_and_flush(response_bytes.as_slice()) {
-                                            logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
-                                        } else {
-                                            completed_requests += 1;
-                                            logger::log_info("[TCP Server] Response sent back to client.");
-                                        }
-                                        connection.shutdown();
-                                    }
-                                    
-                                }
-                                if last_log.elapsed() >= Duration::from_millis(500) {
-                                    let elapsed_secs = last_log.elapsed().as_secs_f64();
-                                    let throughput = (completed_requests as f64) / elapsed_secs;
-                                
-                                    logger::log_info(&format!(
-                                        "[TCP Server] Throughput: {:.2} responses/sec",
-                                        throughput
-                                    ));
-                                
-                                    completed_requests = 0;
-                                    last_log = Instant::now();
-                                }
-                            }
-                        } 
-                    }
                 }
-    
+                Err(e) => {
+                    logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
+                }
             }
-            Err(e) => {
-                logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
-            }
-        }
-            
-        // sleep(Duration::from_millis(1));
+
+            // sleep(Duration::from_millis(1));
         }
     }
 }

@@ -39,13 +39,7 @@ world paxos-world {
 
     import proposer-agent;
     import acceptor-agent;
-    // import learner-agent;
-
-    // import proposer;
-    // import acceptor;
-
-    import learner;
-    import kv-store;
+    import learner-agent;
 
     import failure-detector;
 

@@ -2,6 +2,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::info;
 use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
@@ -64,16 +65,19 @@ impl PaxosWasmtime {
         is_leader: bool,
         run_config: RunConfig,
     ) -> Result<Self, Box<dyn Error>> {
+        info!("Print 1");
         let mut config = wasmtime::Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
 
+        info!("Print 2");
         let state = ComponentRunStates::new(node.clone());
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
 
+        info!("Print 3");
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
 
         let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -83,22 +87,17 @@ impl PaxosWasmtime {
             .expect("Workspace folder")
             .to_owned();
 
-        // let composed_component = Component::from_file(
-        //     &engine,
-        //     workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
-        // )?;
+        //    let composed_component = Component::from_file(
+        //         &engine,
+        //         workspace_dir.join("target/wasm32-wasip2/release/final_composed_udp_server.wasm"),
+        //     )?;
 
         // TODO: swap for udp or separate it out into another package.
 
         let composed_component = Component::from_file(
             &engine,
-            workspace_dir.join("target/wasm32-wasip2/release/final_composed_udp_server.wasm"),
+            workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
         )?;
-
-        // let composed_component = Component::from_file(
-        //     &engine,
-        //     workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
-        // )?;
 
         let final_bindings =
             bindings::PaxosWsWorld::instantiate_async(&mut store, &composed_component, &linker)

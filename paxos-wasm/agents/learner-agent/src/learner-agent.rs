@@ -1,4 +1,9 @@
-pub mod bindings {
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "learner-agent-world",
@@ -9,25 +14,18 @@ pub mod bindings {
 
 bindings::export!(MyLearnerAgent with_types_in bindings);
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use bindings::exports::paxos::default::learner_agent::{
     Guest as GuestLearnerAgent, GuestLearnerAgentResource,
 };
 
-use bindings::paxos::default::learner_types::{LearnResult, LearnResultTest};
-
+use bindings::paxos::default::kv_store::KvStoreResource;
 use bindings::paxos::default::learner::LearnerResource;
-
-use bindings::paxos::default::{logger, network};
-
+use bindings::paxos::default::learner_types::{LearnResult, LearnerState};
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    ClientResponse, Node, PaxosRole, RunConfig, Slot, Value,
+    Executed, KvPair, Node, PaxosRole, RunConfig, Slot, Value,
 };
+use bindings::paxos::default::{logger, network};
 
 pub struct MyLearnerAgent;
 
@@ -39,18 +37,17 @@ pub struct MyLearnerAgentResource {
     config: RunConfig,
 
     node: Node,
-
-    learner: Arc<LearnerResource>,
     proposers: Vec<Node>,
-    acceptors: Vec<Node>,
+    // acceptors: Vec<Node>,
+    learner: Arc<LearnerResource>,
+    kv_store: Arc<KvStoreResource>,
 
-    simulated_state_machine: RefCell<HashMap<String, String>>,
-    retires: RefCell<HashMap<Slot, Instant>>,
+    retries: RefCell<HashMap<Slot, Instant>>,
 }
 
 impl MyLearnerAgentResource {
     fn possible_retry(&self, slot: Slot, retry_interval: Duration) -> bool {
-        match self.retires.borrow().get(&slot) {
+        match self.retries.borrow().get(&slot) {
             Some(&last_retry_time) => {
                 // If not enough time has passed since last retry, do nothing
                 if last_retry_time.elapsed() < retry_interval {
@@ -64,49 +61,15 @@ impl MyLearnerAgentResource {
 
         // If we reach here, we should do a retry
         // Update the timestamp to now and return true to indicate a retry happened
-        self.retires.borrow_mut().insert(slot, Instant::now());
+        self.retries.borrow_mut().insert(slot, Instant::now());
         true
-    }
-
-    // simulates getter and setter of a state machine :clownemoji:
-    fn execute_command(&self, val: Value) -> String {
-        if let Some(cmd) = val.command {
-            let string_split = cmd.split(" ").collect::<Vec<_>>();
-            if string_split.len() > 1 {
-                let command = string_split[0];
-                let key = string_split[1];
-                match command {
-                    "set" => {
-                        let value = string_split[2];
-                        self.simulated_state_machine
-                            .borrow_mut()
-                            .insert(key.to_string(), value.to_string());
-                        return format!("Set {} to {}", key, value);
-                    }
-                    "get" => {
-                        if let Some(value) = self.simulated_state_machine.borrow().get(key) {
-                            return format!("{} is {}", key, value);
-                        } else {
-                            return format!("{} not found", key);
-                        }
-                    }
-                    _ => {
-                        return format!("Unknown command: {}", command);
-                    }
-                }
-            } else {
-                return "Invalid command".to_string();
-            }
-        }
-
-        // If no command is found, return a default message
-        "Not command found".to_string()
     }
 }
 
 impl GuestLearnerAgentResource for MyLearnerAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
         let learner = Arc::new(LearnerResource::new());
+        let kv_store = Arc::new(KvStoreResource::new());
 
         let proposers: Vec<_> = nodes
             .clone()
@@ -114,31 +77,48 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
 
-        let acceptors: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
-            .collect();
+        // let acceptors: Vec<_> = nodes
+        //     .clone()
+        //     .into_iter()
+        //     .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
+        //     .collect();
 
-        logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
+        logger::log_info("[Learner Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
-            learner,
             proposers,
-            acceptors,
-            retires: RefCell::new(HashMap::new()),
-            simulated_state_machine: RefCell::new(HashMap::new()),
+            // acceptors,
+            learner,
+            kv_store,
+            retries: RefCell::new(HashMap::new()),
         }
     }
 
-    fn get_learned_value(&self) -> Option<String> {
-        todo!()
+    // TODO : fix proto for this so that it can actually be used
+    fn get_state(&self) -> (LearnerState, Vec<KvPair>) {
+        let learner_state = self.learner.get_state();
+        let kv_store_state = self.kv_store.get_state();
+
+        (learner_state, kv_store_state)
     }
 
-    // TODO : fix proto for this so that it can actually be used
-    fn get_state(&self) -> bindings::paxos::default::learner_types::LearnerState {
-        self.learner.get_state()
+    fn learn_and_execute(&self, slot: Slot, value: Value) -> Vec<Executed> {
+        match self.learner.learn(slot, &value) {
+            LearnResult::Execute(learns) => learns
+                .into_iter()
+                .map(|le| {
+                    let res = self.kv_store.apply(&le.value.command);
+                    Executed {
+                        value: le.value.clone(),
+                        slot: le.slot,
+                        success: true,
+                        cmd_result: res,
+                    }
+                })
+                .collect(),
+            LearnResult::Ignore => Vec::new(),
+        }
     }
 
     // Ticker called from host at a slower interval than proposer ticker
@@ -172,61 +152,41 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         match message.payload {
             MessagePayload::Learn(payload) => {
                 logger::log_debug(&format!(
-                    "Handling LEARN: slot={}, value={:?}",
+                    "[Learner Agent] Handling LEARN: slot={}, value={:?}",
                     payload.slot, payload.value
                 ));
-                if !self.config.acceptors_send_learns {
-                    let learn_result = self.learner.learn(payload.slot, &payload.value);
-                    match learn_result {
-                        LearnResultTest::Execute(learns) => {
-                            // TODO: Learns is a list of ready-to-execute-commands.
-                            // This is where we would call the state machine
 
-                            for learn_entry in learns {
-                                let executed_value = learn_entry.value.clone();
+                let executed_entries = self.learn_and_execute(payload.slot, payload.value.clone());
 
-                                // Execute command at "state machine"
-                                let res = self.execute_command(executed_value.clone());
+                if !executed_entries.is_empty() {
+                    let exec_msg = NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Executed(executed_entries),
+                    };
 
-                                // quickfix let only one learner send to leader
-                                // TODO: proposer should handle this but my brain is too small (wtf copilot)
-                                // if self.node.node_id == 1 {
-                                //     let network_message = NetworkMessage {
-                                //         sender: self.node.clone(),
-                                //         payload: MessagePayload::Ignore,
-                                //     };
-                                //     return network_message;
-                                // }
+                    let broadcast_and_ignore =
+                        self.config.is_event_driven || self.config.acceptors_send_learns;
 
-                                let client_response = ClientResponse {
-                                    client_id: executed_value.client_id.to_string(),
-                                    client_seq: executed_value.client_seq,
-                                    success: true,
-                                    command_result: Some(res),
-                                    slot: learn_entry.slot,
-                                };
-
-                                let network_message = NetworkMessage {
-                                    sender: self.node.clone(),
-                                    payload: MessagePayload::Executed(client_response),
-                                };
-
-                                network::send_message_forget(&self.proposers, &network_message);
-                            }
-                        }
-                        LearnResultTest::Ignore => {
-                            // Learend value that cannot be executed yet
-                        }
+                    if broadcast_and_ignore {
+                        network::send_message_forget(&self.proposers, &exec_msg);
+                        return NetworkMessage {
+                            sender: self.node.clone(),
+                            payload: MessagePayload::Ignore, // TODO: Use custom learn-ack type? Needed?
+                        };
+                    } else {
+                        return exec_msg;
                     }
                 }
+
                 NetworkMessage {
                     sender: self.node.clone(),
-                    payload: MessagePayload::Learn(payload), // TODO: Use custom learn-ack type? Needed?
+                    payload: MessagePayload::Ignore, // TODO: Use custom learn-ack type? Needed?
                 }
             }
+
             other_message => {
                 logger::log_debug(&format!(
-                    "[Acceptor Agent] Received irrelevant message type: {:?}",
+                    "[Learner Agent] Received irrelevant message type: {:?}",
                     other_message
                 ));
                 NetworkMessage {
