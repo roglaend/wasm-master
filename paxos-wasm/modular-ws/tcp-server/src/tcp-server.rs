@@ -27,7 +27,9 @@ bindings::export!(MyProposerTcp with_types_in bindings);
 use bindings::exports::paxos::default::ws_server::{Guest, GuestWsServerResource, RunConfig};
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{ClientResponse, Node, Operation, PaxosRole, Value};
-use bindings::paxos::default::{acceptor_agent, learner_agent, logger, proposer_agent, serializer};
+use bindings::paxos::default::{
+    acceptor_agent, learner_agent, logger, paxos_coordinator, proposer_agent, serializer,
+};
 
 pub struct MyProposerTcp;
 
@@ -62,36 +64,47 @@ impl Connection {
     }
 }
 
-enum Agent {
+enum Runner {
     Proposer(Arc<proposer_agent::ProposerAgentResource>),
     Acceptor(Arc<acceptor_agent::AcceptorAgentResource>),
     Learner(Arc<learner_agent::LearnerAgentResource>),
+    Coordinator(Arc<paxos_coordinator::PaxosCoordinatorResource>),
 }
 
-impl Agent {
+impl Runner {
     /// Delegates the message handling to the appropriate agent.
     fn handle_message(&self, msg: NetworkMessage) -> NetworkMessage {
         match self {
-            Agent::Proposer(agent) => agent.handle_message(&msg),
-            Agent::Acceptor(agent) => agent.handle_message(&msg),
-            Agent::Learner(agent) => agent.handle_message(&msg),
+            Runner::Proposer(runner) => runner.handle_message(&msg),
+            Runner::Acceptor(runner) => runner.handle_message(&msg),
+            Runner::Learner(runner) => runner.handle_message(&msg),
+            Runner::Coordinator(runner) => runner.handle_message(&msg),
         }
     }
 
     fn submit_client_request(&self, value: &Value) -> bool {
         match self {
-            Agent::Proposer(agent) => agent.submit_client_request(value),
-            Agent::Acceptor(_agent) => false,
-            Agent::Learner(_agent) => false,
+            Runner::Proposer(runner) => runner.submit_client_request(value),
+            Runner::Acceptor(_runner) => false,
+            Runner::Learner(_runner) => false,
+            Runner::Coordinator(runner) => runner.submit_client_request(value),
         }
     }
 
-    /// Runs the agent’s Paxos loop.
+    fn is_leader(&self) -> bool {
+        match self {
+            Runner::Proposer(runner) => runner.is_leader(),
+            Runner::Coordinator(runner) => runner.is_leader(),
+            _ => false,
+        }
+    }
+
+    /// Runs the runner’s Paxos loop.
     /// (If a particular role does not need a continuous loop, you can adjust this behavior.)
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         match self {
-            Agent::Proposer(agent) => {
-                let response = agent.run_paxos_loop();
+            Runner::Proposer(runner) => {
+                let response = runner.run_paxos_loop();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
                         logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
@@ -99,13 +112,22 @@ impl Agent {
                 }
                 response.clone()
             }
-            Agent::Acceptor(_agent) => {
-                // let _ = agent.run_paxos_loop();
+            Runner::Acceptor(_runner) => {
+                // let _ = runner.run_paxos_loop();
                 None
             }
-            Agent::Learner(_agent) => {
-                // let _ = agent.run_paxos_loop();
+            Runner::Learner(_runner) => {
+                // let _ = runner.run_paxos_loop();
                 None
+            }
+            Runner::Coordinator(runner) => {
+                let response = runner.run_paxos_loop();
+                if let Some(responses) = response.clone() {
+                    for resp in responses {
+                        logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
+                    }
+                }
+                response.clone()
             }
         }
     }
@@ -115,42 +137,54 @@ pub struct MyTcpServerResource {
     config: RunConfig,
     node: Node,
     nodes: Vec<Node>, // TODO: might be be useful
-    agent: Agent,
+    runner: Runner,
     client_connections: RefCell<HashMap<RequestKey, Connection>>,
+
+    last_non_leader_tick: RefCell<Instant>,
+    non_leader_interval: Duration,
 }
 
 impl MyTcpServerResource {}
 
 impl GuestWsServerResource for MyTcpServerResource {
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
-        // Select the appropriate agent based on the node's role.
-        let agent = match node.role {
+        // Select the appropriate runner based on the node's role.
+        let runner = match node.role {
             PaxosRole::Proposer => {
-                logger::log_info("[Tcp Server] Initializing as Proposer agent.");
-                Agent::Proposer(Arc::new(proposer_agent::ProposerAgentResource::new(
+                logger::log_info("[Tcp Server] Initializing as Proposer runner.");
+                Runner::Proposer(Arc::new(proposer_agent::ProposerAgentResource::new(
                     &node, &nodes, is_leader, config,
                 )))
             }
             PaxosRole::Acceptor => {
                 logger::log_info("[Tcp Server] Initializing as Acceptor agent.");
-                Agent::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
+                Runner::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
                     &node, &nodes, config,
                 )))
             }
             PaxosRole::Learner => {
                 logger::log_info("[Tcp Server] Initializing as Learner agent.");
-                Agent::Learner(Arc::new(learner_agent::LearnerAgentResource::new(
+                Runner::Learner(Arc::new(learner_agent::LearnerAgentResource::new(
                     &node, &nodes, config,
+                )))
+            }
+            PaxosRole::Coordinator => {
+                logger::log_info("[Tcp Server] Initializing as Coordinator.");
+                Runner::Coordinator(Arc::new(paxos_coordinator::PaxosCoordinatorResource::new(
+                    &node, &nodes, is_leader, config,
                 )))
             }
             // Optionally, handle unexpected roles.
             _ => {
                 logger::log_warn("[Tcp Server] Unknown node role; defaulting to Acceptor agent.");
-                Agent::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
+                Runner::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
                     &node, &nodes, config,
                 )))
             }
         };
+
+        let now = RefCell::new(Instant::now());
+        let non_leader_interval = Duration::from_millis(100); // e.g. poll every 100ms off-leader
 
         logger::log_info(&format!(
             "[TCP Server] Initialized as {} node with {} remote nodes.",
@@ -166,8 +200,11 @@ impl GuestWsServerResource for MyTcpServerResource {
             config,
             node,
             nodes,
-            agent,
+            runner: runner,
             client_connections: RefCell::new(HashMap::new()),
+
+            last_non_leader_tick: now,
+            non_leader_interval,
         }
     }
 
@@ -209,7 +246,7 @@ impl GuestWsServerResource for MyTcpServerResource {
 
                             match net_msg.payload {
                                 MessagePayload::ClientRequest(value) => {
-                                    if self.agent.submit_client_request(&value) {
+                                    if self.runner.submit_client_request(&value) {
                                         let request_key =
                                             (value.client_id.clone(), value.client_seq);
 
@@ -233,7 +270,7 @@ impl GuestWsServerResource for MyTcpServerResource {
                                     }
                                 }
                                 _ => {
-                                    let _ = self.agent.handle_message(net_msg.clone());
+                                    let _ = self.runner.handle_message(net_msg.clone());
                                 }
                             }
 
@@ -256,27 +293,37 @@ impl GuestWsServerResource for MyTcpServerResource {
                     }
                 }
                 Err(e) if e == TcpErrorCode::WouldBlock => {
-                    let resp = self.agent.run_paxos_loop();
+                    let mut maybe_responses = None;
+
+                    if self.runner.is_leader() {
+                        // leader runs every tick
+                        maybe_responses = self.runner.run_paxos_loop();
+                    } else if self.last_non_leader_tick.borrow().elapsed()
+                        >= self.non_leader_interval
+                    {
+                        // non-leaders only once per interval
+                        maybe_responses = self.runner.run_paxos_loop();
+                        *self.last_non_leader_tick.borrow_mut() = Instant::now();
+                    }
 
                     if self.config.demo_client {
                         // Generate a random client request if the elapsed time exceeds the random interval.
                         if last_request_time.elapsed() > next_request_interval {
-                            if let Agent::Proposer(agent) = &self.agent {
-                                if agent.is_leader() {
-                                    client_seq += 1;
+                            if self.runner.is_leader() {
+                                client_seq += 1;
 
-                                    let request = Value {
-                                        command: Some(Operation::Demo),
-                                        client_id: client_id.clone(),
-                                        client_seq,
-                                    };
+                                let request = Value {
+                                    command: Some(Operation::Demo),
+                                    client_id: client_id.clone(),
+                                    client_seq,
+                                };
 
-                                    let submitted = agent.submit_client_request(&request);
-                                    logger::log_info(&format!(
-                                        "[TCP Server] Submitted fixed client request seq={} success={}",
-                                        client_seq, submitted
-                                    ));
-                                }
+                                let submitted = self.runner.submit_client_request(&request);
+                                logger::log_info(&format!(
+                                    "[TCP Server] Submitted fixed client request seq={} success={}",
+                                    client_seq, submitted
+                                ));
+
                                 // Reset timer and choose a new random interval.
                                 last_request_time = Instant::now();
                                 next_request_interval =
@@ -284,55 +331,49 @@ impl GuestWsServerResource for MyTcpServerResource {
                             }
                         }
                     } else {
-                        // If not in demo mode, run the agent's Paxos loop.
-                        if let Agent::Proposer(agent) = &self.agent {
-                            if agent.is_leader() {
-                                if let Some(responses) = resp {
-                                    for response in responses {
-                                        let request_key =
-                                            (response.client_id.clone(), response.client_seq);
-                                        if let Some(connection) = self
-                                            .client_connections
-                                            .borrow_mut()
-                                            .remove(&request_key)
+                        if self.runner.is_leader() {
+                            if let Some(responses) = maybe_responses {
+                                for response in responses {
+                                    let request_key =
+                                        (response.client_id.clone(), response.client_seq);
+                                    if let Some(connection) =
+                                        self.client_connections.borrow_mut().remove(&request_key)
+                                    {
+                                        let response_msg = NetworkMessage {
+                                            sender: self.node.clone(),
+                                            payload: MessagePayload::ClientResponse(response),
+                                        };
+                                        let response_bytes = serializer::serialize(&response_msg);
+                                        if let Err(e) = connection
+                                            .output
+                                            .as_ref()
+                                            .unwrap()
+                                            .blocking_write_and_flush(response_bytes.as_slice())
                                         {
-                                            let response_msg = NetworkMessage {
-                                                sender: self.node.clone(),
-                                                payload: MessagePayload::ClientResponse(response),
-                                            };
-                                            let response_bytes =
-                                                serializer::serialize(&response_msg);
-                                            if let Err(e) = connection
-                                                .output
-                                                .as_ref()
-                                                .unwrap()
-                                                .blocking_write_and_flush(response_bytes.as_slice())
-                                            {
-                                                logger::log_warn(&format!(
-                                                    "[TCP Server] Write error: {:?}",
-                                                    e
-                                                ));
-                                            } else {
-                                                completed_requests += 1;
-                                                logger::log_info(
-                                                    "[TCP Server] Response sent back to client.",
-                                                );
-                                            }
-                                            connection.shutdown();
+                                            logger::log_warn(&format!(
+                                                "[TCP Server] Write error: {:?}",
+                                                e
+                                            ));
+                                        } else {
+                                            completed_requests += 1;
+                                            logger::log_info(
+                                                "[TCP Server] Response sent back to client.",
+                                            );
                                         }
+                                        connection.shutdown();
                                     }
-                                    if last_log.elapsed() >= Duration::from_millis(500) {
-                                        let elapsed_secs = last_log.elapsed().as_secs_f64();
-                                        let throughput = (completed_requests as f64) / elapsed_secs;
+                                }
+                                if last_log.elapsed() >= Duration::from_millis(500) {
+                                    let elapsed_secs = last_log.elapsed().as_secs_f64();
+                                    let throughput = (completed_requests as f64) / elapsed_secs;
 
-                                        logger::log_info(&format!(
-                                            "[TCP Server] Throughput: {:.2} responses/sec",
-                                            throughput
-                                        ));
+                                    logger::log_info(&format!(
+                                        "[TCP Server] Throughput: {:.2} responses/sec",
+                                        throughput
+                                    ));
 
-                                        completed_requests = 0;
-                                        last_log = Instant::now();
-                                    }
+                                    completed_requests = 0;
+                                    last_log = Instant::now();
                                 }
                             }
                         }

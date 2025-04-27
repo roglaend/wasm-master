@@ -325,7 +325,8 @@ impl GuestWsServerResource for MyTcpServerResource {
                 // Streams go out of scope and are dropped here.
             }
 
-            let resp = self.agent.run_paxos_loop();
+            let client_responses = self.agent.run_paxos_loop();
+
             if self.config.demo_client {
                 // Periodically submit a client request if enough time has elapsed.
 
@@ -355,9 +356,10 @@ impl GuestWsServerResource for MyTcpServerResource {
                     }
                 }
             } else {
+                // If not in demo mode, handle the client responses properly
                 if let Agent::Proposer(agent) = &self.agent {
                     if agent.is_leader() {
-                        if let Some(responses) = resp {
+                        if let Some(responses) = client_responses {
                             for response in responses {
                                 let request_key = (response.client_id.clone(), response.client_seq);
                                 logger::log_info(&format!(

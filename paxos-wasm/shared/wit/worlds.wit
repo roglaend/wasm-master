@@ -43,14 +43,10 @@ world paxos-world {
 
     import failure-detector;
 
-    /// Needs to be implemented by host
     import network;
     import logger; 
 
     export paxos-coordinator;
-    // export proposer-agent;
-    // export acceptor-agent;
-
 }
 
 // world paxos-client-world {
@@ -110,6 +106,8 @@ world paxos-ws-world {
     import acceptor-agent;
     import learner-agent;
 
+    import paxos-coordinator;
+
     import logger;
 
     export ws-server;
@@ -123,7 +121,16 @@ world paxos-client-world {
     export paxos-client;
 }
 
-// TODO: Could instead import the ws-server directly inside the proposer-agent
+// TODO: Make these work
+
+world paxos-coordinator-ws-world {
+    import serializer;
+    import paxos-coordinator;
+
+    import logger;
+
+    export ws-server;
+}
 
 world proposer-ws-world {
     import serializer;

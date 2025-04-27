@@ -6,7 +6,8 @@ default-members = [
 
     "paxos-wasm/core",
     "paxos-wasm/agents",
-    "paxos-wasm/composed-grpc",
+    "paxos-wasm/runners",
+    # "paxos-wasm/composed-grpc",
     # "paxos-wasm/modular-grpc",
     "paxos-wasm/modular-ws",
     "paxos-wasm/modular-ws-test",
@@ -32,14 +33,15 @@ members = [
     "paxos-wasm/agents/learner-agent",
     "paxos-wasm/agents/kv-store-agent",
 
+    "paxos-wasm/runners",
+    "paxos-wasm/runners/paxos-coordinator",
+
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
     "paxos-wasm/composed-grpc/client-cli",
     "paxos-wasm/composed-grpc/command",
-    "paxos-wasm/composed-grpc/paxos-coordinator",
 
     # TODO: Enable when fixed
-
     # "paxos-wasm/modular-grpc",
     # "paxos-wasm/modular-grpc/client",
 

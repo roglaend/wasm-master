@@ -18,11 +18,9 @@ use bindings::exports::paxos::default::paxos_coordinator::{
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
 use bindings::paxos::default::learner_types::RetryLearnResult;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{
-    ClientResponse, Learn, Node, PaxosPhase, Proposal, Slot, Value,
-};
+use bindings::paxos::default::paxos_types::{ClientResponse, Node, PaxosPhase, Value};
 use bindings::paxos::default::{
-    acceptor_agent, failure_detector, learner_agent, logger, network, proposer_agent,
+    acceptor_agent, failure_detector, learner_agent, logger, proposer_agent,
 };
 
 pub struct MyPaxosCoordinator;
@@ -47,65 +45,24 @@ pub struct MyPaxosCoordinatorResource {
 }
 
 impl MyPaxosCoordinatorResource {
-    /// Returns the required quorum (here, a majority).
-    fn get_quorum(&self) -> u64 {
-        (self.nodes.len() as u64 / 2) + 1
-    }
-
-    fn retry_learn(&self) -> RetryLearnResult {
+    fn maybe_retry_learn(&self) {
         match self.learner_agent.evaluate_retry() {
-            RetryLearnResult::NoGap => {
-                // nothing to do
-            }
-
+            RetryLearnResult::NoGap => return,
             RetryLearnResult::Skip(slot) => {
-                logger::log_debug(&format!("[Coordinator] Skipping retry for slot {}", slot));
-            }
-
-            //* Assume event driven here */
-            RetryLearnResult::Retry(slot) => {
-                if !self.proposer_agent.is_leader() {}
-
-                // If we already have a quorum‐accepted proposal for that slot
-                if let Some(chosen) = self.proposer_agent.get_accepted_proposal(slot) {}
-
-                let retry_msg = NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::RetryLearn(slot),
-                };
-                logger::log_warn(&format!(
-                    "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
+                logger::log_debug(&format!(
+                    "[Coordinator] Learner skipping retry for slot {}",
                     slot
                 ));
-                network::send_message_forget(&self.proposers, &retry_msg);
+                return;
+            }
+            RetryLearnResult::Retry(slot) => {
+                logger::log_warn(&format!(
+                    "[Coordinator] Learner detected gap, retrying learn for slot {}",
+                    slot
+                ));
+                self.proposer_agent.retry_learn(slot);
             }
         }
-
-        // 1) Ask the learner if there’s a hole
-        if let Some(missing_slot) = self.learner_agent.evaluate_retry() {
-            // 2) If we’re not leader, we can’t do anything
-            if !self.proposer_agent.is_leader() {
-                return CoordinatorRetry::Skip(missing_slot);
-            }
-
-            // 3) If we already have a quorum‐accepted proposal for that slot
-            if let Some(chosen) = self.proposer_agent.get_accepted_proposal(missing_slot) {
-                return CoordinatorRetry::RetryLearn(Learn {
-                    slot: chosen.slot,
-                    value: chosen.value.clone(),
-                });
-            }
-
-            // 4) Otherwise, if it’s still in flight, re‐send the Accept
-            if let Some(in_flight) = self.proposer_agent.get_in_flight_proposal(missing_slot) {
-                return CoordinatorRetry::RetryAccept(in_flight);
-            }
-
-            // 5) No accepted or in‐flight ⇒ nothing we can do now
-            return CoordinatorRetry::Skip(missing_slot);
-        }
-
-        CoordinatorRetry::NoGap
     }
 }
 
@@ -145,33 +102,42 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         self.proposer_agent.submit_client_request(&req)
     }
 
+    fn is_leader(&self) -> bool {
+        self.proposer_agent.is_leader()
+    }
+
     // Ticker called from host
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        match self.proposer_agent.get_paxos_phase() {
-            PaxosPhase::Start => {
-                logger::log_debug("[Coordinator] Run loop: started.");
-                if self.proposer_agent.is_leader() {
-                    self.proposer_agent.start_leader_loop();
+        if !self.proposer_agent.is_leader() {
+            self.maybe_retry_learn();
+            None
+        } else {
+            match self.proposer_agent.get_paxos_phase() {
+                PaxosPhase::Start => {
+                    logger::log_debug("[Coordinator] Run loop: started.");
+                    if self.proposer_agent.is_leader() {
+                        self.proposer_agent.start_leader_loop();
+                    }
+                    None
                 }
-                None
+                PaxosPhase::PrepareSend => {
+                    logger::log_debug("[Coordinator] Run loop: Running in phase one.");
+                    self.prepare_phase();
+                    None
+                }
+                PaxosPhase::PreparePending => {
+                    logger::log_debug("[Coordinator] Run loop: Checking Prepare timeout.");
+                    self.proposer_agent.check_prepare_timeout();
+                    None
+                }
+                PaxosPhase::AcceptCommit => {
+                    logger::log_debug("[Coordinator] Run loop: Running in phase two.");
+                    _ = self.accept_phase();
+                    self.commit_phase()
+                }
+                PaxosPhase::Stop => None,  // TODO
+                PaxosPhase::Crash => None, // TODO
             }
-            PaxosPhase::PrepareSend => {
-                logger::log_debug("[Coordinator] Run loop: Running in phase one.");
-                self.prepare_phase();
-                None
-            }
-            PaxosPhase::PreparePending => {
-                logger::log_debug("[Coordinator] Run loop: Checking Prepare timeout.");
-                self.proposer_agent.check_prepare_timeout();
-                None
-            }
-            PaxosPhase::AcceptCommit => {
-                logger::log_debug("[Coordinator] Run loop: Running in phase two.");
-                self.accept_phase();
-                self.commit_phase()
-            }
-            PaxosPhase::Stop => None,  // TODO
-            PaxosPhase::Crash => None, // TODO
         }
     }
 
@@ -255,30 +221,29 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     fn commit_phase(&self) -> Option<Vec<ClientResponse>> {
-        let to_commit: Vec<Learn> = self.proposer_agent.learns_to_commit();
+        let to_commit = self.proposer_agent.learns_to_commit();
         if to_commit.is_empty() {
             return None;
         }
 
-        let mut all_execs = Vec::new();
-        for learn in to_commit.iter() {
-            self.proposer_agent.broadcast_learn(learn);
+        for learn in to_commit {
+            self.proposer_agent.broadcast_learn(&learn);
 
             let executed = self
                 .learner_agent
-                .learn_and_execute(learn.slot, &learn.value.clone());
-
-            if !executed.results.is_empty() {
-                let exec_msg = NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Executed(executed.clone()),
-                };
-                network::send_message_forget(&self.nodes, &exec_msg);
-                all_execs.extend(executed.results);
-            }
+                .learn_and_execute(learn.slot, &learn.value);
+            _ = self.proposer_agent.process_executed(&executed);
         }
 
-        let client_responses = self.proposer_agent.collect_client_responses();
+        let mut client_responses = Vec::new();
+        for resp in self.proposer_agent.collect_client_responses() {
+            logger::log_info(&format!(
+                "[Coordinator] Client response to send back: {:?}",
+                resp
+            ));
+            client_responses.push(resp);
+        }
+
         if client_responses.is_empty() {
             None
         } else {
@@ -297,12 +262,13 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             MessagePayload::Promise(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::Accepted(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
-            MessagePayload::Executed(_) => self.proposer_agent.handle_message(&message), // TODO: Combine the handling of Executed and Learn
 
+            //* Not needed in this setup due to having access to "adu" by the learners "next_to_execute" */
+            // MessagePayload::Executed(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
             MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
 
-            MessagePayload::Learn(_) => self.learner_agent.handle_message(&message), // TODO: Combine the handling of Executed and Learn
+            MessagePayload::Learn(_) => self.learner_agent.handle_message(&message),
 
             MessagePayload::Heartbeat(payload) => {
                 logger::log_debug(&format!(

@@ -183,29 +183,27 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
                 let executed = self.learn_and_execute(payload.slot, payload.value.clone());
 
-                if !executed.results.is_empty() {
-                    let exec_msg = NetworkMessage {
+                if executed.results.is_empty() || !self.config.learners_send_executed {
+                    return NetworkMessage {
                         sender: self.node.clone(),
-                        payload: MessagePayload::Executed(executed),
-                    };
-
-                    let broadcast_and_ignore =
-                        self.config.is_event_driven || self.config.acceptors_send_learns;
-
-                    if broadcast_and_ignore {
-                        network::send_message_forget(&self.proposers, &exec_msg);
-                        return NetworkMessage {
-                            sender: self.node.clone(),
-                            payload: MessagePayload::Ignore, // TODO: Use custom learn-ack type? Needed?
-                        };
-                    } else {
-                        return exec_msg;
+                        payload: MessagePayload::Ignore,
                     }
+                    .clone();
                 }
 
-                NetworkMessage {
+                let exec_msg = NetworkMessage {
                     sender: self.node.clone(),
-                    payload: MessagePayload::Ignore, // TODO: Use custom learn-ack type? Needed?
+                    payload: MessagePayload::Executed(executed),
+                };
+
+                if self.config.is_event_driven {
+                    network::send_message_forget(&self.proposers, &exec_msg);
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Ignore,
+                    }
+                } else {
+                    exec_msg
                 }
             }
 

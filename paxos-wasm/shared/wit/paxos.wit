@@ -161,6 +161,8 @@ interface paxos-coordinator {
 
         submit-client-request: func(request: value) -> bool;
 
+        is-leader: func() -> bool;
+
         failure-service: func();
 
         run-paxos-loop: func() -> option<list<client-response>>;
@@ -191,7 +193,7 @@ interface logger {
 /// THIS IS FOR THE MODULAR GRPC MODEL ///
 
 interface proposer-agent {
-    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn};
+    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn, executed};
     use proposer-types.{prepare-result, accept-result, proposal-status};
     use network-types.{network-message};
 
@@ -213,8 +215,6 @@ interface proposer-agent {
         get-current-slot: func() -> slot;
 
         get-current-ballot: func() -> ballot;
-
-        get-current-adu: func() -> slot;
 
         /// Create the next proposal using the core proposer (if any)
         create-proposal: func() -> option<proposal>;
@@ -243,6 +243,11 @@ interface proposer-agent {
 
         /// Up to "batch_size" client‐responses queued for sending.
         collect-client-responses: func() -> list<client-response>;
+
+        // Process the Executed from learners, and synchronously returns the created client responses 
+        process-executed: func(executed: executed) -> list<client-response>;
+
+        retry-learn: func(slot: slot);
 
         /// Handles incoming network messages relevant to the proposer.
         handle-message: func(message: network-message) -> network-message;

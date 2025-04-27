@@ -64,6 +64,8 @@ impl GuestLearnerResource for MyLearnerResource {
         self.next_to_execute.get()
     }
 
+    // TODO: Take into account the client-id and client_seq when executing, and not just the slot
+
     /// Record that a value has been learned for a given slot.
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
     /// Can only execute consecutive slots starting from the next_to_execute slot.

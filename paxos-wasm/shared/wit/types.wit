@@ -2,6 +2,7 @@ interface paxos-types {
     record run-config {
         is-event-driven: bool,          // Toggles the fire-and-forget or the waiting and handling of messages synchronously.
         acceptors-send-learns: bool,    // Toggle if the leader proposer or the acceptors should send the learns to the learners.
+        learners-send-executed: bool,    // Toggle if the learners should send the executed message to all proposers or not.
         prepare-timeout: u64,           // The timeout period before trying a new prepare-phase in ms e.g., 5000 for 5 seconds.
         demo-client: bool,              // Enables a simulated demo client by creating client requests at an interval in the respective server.
         // ... Add more?
@@ -209,7 +210,7 @@ interface acceptor-types {
 }
 
 interface learner-types {
-    use paxos-types.{slot, value};
+    use paxos-types.{slot, value, learn, accept};
 
     variant learn-result {
         execute(list<learned-entry>),

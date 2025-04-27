@@ -19,8 +19,8 @@ use bindings::exports::paxos::default::proposer_agent::{
 };
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, Ballot, ClientResponse, Learn, Node, PaxosPhase, PaxosRole, Prepare, Promise,
-    Proposal, RunConfig, Slot, Value,
+    Accept, Accepted, Ballot, ClientResponse, Executed, Learn, Node, PaxosPhase, PaxosRole,
+    Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{
@@ -470,10 +470,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         self.proposer.get_current_ballot()
     }
 
-    fn get_current_adu(&self) -> Slot {
-        self.adu.get()
-    }
-
     fn get_proposal_by_status(&self, slot: Slot, ps: ProposalStatus) -> Option<Proposal> {
         self.proposer.get_proposal_by_status(slot, ps)
     }
@@ -621,6 +617,83 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         out
     }
 
+    fn process_executed(&self, executed: Executed) -> Vec<ClientResponse> {
+        if executed.adu > self.adu.get() {
+            self.adu.set(executed.adu);
+        }
+
+        if !self.proposer.is_leader() {
+            logger::log_debug(
+                "[Proposer Agent] Executed received but not a leader; skipping client-response.",
+            );
+            return Vec::new();
+        }
+
+        let mut out = Vec::new();
+        for r in &executed.results {
+            let _ = self.mark_proposal_finalized(r.slot);
+
+            let resp = ClientResponse {
+                client_id: r.value.client_id.clone(),
+                client_seq: r.value.client_seq,
+                success: true,
+                command_result: r.cmd_result.clone(),
+            };
+
+            logger::log_debug(&format!(
+                "[Proposer Agent] Created ClientResponse for slot {}",
+                r.slot
+            ));
+
+            // TODO: Needed?
+            if !out.contains(&resp) {
+                out.push(resp);
+            }
+        }
+
+        out
+    }
+
+    fn retry_learn(&self, slot: Slot) {
+        // if it’s already been chosen/commit‐pending, just resend the Learn
+        if let Some(chosen) = self.get_proposal_by_status(slot, ProposalStatus::CommitPending) {
+            let learn = Learn {
+                slot,
+                value: chosen.value.clone(),
+            };
+            logger::log_warn(&format!(
+                "[Proposer Agent] Retrying LEARN for slot {} → {:?}",
+                slot, learn.value
+            ));
+            self.broadcast_learn(learn);
+            return;
+        }
+
+        // otherwise if it’s still in flight, resend the Accept
+        if let Some(in_flight) = self.get_proposal_by_status(slot, ProposalStatus::InFlight) {
+            let accept = Accept {
+                slot: in_flight.slot,
+                ballot: in_flight.ballot,
+                value: in_flight.value.clone(),
+            };
+            logger::log_warn(&format!(
+                "[Proposer Agent] Retrying ACCEPT for slot {} → {:?}",
+                slot, accept.value
+            ));
+            // we can either call our accept_phase helper or simply fire-and-forget:
+            let _ = self.accept_phase(accept.value, accept.slot, accept.ballot, vec![]);
+            return;
+        }
+
+        // TODO: Handle the case where a proposal has the Chosen status?
+        // TODO: Meaning it was never retrieved by the reserve_next_chosen_proposal function and therefore never sent to learners.
+        // Nothing known to retry
+        logger::log_warn(&format!(
+            "[Proposer Agent] No in-flight or commit-pending proposal for slot {}; nothing to retry",
+            slot
+        ));
+    }
+
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
         logger::log_debug(&format!(
             "[Proposer Agent] Received network message: {:?}",
@@ -695,96 +768,26 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Heartbeat(response_payload),
                 }
             }
-            MessagePayload::RetryLearn(payload) => {
+            MessagePayload::RetryLearn(slot) => {
                 logger::log_warn(&format!(
                     "[Proposer Agent] Handling LEARN RETRY: slots={:?}",
-                    payload
+                    slot
                 ));
-
                 if !self.proposer.is_leader() {
                     logger::log_warn(&format!(
                         "[Proposer Agent] RetryLearn for slots {:?} received but not a leader. Ignoring",
-                        payload
-                    ));
-                    return NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::Ignore,
-                    };
-                }
-
-                // 1 of 3 reasons:
-                // 1. We have chosen it, the learn message did not reach the learners
-                // 2. It is still in flight, could be that this specific proposal did not reach the acceptors
-                if let Some(chosen_proposal) = self
-                    .proposer
-                    .get_proposal_by_status(payload, ProposalStatus::Chosen)
-                {
-                    // We have accepted it, just broadcast it to the learners
-                    let learn = Learn {
-                        slot: payload,
-                        value: chosen_proposal.value.clone(),
-                    };
-                    self.broadcast_learn(learn);
-                    logger::log_warn(&format!(
-                        "[Proposer Agent] Retrying learn for chosen proposal: slot={}, value={:?}",
-                        payload, chosen_proposal.value
+                        slot
                     ));
                 } else {
-                    // It is still in flight, maybe something went wrong. Broadcast accept message
-                    // SHOULD ALWAYS BE A MISSING PROPOSAL WHEN THIS HAPPENS
-                    if let Some(missing_proposal) = self
-                        .proposer
-                        .get_proposal_by_status(payload, ProposalStatus::InFlight)
-                    {
-                        let _ = self.accept_phase(
-                            missing_proposal.value,
-                            missing_proposal.slot,
-                            missing_proposal.ballot,
-                            vec![],
-                        );
-                        logger::log_warn(&format!(
-                            "[Proposer Agent] Retrying learn for missing proposal: slot={}",
-                            payload
-                        ));
-                    }
+                    self.retry_learn(slot);
                 }
-
                 NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore,
                 }
             }
             MessagePayload::Executed(executed) => {
-                if executed.adu > self.get_current_adu() {
-                    self.adu.set(executed.adu);
-                }
-
-                if !self.proposer.is_leader() {
-                    logger::log_debug(
-                        "[Proposer Agent] Executed received but not a leader. Not handling ClientResponse.",
-                    );
-                } else {
-                    let mut client_responses = self.client_responses.borrow_mut();
-                    for res in executed.results {
-                        self.mark_proposal_finalized(res.slot);
-
-                        let response = ClientResponse {
-                            client_id: res.value.client_id.clone(),
-                            client_seq: res.value.client_seq,
-                            success: true,
-                            command_result: res.cmd_result.clone(),
-                        };
-
-                        logger::log_debug(&format!(
-                            "[Proposer Agent] Enqueuing ClientResponse for slot {}",
-                            res.slot
-                        ));
-
-                        if !client_responses.contains(&response) {
-                            client_responses.push_back(response);
-                        }
-                    }
-                }
+                _ = self.process_executed(executed);
 
                 NetworkMessage {
                     sender: self.node.clone(),
