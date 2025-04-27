@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,10 +20,10 @@ use bindings::exports::paxos::default::learner_agent::{
 
 use bindings::paxos::default::kv_store::KvStoreResource;
 use bindings::paxos::default::learner::LearnerResource;
-use bindings::paxos::default::learner_types::{LearnResult, LearnerState};
+use bindings::paxos::default::learner_types::{LearnResult, LearnerState, RetryLearnResult};
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Executed, KvPair, Node, PaxosRole, RunConfig, Slot, Value,
+    ExecuteResult, Executed, KvPair, Node, PaxosRole, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::{logger, network};
 
@@ -43,6 +43,7 @@ pub struct MyLearnerAgentResource {
     kv_store: Arc<KvStoreResource>,
 
     retries: RefCell<HashMap<Slot, Instant>>,
+    retry_interval: Duration,
 }
 
 impl MyLearnerAgentResource {
@@ -83,6 +84,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         //     .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
         //     .collect();
 
+        let retry_interval = Duration::from_millis(500); // TODO: Get from config
+
         logger::log_info("[Learner Agent] Initialized core acceptor resource.");
         Self {
             config,
@@ -92,6 +95,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             learner,
             kv_store,
             retries: RefCell::new(HashMap::new()),
+            retry_interval: retry_interval,
         }
     }
 
@@ -103,47 +107,68 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         (learner_state, kv_store_state)
     }
 
-    fn learn_and_execute(&self, slot: Slot, value: Value) -> Vec<Executed> {
-        match self.learner.learn(slot, &value) {
-            LearnResult::Execute(learns) => learns
-                .into_iter()
-                .map(|le| {
-                    let res = self.kv_store.apply(&le.value.command);
-                    Executed {
-                        value: le.value.clone(),
-                        slot: le.slot,
-                        success: true,
-                        cmd_result: res,
-                    }
-                })
-                .collect(),
-            LearnResult::Ignore => Vec::new(),
+    fn get_next_to_execute(&self) -> Slot {
+        self.learner.get_next_to_execute()
+    }
+
+    fn learn_and_execute(&self, slot: Slot, value: Value) -> Executed {
+        let mut execs: Vec<ExecuteResult> = Vec::new();
+        if let LearnResult::Execute(learns) = self.learner.learn(slot, &value) {
+            for le in learns {
+                let res = self.kv_store.apply(&le.value.command);
+                execs.push(ExecuteResult {
+                    value: le.value.clone(),
+                    slot: le.slot,
+                    success: true,
+                    cmd_result: res,
+                });
+            }
+        }
+
+        let adu = self.learner.get_next_to_execute() - 1;
+
+        Executed {
+            results: execs,
+            adu,
+        }
+    }
+
+    fn evaluate_retry(&self) -> RetryLearnResult {
+        match self.learner.check_for_gap() {
+            None => RetryLearnResult::NoGap,
+
+            Some(slot) => {
+                if self.possible_retry(slot, self.retry_interval) {
+                    RetryLearnResult::Retry(slot)
+                } else {
+                    RetryLearnResult::Skip(slot)
+                }
+            }
         }
     }
 
     // Ticker called from host at a slower interval than proposer ticker
-    fn run_paxos_loop(&self) -> () {
-        if let Some(missing_slot) = self.learner.check_for_gap() {
-            let retry_interval = Duration::from_millis(500);
-            match self.possible_retry(missing_slot, retry_interval) {
-                true => {
-                    let retry = NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::RetryLearn(missing_slot),
-                    };
-                    logger::log_warn(&format!(
-                        "[Learner Agent] Retrying LEARN for slot {}",
-                        missing_slot
-                    ));
+    fn run_paxos_loop(&self) {
+        match self.evaluate_retry() {
+            RetryLearnResult::NoGap => {
+                // nothing to do
+            }
 
-                    network::send_message_forget(&self.proposers, &retry);
-                }
-                false => {
-                    logger::log_debug(&format!(
-                        "[Learner Agent] Skipping retry for slot {}",
-                        missing_slot
-                    ));
-                }
+            RetryLearnResult::Skip(slot) => {
+                logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
+            }
+
+            //* Assume event driven here */
+            RetryLearnResult::Retry(slot) => {
+                let retry_msg = NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::RetryLearn(slot),
+                };
+                logger::log_warn(&format!(
+                    "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
+                    slot
+                ));
+                network::send_message_forget(&self.proposers, &retry_msg);
             }
         }
     }
@@ -156,12 +181,12 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload.slot, payload.value
                 ));
 
-                let executed_entries = self.learn_and_execute(payload.slot, payload.value.clone());
+                let executed = self.learn_and_execute(payload.slot, payload.value.clone());
 
-                if !executed_entries.is_empty() {
+                if !executed.results.is_empty() {
                     let exec_msg = NetworkMessage {
                         sender: self.node.clone(),
-                        payload: MessagePayload::Executed(executed_entries),
+                        payload: MessagePayload::Executed(executed),
                     };
 
                     let broadcast_and_ignore =

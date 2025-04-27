@@ -12,8 +12,8 @@ use bindings::exports::paxos::default::serializer::Guest;
 // use bindings::paxos::default::logger;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, ClientResponse, Executed, KvPair, Learn, Node, Operation, PValue, PaxosRole,
-    Prepare, Promise, Value,
+    Accept, Accepted, ClientResponse, ExecuteResult, Executed, KvPair, Learn, Node, Operation,
+    PValue, PaxosRole, Prepare, Promise, Value,
 };
 
 /// Helper function that attempts to deserialize and returns a Result.
@@ -59,7 +59,7 @@ fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     let sender =
         deserialize_node(sender_str).map_err(|_| "Failed to deserialize node".to_string())?;
     let payload = deserialize_message_payload(payload_str)
-        .map_err(|_| "Failed to deserialize payload".to_string())?;
+        .map_err(|e| format!("Failed to deserialize payload: {}", e))?;
 
     Ok(NetworkMessage { sender, payload })
 }
@@ -150,11 +150,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
         MessagePayload::Ignore => "ignore".into(),
         MessagePayload::ClientRequest(cr) => {
             let v = &cr; // TODO: Change back to ClientRequest if needed.
-            // Operation::fmt will give e.g. "get:key" or "none"
-            let op = match &v.command {
-                Some(op) => format!("{:?}", op),
-                None => "none".into(),
-            };
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
             format!(
                 "client-request,client_id:{},client_seq:{},op:{}",
                 v.client_id, v.client_seq, op
@@ -180,19 +179,20 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 .iter()
                 .map(|pv| {
                     // unwrap the Option<Value> inside the p-value
-                    let (cid, cseq, op_str) = if let Some(v) = &pv.value {
-                        let op_str = match &v.command {
-                            Some(op) => format!("{:?}", op),
-                            None => "none".into(),
-                        };
-                        (v.client_id.clone(), v.client_seq, op_str)
+                    let (cid, cseq, op) = if let Some(v) = &pv.value {
+                        let op = v
+                            .command
+                            .as_ref()
+                            .map_or("none".into(), |o| serialize_operation(o));
+
+                        (v.client_id.clone(), v.client_seq, op)
                     } else {
                         // no prior accepted value
                         ("unknown".into(), 0, "none".into())
                     };
                     format!(
                         "slot:{},ballot:{},client_id:{},client_seq:{},op:{}",
-                        pv.slot, pv.ballot, cid, cseq, op_str
+                        pv.slot, pv.ballot, cid, cseq, op
                     )
                 })
                 .collect::<Vec<_>>()
@@ -211,10 +211,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
         }
         MessagePayload::Accept(a) => {
             let v = &a.value;
-            let op = match &v.command {
-                Some(op) => format!("{:?}", op),
-                None => "none".into(),
-            };
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
             format!(
                 "accept,slot:{},ballot:{},client_id:{},client_seq:{},op:{}",
                 a.slot, a.ballot, v.client_id, v.client_seq, op
@@ -228,10 +228,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
         }
         MessagePayload::Learn(l) => {
             let v = &l.value;
-            let op = match &v.command {
-                Some(op) => format!("{:?}", op),
-                None => "none".into(),
-            };
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
             format!(
                 "learn,slot:{},client_id:{},client_seq:{},op:{}",
                 l.slot, v.client_id, v.client_seq, op
@@ -242,20 +242,31 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
         }
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
-        MessagePayload::Executed(e) => {
-            let v = &e.value;
-            let op = match &v.command {
-                Some(op) => format!("{:?}", op),
-                None => "none".into(),
-            };
-            let res = match &e.cmd_result {
-                Some(r) => r.clone(),
-                None => "none".into(),
-            };
-            format!(
-                "executed,slot:{},client_id:{},client_seq:{},op:{},success:{},result:{}",
-                e.slot, v.client_id, v.client_seq, op, e.success, res
-            )
+        MessagePayload::Executed(exec) => {
+            // Serialize each individual ExecuteResult as
+            // "slot:<slot>,client_id:<id>,client_seq:<seq>,op:<op>,success:<bool>,result:<res>"
+            let entries = exec
+                .results
+                .iter()
+                .map(|r| {
+                    let v = &r.value;
+                    let op = v
+                        .command
+                        .as_ref()
+                        .map_or("none".into(), |o| serialize_operation(o));
+                    let cmd_res = match &r.cmd_result {
+                        Some(res) => res.clone(),
+                        None => "none".into(),
+                    };
+                    format!(
+                        "slot:{},client_id:{},client_seq:{},op:{},success:{},result:{}",
+                        r.slot, v.client_id, v.client_seq, op, r.success, cmd_res
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+
+            format!("executed,adu:{},results:[{}]", exec.adu, entries)
         }
     }
 }
@@ -266,6 +277,10 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
     if parts.is_empty() {
         return Err("empty payload");
     }
+    // logger::log_debug(&format!(
+    //     "[Serializer] Message payload to deserialize: {}",
+    //     s
+    // ));
     match parts[0] {
         "ignore" => Ok(MessagePayload::Ignore),
         "client-request" => {
@@ -286,7 +301,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                     None
                 } else {
                     // parse Operation from its Debug string
-                    Some(parse_operation(&op).map_err(|_| "bad op")?)
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
                 };
                 let v = Value {
                     command: cmd,
@@ -402,7 +417,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                         let val = if opstr == "none" {
                             None
                         } else {
-                            let oper = parse_operation(&opstr)
+                            let oper = deserialize_operation(&opstr)
                                 .map_err(|_| "bad op in promise.accepted")?;
                             Some(Value {
                                 command: Some(oper),
@@ -453,7 +468,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                 let cmd = if op == "none" {
                     None
                 } else {
-                    Some(parse_operation(&op).map_err(|_| "bad op")?)
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
                 };
                 let v = Value {
                     command: cmd,
@@ -513,7 +528,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                 let cmd = if op == "none" {
                     None
                 } else {
-                    Some(parse_operation(&op).map_err(|_| "bad op")?)
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
                 };
                 let v = Value {
                     command: cmd,
@@ -560,50 +575,106 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
         }
 
         "executed" => {
-            let mut slot = None;
-            let mut client_id = None;
-            let mut client_seq = None;
-            let mut op = None;
-            let mut success = None;
-            let mut result = None;
-            for p in &parts[1..] {
-                let mut kv = p.splitn(2, ':');
-                match (kv.next(), kv.next()) {
-                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
-                    (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
-                    (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
-                    (Some("op"), Some(v)) => op = Some(v.to_string()),
-                    (Some("success"), Some(v)) => success = v.parse().ok(),
-                    (Some("result"), Some(v)) => result = Some(v.to_string()),
-                    _ => {}
+            // full raw payload string
+            let raw = s;
+
+            // 1) Split off the results list if present
+            let (hdr, list_str_opt) = if let Some(start) = raw.find("results:[") {
+                let hdr = &raw[..start]; // e.g. "executed,adu:5,"
+                let inner_start = start + "results:[".len();
+                let inner_end = raw[inner_start..]
+                    .find(']')
+                    .ok_or("malformed executed results list")?
+                    + inner_start;
+                let list = &raw[inner_start..inner_end]; // e.g. "slot:3,client_id:7,...|slot:4,..."
+                (hdr, Some(list))
+            } else {
+                (raw, None)
+            };
+
+            // 2) Parse the ADU from the header
+            let mut adu: Option<u64> = None;
+            for part in hdr.split(',').skip(1) {
+                let mut kv = part.splitn(2, ':');
+                if let (Some("adu"), Some(v)) = (kv.next(), kv.next()) {
+                    adu = v.parse().ok();
                 }
             }
-            if let (Some(s), Some(cid), Some(cseq), Some(op), Some(succ), Some(res)) =
-                (slot, client_id, client_seq, op, success, result)
-            {
-                let cmd = if op == "none" {
-                    None
-                } else {
-                    Some(parse_operation(&op).map_err(|_| "bad op")?)
-                };
-                let cmd_res = if res == "none" { None } else { Some(res) };
-                let v = Value {
-                    command: cmd,
-                    client_id: cid,
-                    client_seq: cseq,
-                };
-                Ok(MessagePayload::Executed(Executed {
-                    value: v,
-                    slot: s,
-                    success: succ,
-                    cmd_result: cmd_res,
-                }))
+
+            // 3) Parse each execute-result entry
+            let mut results = Vec::new();
+            if let Some(list_str) = list_str_opt {
+                for entry in list_str.split('|') {
+                    let mut slot = None;
+                    let mut client_id = None;
+                    let mut client_seq = None;
+                    let mut op_str = None;
+                    let mut success = None;
+                    let mut res_str = None;
+
+                    for field in entry.split(',') {
+                        let mut kv = field.splitn(2, ':');
+                        match (kv.next(), kv.next()) {
+                            (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                            (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
+                            (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                            (Some("op"), Some(v)) => op_str = Some(v.to_string()),
+                            (Some("success"), Some(v)) => success = v.parse().ok(),
+                            (Some("result"), Some(v)) => res_str = Some(v.to_string()),
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(s), Some(cid), Some(cseq), Some(op_s), Some(suc), Some(res_s)) =
+                        (slot, client_id, client_seq, op_str, success, res_str)
+                    {
+                        // parse the operation
+                        let cmd = if op_s == "none" {
+                            None
+                        } else {
+                            Some(deserialize_operation(&op_s).map_err(|_| "bad op")?)
+                        };
+                        // parse the command result
+                        let cmd_res = if res_s == "none" { None } else { Some(res_s) };
+
+                        let val = Value {
+                            command: cmd,
+                            client_id: cid,
+                            client_seq: cseq,
+                        };
+
+                        results.push(ExecuteResult {
+                            value: val,
+                            slot: s,
+                            success: suc,
+                            cmd_result: cmd_res,
+                        });
+                    }
+                }
+            }
+
+            // 4) Construct the final Executed record
+            if let Some(adu) = adu {
+                Ok(MessagePayload::Executed(Executed { results, adu }))
             } else {
-                Err("bad executed")
+                Err("bad executed payload")
             }
         }
 
         _ => Err("unknown payload"),
+    }
+}
+
+/// Turn an Operation into exactly the string your parser can read back.
+fn serialize_operation(op: &Operation) -> String {
+    match op {
+        Operation::Get(key) => format!("get(\"{}\")", key),
+        Operation::Remove(key) => format!("remove(\"{}\")", key),
+        Operation::Set(KvPair { key, value }) => {
+            format!("set(\"{}\",\"{}\")", key, value)
+        }
+        Operation::Clear => "clear".into(),
+        Operation::Demo => "demo".into(),
     }
 }
 
@@ -613,7 +684,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
 ///  - remove("foo")
 ///  - clear
 ///  - demo
-fn parse_operation(op_str: &str) -> Result<Operation, &'static str> {
+fn deserialize_operation(op_str: &str) -> Result<Operation, &'static str> {
     if op_str == "none" {
         return Err("none");
     }

@@ -94,7 +94,7 @@ impl Agent {
                 let response = agent.run_paxos_loop();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
-                        logger::log_error(&format!("[TCP Server] Paxos response: {:?}", resp));
+                        logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
                     }
                 }
                 response.clone()

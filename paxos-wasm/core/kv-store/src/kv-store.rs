@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-pub mod bindings {
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "kv-store-world",
@@ -15,14 +15,14 @@ use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{Cmd, CmdResult, KvKey, KvPair, KvValue, Operation};
 
 /// The concrete type for our WASM component.
-pub struct MyKvStore;
+struct MyKvStore;
 
 impl Guest for MyKvStore {
     type KvStoreResource = MyKvStoreResource;
 }
 
 /// The key/value resource that maintains both current state and an operation history.
-pub struct MyKvStoreResource {
+struct MyKvStoreResource {
     store: RefCell<HashMap<KvKey, KvValue>>,
     history: RefCell<Vec<Cmd>>,
 }

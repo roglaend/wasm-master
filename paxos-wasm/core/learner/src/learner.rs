@@ -1,9 +1,7 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-pub mod bindings {
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "learner-world",
@@ -19,7 +17,7 @@ use crate::bindings::exports::paxos::default::learner::{
 };
 use crate::bindings::paxos::default::logger;
 
-pub struct MyLearner;
+struct MyLearner;
 
 impl Guest for MyLearner {
     type LearnerResource = MyLearnerResource;
@@ -27,7 +25,7 @@ impl Guest for MyLearner {
 
 /// Our learner now uses a BTreeMap to store learned values per slot.
 /// This ensures that each slot only has one learned value and that the entries remain ordered.
-pub struct MyLearnerResource {
+struct MyLearnerResource {
     learned: RefCell<BTreeMap<Slot, Value>>,
     next_to_execute: Cell<Slot>,
     execution_log: RefCell<BTreeMap<Slot, Value>>,
@@ -62,12 +60,16 @@ impl GuestLearnerResource for MyLearnerResource {
         }
     }
 
+    fn get_next_to_execute(&self) -> Slot {
+        self.next_to_execute.get()
+    }
+
     /// Record that a value has been learned for a given slot.
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
     /// Can only execute consecutive slots starting from the next_to_execute slot.
     fn learn(&self, slot: Slot, value: Value) -> LearnResult {
         let mut learned_map = self.learned.borrow_mut();
-        let mut next_to_execute = self.next_to_execute.get();
+        let mut next_to_execute = self.get_next_to_execute();
         let mut execution_log = self.execution_log.borrow_mut();
 
         // Insert learn if have not learned yet

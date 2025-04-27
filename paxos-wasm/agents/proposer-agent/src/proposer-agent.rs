@@ -22,7 +22,7 @@ use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientResponse, Learn, Node, PaxosPhase, PaxosRole, Prepare, Promise,
     Proposal, RunConfig, Slot, Value,
 };
-use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult};
+use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{
     failure_detector::FailureDetectorResource, logger, network, proposer::ProposerResource,
 };
@@ -267,20 +267,6 @@ impl MyProposerAgentResource {
         }
     }
 
-    fn broadcast_learn(&self, learn: Learn) {
-        let msg = NetworkMessage {
-            sender: self.node.clone(),
-            payload: MessagePayload::Learn(learn.clone()),
-        };
-
-        logger::log_info(&format!(
-            "[Proposer Agent] Broadcasting LEARN: slot={}, ballot={:?}.",
-            learn.slot, learn.value
-        ));
-
-        network::send_message_forget(&self.learners, &msg);
-    }
-
     /// Handles the result of processing prepare responses.
     fn handle_prepare_result(&self, ballot: Ballot, prepare_result: PrepareResult) {
         match prepare_result {
@@ -323,12 +309,7 @@ impl MyProposerAgentResource {
                     "[Proposer Agent] Accept outcome for slot {}: {} acceptances received.",
                     slot, accepted_count
                 ));
-                // if self.config.acceptors_send_learns {
-                // self.in_flight_accepted
-                //     .borrow_mut()
-                //     .remove(&slot);
-                self.finalize_proposal(slot);
-                // }
+                self.mark_proposal_chosen(slot);
             }
             AcceptResult::QuorumFailure => {
                 let total = self.acceptors.len();
@@ -359,6 +340,43 @@ impl MyProposerAgentResource {
             AcceptResult::IsEventDriven => {
                 logger::log_warn("[Proposer Agent] Received IsEventDriven in accept phase.");
             }
+        }
+    }
+
+    // TODO: Decouple the steps inside more to be able to balance better.
+    fn accept_commit(&self) -> Option<Vec<ClientResponse>> {
+        for prop in self.proposals_to_accept() {
+            let accept_result = self.accept_phase(
+                prop.value.clone(),
+                prop.slot,
+                prop.ballot,
+                vec![], // no initial accepts
+            );
+            if let AcceptResult::IsEventDriven = accept_result {
+                // OK, keep going
+            } else {
+                logger::log_error("[Proposer Agent] Run loop is only supporting event driven.");
+                panic!("accept_commit only supports event-driven accepts");
+            }
+        }
+
+        for learn in self.learns_to_commit() {
+            self.broadcast_learn(learn);
+        }
+
+        let mut client_responses = Vec::new();
+        for resp in self.collect_client_responses() {
+            logger::log_info(&format!(
+                "[Proposer Agent] Client response to send back: {:?}",
+                resp
+            ));
+            client_responses.push(resp);
+        }
+
+        if client_responses.is_empty() {
+            None
+        } else {
+            Some(client_responses)
         }
     }
 }
@@ -452,17 +470,16 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         self.proposer.get_current_ballot()
     }
 
-    fn get_in_flight_proposal(&self, slot: Slot) -> Option<Proposal> {
-        self.proposer.get_in_flight_proposal(slot)
+    fn get_current_adu(&self) -> Slot {
+        self.adu.get()
     }
 
-    /// Retrieves the proposal for the given slot from the core proposer, if available.
-    fn get_accepted_proposal(&self, slot: u64) -> Option<Proposal> {
-        self.proposer.get_accepted_proposal(slot)
+    fn get_proposal_by_status(&self, slot: Slot, ps: ProposalStatus) -> Option<Proposal> {
+        self.proposer.get_proposal_by_status(slot, ps)
     }
 
-    fn get_some_accepted_proposal(&self) -> Option<Proposal> {
-        self.proposer.get_some_accepted_proposal()
+    fn reserve_next_chosen_proposal(&self) -> Option<Proposal> {
+        self.proposer.reserve_next_chosen_proposal()
     }
 
     /// Creates a new proposal using the core proposer.
@@ -542,75 +559,66 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         }
     }
 
-    fn commit_phase(&self, learn: Learn) {
-        self.broadcast_learn(learn);
+    fn broadcast_learn(&self, learn: Learn) {
+        let msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Learn(learn.clone()),
+        };
+
+        logger::log_info(&format!(
+            "[Proposer Agent] Broadcasting LEARN to learners: slot={}, value={:?}.",
+            learn.slot, learn.value
+        ));
+
+        network::send_message_forget(&self.learners, &msg);
     }
 
-    fn finalize_proposal(&self, slot: u64) -> Option<Value> {
-        let result = self.proposer.finalize_proposal(slot);
-        match &result {
-            Some(chosen_value) => {
-                logger::log_debug(&format!(
-                    "[Proposer Agent] Finalized proposal for slot {} with chosen value {:?}.",
-                    slot, chosen_value
-                ));
-            }
-            None => {
-                logger::log_error(&format!(
-                    "[Proposer Agent] Failed to finalize proposal for slot {}.",
-                    slot
-                ));
-            }
-        }
-        result
+    fn mark_proposal_chosen(&self, slot: Slot) -> Option<Value> {
+        self.proposer.mark_proposal_chosen(slot)
     }
 
-    fn accept_commit(&self) -> Option<Vec<ClientResponse>> {
-        for _i in 0..self.batch_size {
-            if let Some(proposal) = self.create_proposal() {
-                let accept_result =
-                    self.accept_phase(proposal.value, proposal.slot, proposal.ballot, vec![]);
-                if let AcceptResult::IsEventDriven = accept_result {
-                    // Continue in event-driven mode.
-                } else {
-                    logger::log_error("[Proposer Agent] Run loop is only supporting event driven.");
-                    panic!("Lol");
-                }
-            } else {
-                break;
-            }
-        }
+    fn mark_proposal_finalized(&self, slot: Slot) -> Option<Value> {
+        self.proposer.mark_proposal_finalized(slot)
+    }
 
-        // Always check commit phase
-        for _i in 0..self.batch_size {
-            if let Some(accepted_proposal) = self.proposer.get_some_accepted_proposal() {
-                let learn = Learn {
-                    slot: accepted_proposal.slot,
-                    value: accepted_proposal.value.clone(),
-                };
-                self.commit_phase(learn);
+    fn proposals_to_accept(&self) -> Vec<Proposal> {
+        let mut to_accept = Vec::new();
+        for _ in 0..self.batch_size {
+            if let Some(prop) = self.create_proposal() {
+                to_accept.push(prop);
             } else {
                 break;
             }
         }
+        to_accept
+    }
 
-        let mut client_responses = vec![];
-        for _i in 0..self.batch_size {
-            let response = self.client_responses.borrow_mut().pop_front();
-            if let Some(val) = response.clone() {
-                logger::log_info(&format!(
-                    "[Proposer Agent] Client response to send back: {:?}",
-                    val
-                ));
-                client_responses.push(val);
+    fn learns_to_commit(&self) -> Vec<Learn> {
+        let mut learns = Vec::new();
+        for _ in 0..self.batch_size {
+            if let Some(p) = self.reserve_next_chosen_proposal() {
+                learns.push(Learn {
+                    slot: p.slot,
+                    value: p.value.clone(),
+                });
             } else {
                 break;
             }
         }
-        if client_responses.len() > 0 {
-            return Some(client_responses);
+        learns
+    }
+
+    fn collect_client_responses(&self) -> Vec<ClientResponse> {
+        let mut out = Vec::new();
+        let mut queue = self.client_responses.borrow_mut();
+        for _ in 0..self.batch_size {
+            if let Some(resp) = queue.pop_front() {
+                out.push(resp);
+            } else {
+                break;
+            }
         }
-        None
+        out
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -705,23 +713,29 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
 
                 // 1 of 3 reasons:
-                // 1. We have accepted it, the learn message did not reach the learners
+                // 1. We have chosen it, the learn message did not reach the learners
                 // 2. It is still in flight, could be that this specific proposal did not reach the acceptors
-                if let Some(accepted) = self.proposer.get_accepted_proposal(payload) {
+                if let Some(chosen_proposal) = self
+                    .proposer
+                    .get_proposal_by_status(payload, ProposalStatus::Chosen)
+                {
                     // We have accepted it, just broadcast it to the learners
                     let learn = Learn {
                         slot: payload,
-                        value: accepted.value.clone(),
+                        value: chosen_proposal.value.clone(),
                     };
                     self.broadcast_learn(learn);
                     logger::log_warn(&format!(
-                        "[Proposer Agent] Retrying learn for accepted proposal: slot={}, value={:?}",
-                        payload, accepted.value
+                        "[Proposer Agent] Retrying learn for chosen proposal: slot={}, value={:?}",
+                        payload, chosen_proposal.value
                     ));
                 } else {
                     // It is still in flight, maybe something went wrong. Broadcast accept message
                     // SHOULD ALWAYS BE A MISSING PROPOSAL WHEN THIS HAPPENS
-                    if let Some(missing_proposal) = self.proposer.get_in_flight_proposal(payload) {
+                    if let Some(missing_proposal) = self
+                        .proposer
+                        .get_proposal_by_status(payload, ProposalStatus::InFlight)
+                    {
                         let _ = self.accept_phase(
                             missing_proposal.value,
                             missing_proposal.slot,
@@ -740,11 +754,9 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-            MessagePayload::Executed(executed_list) => {
-                if let Some(max_slot) = executed_list.iter().map(|e| e.slot).max() {
-                    if max_slot > self.adu.get() {
-                        self.adu.set(max_slot);
-                    }
+            MessagePayload::Executed(executed) => {
+                if executed.adu > self.get_current_adu() {
+                    self.adu.set(executed.adu);
                 }
 
                 if !self.proposer.is_leader() {
@@ -753,17 +765,19 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     );
                 } else {
                     let mut client_responses = self.client_responses.borrow_mut();
-                    for exec in executed_list {
+                    for res in executed.results {
+                        self.mark_proposal_finalized(res.slot);
+
                         let response = ClientResponse {
-                            client_id: exec.value.client_id.clone(),
-                            client_seq: exec.value.client_seq,
+                            client_id: res.value.client_id.clone(),
+                            client_seq: res.value.client_seq,
                             success: true,
-                            command_result: exec.cmd_result.clone(),
+                            command_result: res.cmd_result.clone(),
                         };
 
                         logger::log_debug(&format!(
                             "[Proposer Agent] Enqueuing ClientResponse for slot {}",
-                            exec.slot
+                            res.slot
                         ));
 
                         if !client_responses.contains(&response) {
@@ -856,9 +870,9 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             // Currently process up to 10 send accept, send learn, respond to client in one tick
             // TODO: Could actually batch here, not send out on at a time but rather a batch of 10
             PaxosPhase::AcceptCommit => {
-                logger::log_debug("[Proposer Agent] Run loop: Running in phase two.");
+                logger::log_debug("[Proposer Agent] Run loop: AcceptCommit phase.");
                 self.accept_commit()
-                //* The event driven design handles the rest, unless we want to move distinguished learner logic here */
+                //* The event driven design handles the rest, unless we want to move distinguished learner logic here. No :) */
             }
             PaxosPhase::Stop => None,  // TODO
             PaxosPhase::Crash => None, // TODO

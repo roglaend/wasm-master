@@ -122,11 +122,16 @@ interface paxos-types {
         value: value,
     }
 
-    record executed {
+    record execute-result {
         value: value,
         slot: slot,
         success: bool,
-        cmd-result: cmd-result
+        cmd-result: cmd-result,
+    }
+
+    record executed {
+        results: list<execute-result>,
+        adu: slot,
     }
 }
 
@@ -134,7 +139,7 @@ interface proposer-types {
     use paxos-types.{slot, ballot, value, client-request, proposal};
 
     /// Result type for the prepare phase.
-    variant prepare-result {
+    enum prepare-result {
         success,                    // Improve?
         quorum-failure,             // Not enough promise responses were received
         is-event-driven,            // We will handle the result later
@@ -148,11 +153,12 @@ interface proposer-types {
         is-event-driven,        // We will handle the result later
     }
 
-    /// Status of a proposal in the Proposer.
-    variant proposal-status {
-        in-flight,                // Phase-1 complete, waiting for accepts
-        accepted(u64),            // Quorum of accepts reached (count)
-        finalized,                // Accepted and ready for Learner
+    /// Status of a proposal in the Proposer-Agent.
+    enum proposal-status {
+        in-flight,         // Phase-1 done, waiting for accepts
+        chosen,            // Quorum of accepts received, now chosen
+        commit-pending,    // Learn sent to learners, waiting execution
+        finalized,         // Executed and ready to reply to client
     }
 
     /// A single proposal plus its current status.
@@ -215,6 +221,12 @@ interface learner-types {
         value: value,
     }
 
+    variant retry-learn-result {
+        no-gap,
+        skip(slot),
+        retry(slot),
+    }
+
     record learner-state {
         learned: list<learned-entry>,
     }
@@ -234,7 +246,7 @@ interface network-types {
         learn(learn),                       // A learn request.
         // learn-ack(learn),                // A learn ack. // TODO: Use or not to use, with custom payload? 
         heartbeat(heartbeat),               // Heartbeat.
-        executed(list<executed>),           // List of executed values.
+        executed(executed),                 // Contains list of executed values and adu.
         retry-learn(slot),                  // Retry learn for missing slot
     }
 
