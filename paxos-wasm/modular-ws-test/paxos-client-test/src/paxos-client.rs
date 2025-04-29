@@ -28,7 +28,6 @@ use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
 use wasi::sockets::tcp_create_socket::create_tcp_socket;
 
-
 /// Create a TCP client socket connected to the given full socket address (e.g. "127.0.0.1:8080").
 fn create_client_socket(
     socket_addr_str: &str,
@@ -55,42 +54,42 @@ fn create_client_socket(
     socket.start_connect(&network, remote_address)?;
     socket.subscribe().block();
     let (input, output) = socket.finish_connect()?;
-    
+
     Ok((socket, input, output))
 }
 
 /// Our TCP client component.
 pub struct PaxosClient;
 
-impl  PaxosClient {
+impl PaxosClient {
     /// Create a new PaxosClient instance.
-    fn read_with_timeout(input: &mut InputStream, timeout: Duration) -> Result<Vec<u8>, &'static str> {
+    fn read_with_timeout(
+        input: &mut InputStream,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, &'static str> {
         // Start the timer.
         let start = std::time::Instant::now();
         // let mut buf = vec![0u8; 1024];
-    
+
         loop {
             match input.read(1024) {
                 Ok(buf) if !buf.is_empty() => {
                     return Ok(buf);
-                },
-                Ok(_) => { /* No data available yet */ },
+                }
+                Ok(_) => { /* No data available yet */ }
                 Err(_) => return Err("Encountered an error while reading"),
             }
-            
+
             // Check if we have exceeded the timeout.
             if start.elapsed() >= timeout {
                 return Err("Read timed out");
             }
-    
+
             // Sleep briefly to avoid a busy loop.
             thread::sleep(Duration::from_millis(5));
         }
     }
-    
 }
-
-
 
 /// Implement the network interface functions.
 impl Guest for PaxosClient {
@@ -108,7 +107,7 @@ impl Guest for PaxosClient {
 
         let message = NetworkMessage {
             sender: node,
-            payload: MessagePayload::ClientRequest(value)
+            payload: MessagePayload::ClientRequest(value),
         };
 
         let msg_bytes = serializer::serialize(&message);
@@ -122,7 +121,7 @@ impl Guest for PaxosClient {
                     println!("Received message: {:?}", net_msg);
 
                     match net_msg.payload {
-                        MessagePayload::Executed(client_response) => {
+                        MessagePayload::ClientResponse(client_response) => {
                             return Some(client_response);
                         }
                         _ => return None,

@@ -13,7 +13,7 @@
 # echo "All clients finished."
 
 NUM_CLIENTS=1
-NUM_REQUESTS=10
+NUM_REQUESTS=500
 DEADLINE=20
 
 pids=()

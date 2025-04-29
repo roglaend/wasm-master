@@ -1,5 +1,5 @@
-use std::env;
 use paxos_wasm_utils::build_helpers::build_and_plug;
+use std::env;
 
 fn main() {
     // Cargo sets PROFILE to "debug" or "release"
@@ -20,8 +20,7 @@ fn main() {
     let plugs = [
         "composed_proposer_agent",
         "composed_acceptor_agent",
-        "learner",
-        "kv_store",
+        "composed_learner_agent",
         "composed_failure_service",
     ];
     let socket = "paxos_coordinator";

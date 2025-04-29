@@ -74,13 +74,13 @@ fn main() {
     // --- Build Agent Components ---
 
     let build_list_agents: &[&str] = &[];
-    let plugs_agents = &["composed_tcp_client"];
+    let plugs = &["composed_tcp_client"];
     let socket_proposer = "composed_proposer_agent";
     let output_proposer = "tcp_composed_proposer_agent";
     build_and_plug(
         target,
         build_list_agents,
-        plugs_agents,
+        plugs,
         socket_proposer,
         output_proposer,
     );
@@ -90,7 +90,7 @@ fn main() {
     build_and_plug(
         target,
         build_list_agents,
-        plugs_agents,
+        plugs,
         socket_acceptor,
         output_acceptor,
     );
@@ -100,7 +100,7 @@ fn main() {
     build_and_plug(
         target,
         build_list_agents,
-        plugs_agents,
+        plugs,
         socket_learner,
         output_learner,
     );
@@ -137,12 +137,17 @@ fn main() {
         output_learner,
     );
 
+    let socket = "composed_paxos_coordinator";
+    let output = "tcp_composed_paxos_coordinator";
+    build_and_plug(target, &[], plugs, socket, output);
+
     // --- Compose the Final Server ---
 
     let plugs_final_tcp = &[
         "tcp_composed_proposer_agent",
         "tcp_composed_acceptor_agent",
         "tcp_composed_learner_agent",
+        "tcp_composed_paxos_coordinator",
     ];
     let socket_final_tcp = "composed_tcp_server";
     let output_final_tcp = "final_composed_tcp_server";
@@ -168,4 +173,22 @@ fn main() {
         socket_final_udp,
         output_final_udp,
     );
+
+    // --- Compose the Coordinator ---
+
+    // let plugs = &["composed_tcp_client"];
+    // let socket = "composed_paxos_coordinator";
+    // let output = "tcp_composed_paxos_coordinator";
+    // build_and_plug(target, &[], plugs, socket, output);
+
+    // let plugs_final_tcp = &["tcp_composed_paxos_coordinator"];
+    // let socket_final_tcp = "composed_tcp_server";
+    // let output_final_tcp = "final_coordinator_composed_tcp_server";
+    // build_and_plug(
+    //     target,
+    //     &[],
+    //     plugs_final_tcp,
+    //     socket_final_tcp,
+    //     output_final_tcp,
+    // );
 }

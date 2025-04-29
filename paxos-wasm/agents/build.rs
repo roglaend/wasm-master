@@ -1,4 +1,4 @@
-use paxos_wasm_utils::build_helpers::{build_and_plug, build_wasm_components};
+use paxos_wasm_utils::build_helpers::build_and_plug;
 use std::env;
 
 fn main() {
@@ -12,25 +12,11 @@ fn main() {
 
     let target_triple = "wasm32-wasip2";
 
-    println!("Building agent crates…");
-    build_wasm_components(
-        target_triple,
-        &[
-            "proposer-agent",
-            "acceptor-agent",
-            "learner-agent",
-            "kv-store-agent",
-        ],
-    );
-    println!("Agents built successfully\n");
-
-    println!("Plugging core components into agents…");
-
     // Build composite proposer agent:
     // Plug "proposer" into "proposer_agent" to yield "temp_composed_proposer_agent".
     build_and_plug(
         target_triple,
-        &[],
+        &["proposer-agent"],
         &["proposer"],
         "proposer_agent",
         "temp_composed_proposer_agent",
@@ -40,7 +26,7 @@ fn main() {
     // Build composite acceptor agent:
     build_and_plug(
         target_triple,
-        &[],
+        &["acceptor-agent"],
         &["acceptor"],
         "acceptor_agent",
         "composed_acceptor_agent",
@@ -50,8 +36,8 @@ fn main() {
     // Build composite learner agent:
     build_and_plug(
         target_triple,
-        &[],
-        &["learner"],
+        &["learner-agent"],
+        &["learner", "kv_store"],
         "learner_agent",
         "composed_learner_agent",
     );

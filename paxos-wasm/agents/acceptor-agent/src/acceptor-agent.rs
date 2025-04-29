@@ -14,7 +14,6 @@ use bindings::exports::paxos::default::acceptor_agent::{
 };
 use bindings::paxos::default::acceptor::AcceptorResource;
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
-use bindings::paxos::default::learner_types::LearnResult;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
@@ -77,7 +76,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     }
 
     // Commit phase: broadcasts a learn message if configured to do so.
-    fn commit_phase(&self, slot: Slot, value: Value) -> Option<LearnResult> {
+    fn commit_phase(&self, slot: Slot, value: Value) -> Option<Learn> {
         if self.config.acceptors_send_learns {
             logger::log_info(&format!(
                 "[Acceptor Agent] Committing proposal: slot={}, value={:?}",
@@ -92,13 +91,10 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
             let learn_msg = NetworkMessage {
                 sender: self.node.clone(),
-                payload: MessagePayload::Learn(learn),
+                payload: MessagePayload::Learn(learn.clone()),
             };
             _ = network::send_message(&vec![], &learn_msg);
-            Some(LearnResult {
-                learned_value: value,
-                quorum: self.learners.len() as u64, // TODO: This needed?
-            })
+            Some(learn)
         } else {
             logger::log_warn(
                 "[Acceptor Agent] Attempted to broadcast learns, but ability not enabled.",

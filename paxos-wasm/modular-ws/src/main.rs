@@ -37,9 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let run_config = RunConfig {
         is_event_driven: config.is_event_driven,
-        acceptors_send_learns: false, // TODO: Hardcoded
-        prepare_timeout: 1000,        // TODO: Hardcoded to 1 sec for now.
-        demo_client: false,
+        acceptors_send_learns: false,  // TODO: Hardcoded
+        learners_send_executed: false, // TODO Hardcoded for now. PLEASE FIX SOMETIME SOON :)
+        prepare_timeout: 1000,         // TODO: Hardcoded to 1 sec for now.
+        demo_client: true,
     };
 
     // Create the Arc<PaxosWasmtime>, making a thread safe reference to the underlying PaxosWasmtime instance

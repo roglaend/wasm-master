@@ -83,21 +83,22 @@ impl PaxosWasmtime {
             .expect("Workspace folder")
             .to_owned();
 
-        // let composed_component = Component::from_file(
-        //     &engine,
-        //     workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
-        // )?;
+        //    let composed_component = Component::from_file(
+        //         &engine,
+        //         workspace_dir.join("target/wasm32-wasip2/release/final_composed_udp_server.wasm"),
+        //     )?;
 
-        // TODO: swap for udp or separate it out into another package.
+        // TODO: Make the component/model swap much better, thankyou :)
 
         let composed_component = Component::from_file(
             &engine,
-            workspace_dir.join("target/wasm32-wasip2/release/final_composed_udp_server.wasm"),
+            workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
         )?;
 
         // let composed_component = Component::from_file(
         //     &engine,
-        //     workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
+        //     workspace_dir
+        //         .join("target/wasm32-wasip2/release/final_coordinator_composed_tcp_server.wasm"),
         // )?;
 
         let final_bindings =

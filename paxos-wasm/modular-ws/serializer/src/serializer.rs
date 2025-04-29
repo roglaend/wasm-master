@@ -12,18 +12,9 @@ use bindings::exports::paxos::default::serializer::Guest;
 // use bindings::paxos::default::logger;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, ClientResponse, Learn, Node, PaxosRole, Prepare, Promise, Value,
+    Accept, Accepted, ClientResponse, ExecuteResult, Executed, KvPair, Learn, Node, Operation,
+    PValue, PaxosRole, Prepare, Promise, Value,
 };
-
-// The default node to use when deserialization fails.
-// Adjust these fields as appropriate.
-fn default_node() -> Node {
-    Node {
-        node_id: 0,
-        address: String::new(),
-        role: PaxosRole::Learner,
-    }
-}
 
 /// Helper function that attempts to deserialize and returns a Result.
 /// If any step fails, an error string is returned.
@@ -68,7 +59,7 @@ fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     let sender =
         deserialize_node(sender_str).map_err(|_| "Failed to deserialize node".to_string())?;
     let payload = deserialize_message_payload(payload_str)
-        .map_err(|_| "Failed to deserialize payload".to_string())?;
+        .map_err(|e| format!("Failed to deserialize payload: {}", e))?;
 
     Ok(NetworkMessage { sender, payload })
 }
@@ -96,13 +87,7 @@ impl Guest for MySerializer {
         match try_deserialize(serialized) {
             Ok(msg) => msg,
             Err(e) => {
-                // logger::log_error(&format!("[TCP Serializer] Deserialization error: {}", e));
-                // Return a dummy message that the server can recognize and ignore.
-                panic!("[TCP Serializer] Deserialization error: {}", e);
-                // NetworkMessage {
-                //     sender: default_node(),
-                //     payload: MessagePayload::Ignore,
-                // }
+                panic!("[Serializer] Deserialization error: {}", e);
             }
         }
     }
@@ -155,23 +140,84 @@ fn deserialize_node(s: &str) -> Result<Node, &'static str> {
             role: r,
         })
     } else {
-        
         Err("Failed to deserialize Node")
     }
 }
 
-/// Serialize MessagePayload.
+/// Serialize a MessagePayload to a simple comma-delimited string.
 fn serialize_message_payload(mp: &MessagePayload) -> String {
     match mp {
         MessagePayload::Ignore => "ignore".into(),
-        MessagePayload::Prepare(p) => format!("prepare,slot:{},ballot:{}", p.slot, p.ballot),
-        MessagePayload::Promise(pr) => format!("promise,slot:{},ballot:{}", pr.slot, pr.ballot),
+        MessagePayload::ClientRequest(cr) => {
+            let v = &cr; // TODO: Change back to ClientRequest if needed.
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
+            format!(
+                "client-request,client_id:{},client_seq:{},op:{}",
+                v.client_id, v.client_seq, op
+            )
+        }
+        MessagePayload::ClientResponse(cr) => {
+            let res = match &cr.command_result {
+                Some(val) => val.clone(),
+                None => "none".into(),
+            };
+            format!(
+                "client-response,client_id:{},client_seq:{},success:{},result:{}",
+                cr.client_id, cr.client_seq, cr.success, res
+            )
+        }
+        MessagePayload::Prepare(p) => {
+            format!("prepare,slot:{},ballot:{}", p.slot, p.ballot)
+        }
+        MessagePayload::Promise(pr) => {
+            // turn each PValue into a mini-record "slot:…,ballot:…,client_id:…,client_seq:…,op:…"
+            let accepted_entries = pr
+                .accepted
+                .iter()
+                .map(|pv| {
+                    // unwrap the Option<Value> inside the p-value
+                    let (cid, cseq, op) = if let Some(v) = &pv.value {
+                        let op = v
+                            .command
+                            .as_ref()
+                            .map_or("none".into(), |o| serialize_operation(o));
+
+                        (v.client_id.clone(), v.client_seq, op)
+                    } else {
+                        // no prior accepted value
+                        ("unknown".into(), 0, "none".into())
+                    };
+                    format!(
+                        "slot:{},ballot:{},client_id:{},client_seq:{},op:{}",
+                        pv.slot, pv.ballot, cid, cseq, op
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+
+            if accepted_entries.is_empty() {
+                // no prior accepts
+                format!("promise,slot:{},ballot:{}", pr.slot, pr.ballot)
+            } else {
+                // embed as a bracketed list
+                format!(
+                    "promise,slot:{},ballot:{},accepted:[{}]",
+                    pr.slot, pr.ballot, accepted_entries
+                )
+            }
+        }
         MessagePayload::Accept(a) => {
             let v = &a.value;
-            let cmd = v.command.clone().unwrap_or_else(|| "none".into());
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
             format!(
-                "accept,slot:{},ballot:{},is_noop:{},command:{},client_id:{},client_seq:{}",
-                a.slot, a.ballot, v.is_noop, cmd, v.client_id, v.client_seq
+                "accept,slot:{},ballot:{},client_id:{},client_seq:{},op:{}",
+                a.slot, a.ballot, v.client_id, v.client_seq, op
             )
         }
         MessagePayload::Accepted(a) => {
@@ -182,33 +228,46 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
         }
         MessagePayload::Learn(l) => {
             let v = &l.value;
-            let cmd = v.command.clone().unwrap_or_else(|| "none".into());
+            let op = v
+                .command
+                .as_ref()
+                .map_or("none".into(), |o| serialize_operation(o));
             format!(
-                "learn,slot:{},is_noop:{},command:{},client_id:{},client_seq:{}",
-                l.slot, v.is_noop, cmd, v.client_id, v.client_seq
+                "learn,slot:{},client_id:{},client_seq:{},op:{}",
+                l.slot, v.client_id, v.client_seq, op
             )
         }
         MessagePayload::Heartbeat(h) => {
             let sender_str = serialize_node(&h.sender);
             format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
         }
-        MessagePayload::RetryLearn(id) => format!("retry-learn,{}", id),
-        MessagePayload::Executed(cr) => {
-            let cmd_res = cr.command_result.clone().unwrap_or_else(|| "none".into());
-            format!(
-                "executed,client_id:{},client_seq:{},success:{},command_result:{},slot:{}",
-                cr.client_id, cr.client_seq, cr.success, cmd_res, cr.slot
-            )
+        MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
+        MessagePayload::Executed(exec) => {
+            // Serialize each individual ExecuteResult as
+            // "slot:<slot>,client_id:<id>,client_seq:<seq>,op:<op>,success:<bool>,result:<res>"
+            let entries = exec
+                .results
+                .iter()
+                .map(|r| {
+                    let v = &r.value;
+                    let op = v
+                        .command
+                        .as_ref()
+                        .map_or("none".into(), |o| serialize_operation(o));
+                    let cmd_res = match &r.cmd_result {
+                        Some(res) => res.clone(),
+                        None => "none".into(),
+                    };
+                    format!(
+                        "slot:{},client_id:{},client_seq:{},op:{},success:{},result:{}",
+                        r.slot, v.client_id, v.client_seq, op, r.success, cmd_res
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+
+            format!("executed,adu:{},results:[{}]", exec.adu, entries)
         }
-        MessagePayload::ClientRequest(value) => {
-            let cmd = value.command.clone().unwrap_or_else(|| "none".into());
-            format!(
-                "client-request,client_id:{},client_seq:{},command:{}",
-                value.client_id, value.client_seq, cmd
-            )
-        }
-        _ => "unknown".to_string(),
-        // TODO: Add client request
     }
 }
 
@@ -216,104 +275,226 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
 fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.is_empty() {
-        return Err("Empty payload string");
+        return Err("empty payload");
     }
+    // logger::log_debug(&format!(
+    //     "[Serializer] Message payload to deserialize: {}",
+    //     s
+    // ));
     match parts[0] {
         "ignore" => Ok(MessagePayload::Ignore),
-        "prepare" => {
-            let mut slot: Option<u64> = None;
-            let mut ballot: Option<u64> = None;
+        "client-request" => {
+            let mut client_id = None;
+            let mut client_seq = None;
+            let mut op = None;
             for part in &parts[1..] {
                 let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "slot" => slot = value.parse().ok(),
-                    "ballot" => ballot = value.parse().ok(),
+                match (kv.next(), kv.next()) {
+                    (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
+                    (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                    (Some("op"), Some(v)) => op = Some(v.to_string()),
+                    _ => {}
+                }
+            }
+            if let (Some(cid), Some(cseq), Some(op)) = (client_id, client_seq, op) {
+                let cmd = if op == "none" {
+                    None
+                } else {
+                    // parse Operation from its Debug string
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
+                };
+                let v = Value {
+                    command: cmd,
+                    client_id: cid,
+                    client_seq: cseq,
+                };
+                Ok(MessagePayload::ClientRequest(v)) // TODO: Change back to ClientRequest if needed
+            } else {
+                Err("bad client-request")
+            }
+        }
+        "client-response" => {
+            let mut client_id = None;
+            let mut client_seq = None;
+            let mut success = None;
+            let mut result = None;
+            for part in &parts[1..] {
+                let mut kv = part.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("client_id"), Some(v)) => client_id = Some(v.to_string()),
+                    (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                    (Some("success"), Some(v)) => success = v.parse().ok(),
+                    (Some("result"), Some(v)) => result = Some(v.to_string()),
+                    _ => {}
+                }
+            }
+            if let (Some(cid), Some(cseq), Some(succ), Some(res)) =
+                (client_id, client_seq, success, result)
+            {
+                let cmd_res = if res == "none" { None } else { Some(res) };
+                Ok(MessagePayload::ClientResponse(ClientResponse {
+                    client_id: cid,
+                    client_seq: cseq,
+                    success: succ,
+                    command_result: cmd_res,
+                }))
+            } else {
+                Err("bad client-response")
+            }
+        }
+        "prepare" => {
+            let mut slot = None;
+            let mut ballot = None;
+            for p in &parts[1..] {
+                let mut kv = p.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                    (Some("ballot"), Some(v)) => ballot = v.parse().ok(),
                     _ => {}
                 }
             }
             if let (Some(s), Some(b)) = (slot, ballot) {
                 Ok(MessagePayload::Prepare(Prepare { slot: s, ballot: b }))
             } else {
-                Err("Failed to parse prepare payload")
+                Err("bad prepare")
             }
         }
         "promise" => {
-            let mut slot: Option<u64> = None;
-            let mut ballot: Option<u64> = None;
-            for part in &parts[1..] {
+            // full raw string
+            let raw = s;
+
+            // first, pull out an accepted-list if present
+            let mut accepted = Vec::new();
+            let (hdr, list_str) = if let Some(start) = raw.find("accepted:[") {
+                let hdr = &raw[..start]; // e.g. "promise,slot:5,ballot:10,"
+                let inner_start = start + "accepted:[".len();
+                let inner_end = raw[inner_start..]
+                    .find(']')
+                    .ok_or("malformed promise accepted list")?
+                    + inner_start;
+                let list = &raw[inner_start..inner_end]; // e.g. "slot:3,ballot:8,client_id:7,client_seq:42,op:get(\"foo\")|…"
+                (hdr, Some(list))
+            } else {
+                (raw, None)
+            };
+
+            // parse slot & ballot from the header
+            let mut slot = None;
+            let mut ballot = None;
+            for part in hdr.split(',').skip(1) {
                 let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "slot" => slot = value.parse().ok(),
-                    "ballot" => ballot = value.parse().ok(),
+                match (kv.next(), kv.next()) {
+                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                    (Some("ballot"), Some(v)) => ballot = v.parse().ok(),
                     _ => {}
                 }
             }
+            // if there is an accepted list, parse each `entry1|entry2|…`
+            if let Some(list) = list_str {
+                for entry in list.split('|') {
+                    let mut es = None;
+                    let mut eb = None;
+                    let mut cid = None;
+                    let mut cseq = None;
+                    let mut op = None;
+
+                    for field in entry.split(',') {
+                        let mut kv = field.splitn(2, ':');
+                        match (kv.next(), kv.next()) {
+                            (Some("slot"), Some(v)) => es = v.parse().ok(),
+                            (Some("ballot"), Some(v)) => eb = v.parse().ok(),
+                            (Some("client_id"), Some(v)) => cid = v.parse().ok(),
+                            (Some("client_seq"), Some(v)) => cseq = v.parse().ok(),
+                            (Some("op"), Some(v)) => op = Some(v.to_string()),
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(es), Some(eb), Some(cid), Some(cseq), Some(opstr)) =
+                        (es, eb, cid, cseq, op)
+                    {
+                        // parse the op (or treat `none` as no-value)
+                        let val = if opstr == "none" {
+                            None
+                        } else {
+                            let oper = deserialize_operation(&opstr)
+                                .map_err(|_| "bad op in promise.accepted")?;
+                            Some(Value {
+                                command: Some(oper),
+                                client_id: cid,
+                                client_seq: cseq,
+                            })
+                        };
+
+                        accepted.push(PValue {
+                            slot: es,
+                            ballot: eb,
+                            value: val,
+                        });
+                    }
+                }
+            }
+            // finally, construct the Promise
             if let (Some(s), Some(b)) = (slot, ballot) {
                 Ok(MessagePayload::Promise(Promise {
                     slot: s,
                     ballot: b,
-                    accepted: vec![],
+                    accepted, // possibly empty
                 }))
             } else {
-                Err("Failed to parse promise payload")
+                Err("bad promise")
             }
         }
         "accept" => {
-            let mut slot: Option<u64> = None;
-            let mut ballot: Option<u64> = None;
-            let mut is_noop: Option<bool> = None;
-            let mut command: Option<String> = None;
-            let mut client_id: Option<u64> = None;
-            let mut client_seq: Option<u64> = None;
-            for part in &parts[1..] {
-                let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "slot" => slot = value.parse().ok(),
-                    "ballot" => ballot = value.parse().ok(),
-                    "is_noop" => is_noop = value.parse().ok(),
-                    "command" => command = Some(value.to_string()),
-                    "client_id" => client_id = value.parse().ok(),
-                    "client_seq" => client_seq = value.parse().ok(),
+            let mut slot = None;
+            let mut ballot = None;
+            let mut client_id = None;
+            let mut client_seq = None;
+            let mut op = None;
+            for p in &parts[1..] {
+                let mut kv = p.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                    (Some("ballot"), Some(v)) => ballot = v.parse().ok(),
+                    (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
+                    (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                    (Some("op"), Some(v)) => op = Some(v.to_string()),
                     _ => {}
                 }
             }
-            if let (Some(s), Some(b), Some(noop), Some(cmd), Some(cid), Some(cseq)) =
-                (slot, ballot, is_noop, command, client_id, client_seq)
+            if let (Some(s), Some(b), Some(cid), Some(cseq), Some(op)) =
+                (slot, ballot, client_id, client_seq, op)
             {
-                let val = Value {
-                    is_noop: noop,
-                    command: if cmd == "none" { None } else { Some(cmd) },
+                let cmd = if op == "none" {
+                    None
+                } else {
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
+                };
+                let v = Value {
+                    command: cmd,
                     client_id: cid,
                     client_seq: cseq,
                 };
-                let a = Accept {
+                Ok(MessagePayload::Accept(Accept {
                     slot: s,
                     ballot: b,
-                    value: val,
-                };
-                Ok(MessagePayload::Accept(a))
+                    value: v,
+                }))
             } else {
-                Err("Failed to parse accept payload")
+                Err("bad accept")
             }
         }
+
         "accepted" => {
-            let mut slot: Option<u64> = None;
-            let mut ballot: Option<u64> = None;
-            let mut success: Option<bool> = None;
-            for part in &parts[1..] {
-                let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "slot" => slot = value.parse().ok(),
-                    "ballot" => ballot = value.parse().ok(),
-                    "success" => success = value.parse().ok(),
+            let mut slot = None;
+            let mut ballot = None;
+            let mut success = None;
+            for p in &parts[1..] {
+                let mut kv = p.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                    (Some("ballot"), Some(v)) => ballot = v.parse().ok(),
+                    (Some("success"), Some(v)) => success = v.parse().ok(),
                     _ => {}
                 }
             }
@@ -324,143 +505,226 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                     success: suc,
                 }))
             } else {
-                Err("Failed to parse accepted payload")
+                Err("bad accepted")
             }
         }
+
         "learn" => {
-            let mut slot: Option<u64> = None;
-            let mut is_noop: Option<bool> = None;
-            let mut command: Option<String> = None;
-            let mut client_id: Option<u64> = None;
-            let mut client_seq: Option<u64> = None;
-            for part in &parts[1..] {
-                let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "slot" => slot = value.parse().ok(),
-                    "is_noop" => is_noop = value.parse().ok(),
-                    "command" => command = Some(value.to_string()),
-                    "client_id" => client_id = value.parse().ok(),
-                    "client_seq" => client_seq = value.parse().ok(),
+            let mut slot = None;
+            let mut client_id = None;
+            let mut client_seq = None;
+            let mut op = None;
+            for p in &parts[1..] {
+                let mut kv = p.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                    (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
+                    (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                    (Some("op"), Some(v)) => op = Some(v.to_string()),
                     _ => {}
                 }
             }
-            if let (Some(s), Some(noop), Some(cmd), Some(cid), Some(cseq)) =
-                (slot, is_noop, command, client_id, client_seq)
-            {
-                let val = Value {
-                    is_noop: noop,
-                    command: if cmd == "none" { None } else { Some(cmd) },
+            if let (Some(s), Some(cid), Some(cseq), Some(op)) = (slot, client_id, client_seq, op) {
+                let cmd = if op == "none" {
+                    None
+                } else {
+                    Some(deserialize_operation(&op).map_err(|_| "bad op")?)
+                };
+                let v = Value {
+                    command: cmd,
                     client_id: cid,
                     client_seq: cseq,
                 };
-                let l = Learn {
-                    slot: s,
-                    value: val,
-                };
-                Ok(MessagePayload::Learn(l))
+                Ok(MessagePayload::Learn(Learn { slot: s, value: v }))
             } else {
-                Err("Failed to parse learn payload")
+                Err("bad learn")
             }
         }
+
         "heartbeat" => {
-            let mut sender_str = "";
-            let mut timestamp: Option<u64> = None;
-            for part in &parts[1..] {
-                let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "sender" => sender_str = value,
-                    "timestamp" => timestamp = value.parse().ok(),
+            let mut sender_str = None;
+            let mut timestamp = None;
+            for p in &parts[1..] {
+                let mut kv = p.splitn(2, ':');
+                match (kv.next(), kv.next()) {
+                    (Some("sender"), Some(v)) => sender_str = Some(v),
+                    (Some("timestamp"), Some(v)) => timestamp = v.parse().ok(),
                     _ => {}
                 }
             }
-            if let Some(ts) = timestamp {
-                let sender = deserialize_node(sender_str)?;
-                let hb = Heartbeat {
+            if let (Some(s), Some(ts)) = (sender_str, timestamp) {
+                let sender = deserialize_node(s)?;
+                Ok(MessagePayload::Heartbeat(Heartbeat {
                     sender,
                     timestamp: ts,
-                };
-                Ok(MessagePayload::Heartbeat(hb))
+                }))
             } else {
-                Err("Failed to parse heartbeat payload")
+                Err("bad heartbeat")
             }
         }
+
         "retry-learn" => {
             if parts.len() == 2 {
-                if let Ok(id) = parts[1].parse() {
-                    Ok(MessagePayload::RetryLearn(id))
-                } else {
-                    Err("Failed to parse retry-learn id")
-                }
+                parts[1]
+                    .parse()
+                    .map(MessagePayload::RetryLearn)
+                    .map_err(|_| "bad retry")
             } else {
-                Err("Invalid retry-learn format")
+                Err("bad retry-learn")
             }
         }
+
         "executed" => {
-            let mut client_id: Option<u64> = None;
-            let mut client_seq: Option<u64> = None;
-            let mut success: Option<bool> = None;
-            let mut command_result: Option<String> = None;
-            let mut slot: Option<u64> = None;
-            for part in &parts[1..] {
+            // full raw payload string
+            let raw = s;
+
+            // 1) Split off the results list if present
+            let (hdr, list_str_opt) = if let Some(start) = raw.find("results:[") {
+                let hdr = &raw[..start]; // e.g. "executed,adu:5,"
+                let inner_start = start + "results:[".len();
+                let inner_end = raw[inner_start..]
+                    .find(']')
+                    .ok_or("malformed executed results list")?
+                    + inner_start;
+                let list = &raw[inner_start..inner_end]; // e.g. "slot:3,client_id:7,...|slot:4,..."
+                (hdr, Some(list))
+            } else {
+                (raw, None)
+            };
+
+            // 2) Parse the ADU from the header
+            let mut adu: Option<u64> = None;
+            for part in hdr.split(',').skip(1) {
                 let mut kv = part.splitn(2, ':');
-                let key = kv.next().unwrap_or("");
-                let value = kv.next().unwrap_or("");
-                match key {
-                    "client_id" => client_id = value.parse().ok(),
-                    "client_seq" => client_seq = value.parse().ok(),
-                    "success" => success = value.parse().ok(),
-                    "command_result" => command_result = Some(value.to_string()),
-                    "slot" => slot = value.parse().ok(),
-                    _ => {}
+                if let (Some("adu"), Some(v)) = (kv.next(), kv.next()) {
+                    adu = v.parse().ok();
                 }
             }
-            if let (Some(cid), Some(cseq), Some(suc), Some(cmd), Some(s)) =
-                (client_id, client_seq, success, command_result, slot)
-            {
-                let cr = ClientResponse {
-                    client_id: cid.to_string(),
-                    client_seq: cseq,
-                    success: suc,
-                    command_result: if cmd == "none" { None } else { Some(cmd) },
-                    slot: s,
-                };
-                Ok(MessagePayload::Executed(cr))
+
+            // 3) Parse each execute-result entry
+            let mut results = Vec::new();
+            if let Some(list_str) = list_str_opt {
+                for entry in list_str.split('|') {
+                    let mut slot = None;
+                    let mut client_id = None;
+                    let mut client_seq = None;
+                    let mut op_str = None;
+                    let mut success = None;
+                    let mut res_str = None;
+
+                    for field in entry.split(',') {
+                        let mut kv = field.splitn(2, ':');
+                        match (kv.next(), kv.next()) {
+                            (Some("slot"), Some(v)) => slot = v.parse().ok(),
+                            (Some("client_id"), Some(v)) => client_id = v.parse().ok(),
+                            (Some("client_seq"), Some(v)) => client_seq = v.parse().ok(),
+                            (Some("op"), Some(v)) => op_str = Some(v.to_string()),
+                            (Some("success"), Some(v)) => success = v.parse().ok(),
+                            (Some("result"), Some(v)) => res_str = Some(v.to_string()),
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(s), Some(cid), Some(cseq), Some(op_s), Some(suc), Some(res_s)) =
+                        (slot, client_id, client_seq, op_str, success, res_str)
+                    {
+                        // parse the operation
+                        let cmd = if op_s == "none" {
+                            None
+                        } else {
+                            Some(deserialize_operation(&op_s).map_err(|_| "bad op")?)
+                        };
+                        // parse the command result
+                        let cmd_res = if res_s == "none" { None } else { Some(res_s) };
+
+                        let val = Value {
+                            command: cmd,
+                            client_id: cid,
+                            client_seq: cseq,
+                        };
+
+                        results.push(ExecuteResult {
+                            value: val,
+                            slot: s,
+                            success: suc,
+                            cmd_result: cmd_res,
+                        });
+                    }
+                }
+            }
+
+            // 4) Construct the final Executed record
+            if let Some(adu) = adu {
+                Ok(MessagePayload::Executed(Executed { results, adu }))
             } else {
-                Err("Failed to parse executed payload")
+                Err("bad executed payload")
             }
         }
-        "client-request" => {
-             let mut client_id: Option<u64> = None;
-             let mut client_seq: Option<u64> = None;
-             let mut command: Option<String> = None;
-             for part in &parts[1..] {
-                 let mut kv = part.splitn(2, ':');
-                 let key = kv.next().unwrap_or("");
-                 let value = kv.next().unwrap_or("");
-                 match key {
-                     "client_id" => client_id = value.parse().ok(),
-                     "client_seq" => client_seq = value.parse().ok(),
-                     "command" => command = Some(value.to_string()),
-                     _ => {}
-                 }
-             }
-             if let (Some(cid), Some(cseq), Some(cmd)) =
-                 (client_id, client_seq, command)
-             {
-                 Ok(MessagePayload::ClientRequest(Value {
-                     is_noop: false,
-                     client_id: cid,
-                     client_seq: cseq,
-                     command: if cmd == "none" { None } else { Some(cmd) },
-                 }))
-             } else {
-                 Err("Failed to parse client-request payload")
-             }
-         }
-        _ => Err("Unknown payload variant"),
+
+        _ => Err("unknown payload"),
     }
+}
+
+/// Turn an Operation into exactly the string your parser can read back.
+fn serialize_operation(op: &Operation) -> String {
+    match op {
+        Operation::Get(key) => format!("get(\"{}\")", key),
+        Operation::Remove(key) => format!("remove(\"{}\")", key),
+        Operation::Set(KvPair { key, value }) => {
+            format!("set(\"{}\",\"{}\")", key, value)
+        }
+        Operation::Clear => "clear".into(),
+        Operation::Demo => "demo".into(),
+    }
+}
+
+/// Helper: parse debug-style ops:
+///  - get("foo")
+///  - set("foo","bar")
+///  - remove("foo")
+///  - clear
+///  - demo
+fn deserialize_operation(op_str: &str) -> Result<Operation, &'static str> {
+    if op_str == "none" {
+        return Err("none");
+    }
+    // get("key")
+    if let Some(arg) = op_str
+        .strip_prefix("get(\"")
+        .and_then(|s| s.strip_suffix("\")"))
+    {
+        return Ok(Operation::Get(arg.to_string()));
+    }
+    // remove("key")
+    if let Some(arg) = op_str
+        .strip_prefix("remove(\"")
+        .and_then(|s| s.strip_suffix("\")"))
+    {
+        return Ok(Operation::Remove(arg.to_string()));
+    }
+    // set("key","value")
+    if let Some(inner) = op_str
+        .strip_prefix("set(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
+        // inner == "\"key\",\"value\""
+        if let Some(stripped) = inner.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            let parts: Vec<&str> = stripped.split("\",\"").collect();
+            if parts.len() == 2 {
+                return Ok(Operation::Set(KvPair {
+                    key: parts[0].to_string(),
+                    value: parts[1].to_string(),
+                }));
+            }
+        }
+    }
+    // clear
+    if op_str == "clear" {
+        return Ok(Operation::Clear);
+    }
+    // demo
+    if op_str == "demo" {
+        return Ok(Operation::Demo);
+    }
+    Err("unknown op")
 }

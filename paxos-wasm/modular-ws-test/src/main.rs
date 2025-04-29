@@ -1,19 +1,17 @@
 mod bindings;
 mod paxos_wasm;
 
+use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::error::Error;
 
 use bindings::paxos::default::network_types::Value;
 use clap::Parser;
 use paxos_wasm::{ComponentRunStates, PaxosWasmtime};
 use tokio;
-use tokio::task::JoinHandle;
-use wasmtime::component::{Component, Linker};
 use wasmtime::Engine;
-
+use wasmtime::component::{Component, Linker};
 
 type AnyError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -22,7 +20,7 @@ type AnyError = Box<dyn Error + Send + Sync + 'static>;
 async fn run_requests(
     engine: &Engine,
     pre: &bindings::PaxosClientWorldPre<ComponentRunStates>,
-    client_id: u64,
+    client_id: String,
     leader_address: &str,
     num_requests: usize,
 ) -> Result<(Vec<Duration>, Vec<Duration>), AnyError> {
@@ -36,17 +34,18 @@ async fn run_requests(
         let init_elapsed = init_start.elapsed();
 
         // Build a Paxos command
-        let command = format!("set {}:{} foobar", client_id, i);
+        let command = Some(bindings::paxos::default::paxos_types::Operation::Demo);
         let value = Value {
-            is_noop: false,
-            client_id,
+            client_id: client_id.clone(),
             client_seq: i as u64,
-            command: Some(command),
+            command,
         };
 
         // Measure request latency
         let request_start = Instant::now();
-        let _res = client.perform_request(leader_address.to_string(), value).await?;
+        let _res = client
+            .perform_request(leader_address.to_string(), value)
+            .await?;
         let request_elapsed = request_start.elapsed();
 
         init_latencies.push(init_elapsed);
@@ -55,7 +54,6 @@ async fn run_requests(
 
     Ok((init_latencies, request_latencies))
 }
-
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -70,7 +68,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {
-
     let args = Args::parse();
 
     let client_id = args.client_id;
@@ -84,9 +81,8 @@ async fn main() -> Result<(), AnyError> {
     config.async_support(true);
     let engine = Engine::new(&config)?;
 
-
-    let leader_address = "127.0.0.1:7777"; // For udp 
-    // let leader_address = "127.0.0.1:50057"; // For tcp
+    // let leader_address = "127.0.0.1:7777"; // For udp
+    let leader_address = "127.0.0.1:50057"; // For tcp // TODO: Make this better
 
     // 3) Load your WASM component
     let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -111,10 +107,16 @@ async fn main() -> Result<(), AnyError> {
 
     let time = Instant::now();
 
-    let all_results = run_requests(&arc_engine, &paxos_client_pre, client_id, leader_address, num_requests).await?;
+    let all_results = run_requests(
+        &arc_engine,
+        &paxos_client_pre,
+        format!("Client_{}", client_id),
+        leader_address,
+        num_requests,
+    )
+    .await?;
 
     let elapsed = time.elapsed();
-
 
     println!("Total elapsed time for all requests: {:?}", elapsed);
 

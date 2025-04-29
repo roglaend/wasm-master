@@ -1,0 +1,8 @@
+[package]
+name = "runners"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+paxos-wasm-utils = { path = "../shared/utils" }
+agents = { path = "../agents" }

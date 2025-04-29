@@ -79,7 +79,6 @@ impl SharedConfig {
 #[derive(Clone)]
 pub struct Config {
     pub node: paxos_proto::Node,
-    pub bind_addr: String,
     pub remote_nodes: Vec<paxos_proto::Node>,
     pub leader_id: u64,
     pub is_event_driven: bool,
@@ -126,7 +125,6 @@ impl Config {
 
         Self {
             node: node_info.clone(),
-            bind_addr: node_info.clone().address,
             remote_nodes,
             leader_id: shared.leader_id,
             is_event_driven,

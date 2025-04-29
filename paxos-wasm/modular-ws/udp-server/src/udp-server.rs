@@ -1,13 +1,4 @@
-use bindings::paxos::default::network_types::MessagePayload;
-use bindings::paxos::default::network_types::NetworkMessage;
-use bindings::paxos::default::paxos_types::ClientResponse;
-use bindings::paxos::default::paxos_types::Value;
 use rand::Rng;
-use wasi::sockets::tcp::InputStream;
-use wasi::sockets::tcp::OutputStream;
-use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
-
-use wasi::sockets::tcp_create_socket::create_tcp_socket;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -17,6 +8,10 @@ use std::time::{Duration, Instant};
 
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
+use wasi::sockets::tcp::InputStream;
+use wasi::sockets::tcp::OutputStream;
+use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
+use wasi::sockets::tcp_create_socket::create_tcp_socket;
 use wasi::sockets::udp::{ErrorCode as UdpErrorCode, OutgoingDatagram, UdpSocket};
 use wasi::sockets::udp_create_socket::create_udp_socket;
 
@@ -31,7 +26,8 @@ pub mod bindings {
 bindings::export!(MyTcpServer with_types_in bindings);
 
 use bindings::exports::paxos::default::ws_server::{Guest, GuestWsServerResource, RunConfig};
-use bindings::paxos::default::paxos_types::{Node, PaxosRole};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
+use bindings::paxos::default::paxos_types::{ClientResponse, Node, Operation, PaxosRole, Value};
 use bindings::paxos::default::{acceptor_agent, learner_agent, logger, proposer_agent, serializer};
 
 pub struct MyTcpServer;
@@ -47,12 +43,14 @@ pub struct Connection {
     output: Option<OutputStream>,
 }
 
+type RequestKey = (String, u64);
+
 impl Connection {
     pub fn new(socket: TcpSocket, input: InputStream, output: OutputStream) -> Self {
-        Self { 
-            socket, 
-            input: Some(input), 
-            output: Some(output) 
+        Self {
+            socket,
+            input: Some(input),
+            output: Some(output),
         }
     }
 
@@ -96,7 +94,7 @@ impl Agent {
                 let response = agent.run_paxos_loop();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
-                        logger::log_error(&format!("[TCP Server] Paxos response: {:?}", resp));
+                        logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
                     }
                 }
                 response.clone()
@@ -120,8 +118,7 @@ pub struct MyTcpServerResource {
     agent: Agent,
     // We now store only the UdpSocket.
     socket: UdpSocket,
-    client_connections: RefCell<HashMap<u64, Connection>>,
-
+    client_connections: RefCell<HashMap<RequestKey, Connection>>,
 }
 
 impl MyTcpServerResource {}
@@ -197,14 +194,16 @@ impl GuestWsServerResource for MyTcpServerResource {
         let mut completed_requests = 0;
         let mut last_log = Instant::now();
 
-
         let client_listener: Option<TcpSocket> = match &self.agent {
             Agent::Proposer(agent) => {
                 if agent.is_leader() {
                     match create_tcp_listener("127.0.0.1:7777") {
                         Ok(sock) => Some(sock),
                         Err(e) => {
-                            logger::log_warn(&format!("[Hybrid Server] Failed to create TCP listener: {:?}", e));
+                            logger::log_warn(&format!(
+                                "[Hybrid Server] Failed to create TCP listener: {:?}",
+                                e
+                            ));
                             None
                         }
                     }
@@ -214,7 +213,9 @@ impl GuestWsServerResource for MyTcpServerResource {
                 }
             }
             _ => {
-                logger::log_info("[Hybrid Server] This node is not a Proposer; skipping TCP listener.");
+                logger::log_info(
+                    "[Hybrid Server] This node is not a Proposer; skipping TCP listener.",
+                );
                 None
             }
         };
@@ -223,59 +224,60 @@ impl GuestWsServerResource for MyTcpServerResource {
         sleep(Duration::from_secs(1));
 
         loop {
-
-           
             if let Some(ref client_listener) = client_listener {
                 // accept as many clients requests as possible
                 loop {
                     match client_listener.accept() {
-                        Ok((socket, input, output)) => {
-                            match input.blocking_read(1024) {
-                                Ok(buf) if !buf.is_empty() => {
-                                    let net_msg = serializer::deserialize(&buf);
-                                    match net_msg.payload {
-                                        MessagePayload::ClientRequest(value) => {
-            
-                                            if self.agent.submit_client_request(&value) {
-                                                let request_id = value.client_id * 1000 + value.client_seq;
-            
-                                                if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
-                                                    connection.shutdown();
-                                                }
-            
-                                                let connection = Connection::new(socket, input, output);
-                
-                                                self.client_connections.borrow_mut().insert(request_id, connection);
-                                                logger::log_info(&format!(
-                                                    "[TCP Server] Connection inserted successfully. Request ID: {}",
-                                                    request_id
-                                                ));
+                        Ok((socket, input, output)) => match input.blocking_read(1024) {
+                            Ok(buf) if !buf.is_empty() => {
+                                let net_msg = serializer::deserialize(&buf);
+                                match net_msg.payload {
+                                    MessagePayload::ClientRequest(value) => {
+                                        if self.agent.submit_client_request(&value) {
+                                            let request_key =
+                                                (value.client_id.clone(), value.client_seq);
+
+                                            if let Some(connection) = self
+                                                .client_connections
+                                                .borrow_mut()
+                                                .remove(&request_key)
+                                            {
+                                                connection.shutdown();
                                             }
-                                        }
-                                        _ => {
-                                            logger::log_warn(&format!(
-                                                "[TCP Server] Received unexpected message: {:?}",
-                                                net_msg
+
+                                            let connection = Connection::new(socket, input, output);
+
+                                            self.client_connections
+                                                .borrow_mut()
+                                                .insert(request_key.clone(), connection);
+                                            logger::log_info(&format!(
+                                                "[UDP Server] Connection inserted successfully. Request Key: {:?}",
+                                                request_key
                                             ));
                                         }
                                     }
+                                    _ => {
+                                        logger::log_warn(&format!(
+                                            "[UDP Server] Received unexpected message: {:?}",
+                                            net_msg
+                                        ));
+                                    }
                                 }
-                                Ok(_) => {}
-                                Err(e) => {
-                                    logger::log_warn(&format!("[TCP Server] Read error: {:?}", e));
-                                }
-                            } 
-                        }
-                        Err(e) if e == TcpErrorCode::WouldBlock => { 
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                logger::log_warn(&format!("[UDP Server] Read error: {:?}", e));
+                            }
+                        },
+                        Err(e) if e == TcpErrorCode::WouldBlock => {
                             break;
                         }
                         Err(e) => {
-                            logger::log_warn(&format!("[TCP Server] Accept error: {:?}", e));
+                            logger::log_warn(&format!("[UDP Server] Accept error: {:?}", e));
                         }
                     }
                 }
             }
-            
 
             // Each loop iteration we obtain new datagram streams from the UDP socket.
             // This is required since we cannot store the streams permanently.
@@ -284,7 +286,7 @@ impl GuestWsServerResource for MyTcpServerResource {
                 if let Ok(datagrams) = incoming.receive(10) {
                     for datagram in datagrams.into_iter() {
                         if !datagram.data.is_empty() {
-                            // Deserialize using the tcp_serializer (kept for TCP naming).
+                            // Deserialize using the UDP_serializer (kept for UDP naming).
                             let net_msg = serializer::deserialize(&datagram.data);
                             logger::log_info(&format!(
                                 "[UDP Server] Received message from {:?}: {:?}",
@@ -322,8 +324,9 @@ impl GuestWsServerResource for MyTcpServerResource {
                 }
                 // Streams go out of scope and are dropped here.
             }
-            
-            let resp = self.agent.run_paxos_loop();
+
+            let client_responses = self.agent.run_paxos_loop();
+
             if self.config.demo_client {
                 // Periodically submit a client request if enough time has elapsed.
 
@@ -333,10 +336,9 @@ impl GuestWsServerResource for MyTcpServerResource {
                             // for _ in 0..10 {
                             client_seq += 1;
 
-                            let request = Value{
-                                is_noop: false,
-                                command: Some("cmd".to_string()),
-                                client_id: 1,
+                            let request = Value {
+                                command: Some(Operation::Demo),
+                                client_id: client_id.clone(),
                                 client_seq,
                             };
 
@@ -354,46 +356,57 @@ impl GuestWsServerResource for MyTcpServerResource {
                     }
                 }
             } else {
+                // If not in demo mode, handle the client responses properly
                 if let Agent::Proposer(agent) = &self.agent {
                     if agent.is_leader() {
-                        if let Some(responses) = resp {
+                        if let Some(responses) = client_responses {
                             for response in responses {
-                                let client_id: u64 = response.client_id.clone().parse().unwrap_or(0);
-                                let request_id = client_id * 1000 + response.client_seq;
+                                let request_key = (response.client_id.clone(), response.client_seq);
                                 logger::log_info(&format!(
-                                    "[UDP Server] Received response for request ID: {}",
-                                    request_id
+                                    "[UDP Server] Received response for request key: {:?}",
+                                    request_key
                                 ));
-                                if let Some(connection) = self.client_connections.borrow_mut().remove(&request_id) {
+                                if let Some(connection) =
+                                    self.client_connections.borrow_mut().remove(&request_key)
+                                {
                                     let response_msg = NetworkMessage {
                                         sender: self.node.clone(),
-                                        payload: MessagePayload::Executed(response),
+                                        payload: MessagePayload::ClientResponse(response),
                                     };
                                     let response_bytes = serializer::serialize(&response_msg);
-                                    if let Err(e) = connection.output.as_ref().unwrap().blocking_write_and_flush(response_bytes.as_slice()) {
-                                        logger::log_warn(&format!("[TCP Server] Write error: {:?}", e));
+                                    if let Err(e) = connection
+                                        .output
+                                        .as_ref()
+                                        .unwrap()
+                                        .blocking_write_and_flush(response_bytes.as_slice())
+                                    {
+                                        logger::log_warn(&format!(
+                                            "[UDP Server] Write error: {:?}",
+                                            e
+                                        ));
                                     } else {
                                         completed_requests += 1;
-                                        logger::log_info("[TCP Server] Response sent back to client.");
+                                        logger::log_info(
+                                            "[UDP Server] Response sent back to client.",
+                                        );
                                     }
                                     connection.shutdown();
                                 }
-                                
                             }
                             if last_log.elapsed() >= Duration::from_millis(500) {
                                 let elapsed_secs = last_log.elapsed().as_secs_f64();
                                 let throughput = (completed_requests as f64) / elapsed_secs;
-                            
+
                                 logger::log_info(&format!(
-                                    "[TCP Server] Throughput: {:.2} responses/sec",
+                                    "[UDP Server] Throughput: {:.2} responses/sec",
                                     throughput
                                 ));
-                            
+
                                 completed_requests = 0;
                                 last_log = Instant::now();
                             }
                         }
-                    } 
+                    }
                 }
             }
 
