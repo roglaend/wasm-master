@@ -113,7 +113,7 @@ impl Guest for PaxosClient {
         let msg_bytes = serializer::serialize(&message);
 
         if output.write(&msg_bytes).is_ok() {
-            let timeout = Duration::from_secs(1);
+            let timeout = Duration::from_millis(5000);
             match PaxosClient::read_with_timeout(&mut input, timeout) {
                 Ok(buf) => {
                     let net_msg = serializer::deserialize(&buf);

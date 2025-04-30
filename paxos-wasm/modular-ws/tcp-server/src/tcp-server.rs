@@ -116,8 +116,8 @@ impl Runner {
                 // let _ = runner.run_paxos_loop();
                 None
             }
-            Runner::Learner(_runner) => {
-                // let _ = runner.run_paxos_loop();
+            Runner::Learner(runner) => {
+                let _ = runner.run_paxos_loop();
                 None
             }
             Runner::Coordinator(runner) => {
@@ -341,7 +341,9 @@ impl GuestWsServerResource for MyTcpServerResource {
                                     {
                                         let response_msg = NetworkMessage {
                                             sender: self.node.clone(),
-                                            payload: MessagePayload::ClientResponse(response),
+                                            payload: MessagePayload::ClientResponse(
+                                                response.clone(),
+                                            ),
                                         };
                                         let response_bytes = serializer::serialize(&response_msg);
                                         if let Err(e) = connection
@@ -356,11 +358,17 @@ impl GuestWsServerResource for MyTcpServerResource {
                                             ));
                                         } else {
                                             completed_requests += 1;
-                                            logger::log_info(
-                                                "[TCP Server] Response sent back to client.",
-                                            );
+                                            logger::log_info(&format!(
+                                                "[TCP Server] Response {:?} successfully sent back to client. Request Key: {:?}",
+                                                response, request_key,
+                                            ));
                                         }
                                         connection.shutdown();
+                                    } else {
+                                        logger::log_error(&format!(
+                                            "[TCP Server] Connection for request id {:?} is not active to send back to client.",
+                                            request_key
+                                        ));
                                     }
                                 }
                                 if last_log.elapsed() >= Duration::from_millis(500) {
@@ -420,6 +428,5 @@ fn create_listener(bind_address: &str) -> Result<TcpSocket, TcpErrorCode> {
     socket.start_listen()?;
     pollable.block();
     socket.finish_listen()?;
-
     Ok(socket)
 }

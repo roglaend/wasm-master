@@ -150,16 +150,14 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 });
             } else if existing.value == Some(value.clone()) {
                 // this could happen on leader failure where leader proposes values from promises to get them executed
-                // the leader could probably directly commit such a value but then we cant use them in the 
+                // the leader could probably directly commit such a value but then we cant use them in the
                 // priority queue as we have now
                 return AcceptedResult::Accepted(Accepted {
                     slot,
                     ballot,
                     success: true,
                 });
-            }
-            
-            else {
+            } else {
                 // A conflicting proposal exists for this slot; reject the new request.
                 logger::log_warn(&format!(
                     "[Core Acceptor] Rejected accept for slot {} with ballot {} because a conflicting proposal already exists (existing ballot: {}, value: {:?})",
@@ -186,6 +184,10 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 success: true,
             });
         }
+    }
+
+    fn get_accepted(&self, slot: Slot) -> Option<PValue> {
+        self.accepted.borrow().get(&slot).cloned()
     }
 
     /// Returns the current state: lists of promise entries and accepted proposals.

@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
@@ -54,13 +55,17 @@ pub struct MyProposerAgentResource {
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
     in_flight_accepted: RefCell<BTreeMap<Slot, HashMap<u64, Accepted>>>, //* Per slot accepted per sender */
 
-    client_responses: RefCell<VecDeque<ClientResponse>>,
+    client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
+
+    client_responses_test: RefCell<BTreeMap<u64, (ClientResponse, bool)>>,
 
     adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>, // Need a timeout mechanism to retry the prepare phase in case of failure (?)
 
     batch_size: u64,
+
+    test_skip_slot: Cell<u64>,
 }
 
 impl MyProposerAgentResource {
@@ -360,8 +365,10 @@ impl MyProposerAgentResource {
             }
         }
 
-        for learn in self.learns_to_commit() {
-            self.broadcast_learn(learn);
+        if !self.config.acceptors_send_learns {
+            for learn in self.learns_to_commit() {
+                self.broadcast_learn(learn);
+            }
         }
 
         let mut client_responses = Vec::new();
@@ -442,9 +449,12 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             last_prepare_start: Cell::new(None),
             failure_detector,
 
-            client_responses: RefCell::new(VecDeque::new()),
+            client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
             batch_size,
+            test_skip_slot: Cell::new(10),
+
+            client_responses_test: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -459,6 +469,21 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             "[Proposer Agent] Submitted client request '{:?}': {}.",
             req, result
         ));
+        // TESTING : REMOVE THIS
+        // for prop in self.proposals_to_accept() {
+        //     let accept_result = self.accept_phase(
+        //         prop.value.clone(),
+        //         prop.slot,
+        //         prop.ballot,
+        //         vec![], // no initial accepts
+        //     );
+        //     if let AcceptResult::IsEventDriven = accept_result {
+        //         // OK, keep going
+        //     } else {
+        //         logger::log_error("[Proposer Agent] Run loop is only supporting event driven.");
+        //         panic!("accept_commit only supports event-driven accepts");
+        //     }
+        // }
         result
     }
 
@@ -581,6 +606,16 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let mut to_accept = Vec::new();
         for _ in 0..self.batch_size {
             if let Some(prop) = self.create_proposal() {
+                // TESTING: FOR CREATING A PROPOSAL BUT NOT SENDING IT TO SIMULATE A MESSAGE LOSS
+                // if prop.slot == self.test_skip_slot.get() {
+                //     logger::log_warn(&format!(
+                //         "[Proposer Agent] Skipping proposal for slot {} for testing purposes",
+                //         prop.slot
+                //     ));
+                //     let num = rand::thread_rng().gen_range(10..30);
+                //     self.test_skip_slot.set(self.test_skip_slot.get() + num);
+                //     continue;
+                // }
                 to_accept.push(prop);
             } else {
                 break;
@@ -608,7 +643,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
         for _ in 0..self.batch_size {
-            if let Some(resp) = queue.pop_front() {
+            if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {
                 break;
@@ -617,7 +652,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         out
     }
 
-    fn process_executed(&self, executed: Executed) -> Vec<ClientResponse> {
+    fn process_executed(&self, executed: Executed) {
         if executed.adu > self.adu.get() {
             self.adu.set(executed.adu);
         }
@@ -626,32 +661,54 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Executed received but not a leader; skipping client-response.",
             );
-            return Vec::new();
+            return;
         }
 
-        let mut out = Vec::new();
         for r in &executed.results {
-            let _ = self.mark_proposal_finalized(r.slot);
+            if let Some(cmd_res) = r.cmd_result.clone() {
+                let _ = self.mark_proposal_finalized(r.slot);
 
-            let resp = ClientResponse {
-                client_id: r.value.client_id.clone(),
-                client_seq: r.value.client_seq,
-                success: true,
-                command_result: r.cmd_result.clone(),
-            };
+                let resp = ClientResponse {
+                    client_id: r.value.client_id.clone(),
+                    client_seq: r.value.client_seq,
+                    success: true,
+                    command_result: Some(cmd_res),
+                };
 
-            logger::log_debug(&format!(
-                "[Proposer Agent] Created ClientResponse for slot {}",
-                r.slot
-            ));
+                // Store the client response in the queue.
+                self.client_responses
+                    .borrow_mut()
+                    .insert(r.slot, resp.clone());
 
-            // TODO: Needed?
-            if !out.contains(&resp) {
-                out.push(resp);
+                logger::log_info(&format!(
+                    "[Proposer Agent] Created ClientResponse for slot {}",
+                    r.slot
+                ));
+            } else {
+                // No cmd result -> noop reenqueue proposal.
+                // Set that specific slot + noop to finalized and reinsert into request queue
+                // Send out accepted messages including the new enqueued proposal
+                if let Some(value) = self.proposer.mark_proposal_finalized(r.slot) {
+                    self.proposer.enqueue_client_request(&value);
+                    for prop in self.proposals_to_accept() {
+                        let accept_result = self.accept_phase(
+                            prop.value.clone(),
+                            prop.slot,
+                            prop.ballot,
+                            vec![], // no initial accepts
+                        );
+                        if let AcceptResult::IsEventDriven = accept_result {
+                            // OK, keep going
+                        } else {
+                            logger::log_error(
+                                "[Proposer Agent] Run loop is only supporting event driven.",
+                            );
+                            panic!("accept_commit only supports event-driven accepts");
+                        }
+                    }
+                }
             }
         }
-
-        out
     }
 
     fn retry_learn(&self, slot: Slot) {
@@ -744,6 +801,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     let result = self.process_accepted(slot, accepted_list);
                     self.handle_accept_result(slot, result);
                 }
+
                 NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore,
@@ -787,7 +845,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
             }
             MessagePayload::Executed(executed) => {
-                _ = self.process_executed(executed);
+                self.process_executed(executed);
 
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -874,7 +932,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             // TODO: Could actually batch here, not send out on at a time but rather a batch of 10
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Proposer Agent] Run loop: AcceptCommit phase.");
-                self.accept_commit()
+                return self.accept_commit();
                 //* The event driven design handles the rest, unless we want to move distinguished learner logic here. No :) */
             }
             PaxosPhase::Stop => None,  // TODO
