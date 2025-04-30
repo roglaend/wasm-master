@@ -92,50 +92,47 @@ impl GuestLearnerResource for MyLearnerResource {
 
     // Handles incoming learns from acceptors. Checks for quorum and and stores the learned value. Returns ready to be executed slots if any
     fn handle_learn(&self, learn: Learn, from: Node) -> LearnResult {
-        {
-            let now = Instant::now();
-            self.last_message_recieved.set(now);
-            let execution_log = self.execution_log.borrow();
-            if !execution_log.contains_key(&learn.slot) {
-                logger::log_info(&format!(
-                    "[Core Learner]: Received learn for slot {} from node {}",
-                    learn.slot, from.node_id
-                ));
-                let slot = learn.slot;
-                self.slot_learns
-                    .borrow_mut()
-                    .entry(slot)
-                    .or_insert_with(HashMap::new)
-                    .insert(from.node_id, learn.clone());
+        let now = Instant::now();
+        self.last_message_recieved.set(now);
+        let execution_log = self.execution_log.borrow();
+        if !execution_log.contains_key(&learn.slot) {
+            logger::log_info(&format!(
+                "[Core Learner]: Received learn for slot {} from node {}",
+                learn.slot, from.node_id
+            ));
+            let slot = learn.slot;
+            self.slot_learns
+                .borrow_mut()
+                .entry(slot)
+                .or_insert_with(HashMap::new)
+                .insert(from.node_id, learn.clone());
 
-                if let Some(sender_map) = self.slot_learns.borrow().get(&slot) {
-                    if sender_map.len() >= self.quorum {
-                        let learns: Vec<&Learn> = sender_map.values().collect();
+            if let Some(sender_map) = self.slot_learns.borrow().get(&slot) {
+                if sender_map.len() >= self.quorum {
+                    let learns: Vec<&Learn> = sender_map.values().collect();
 
-                        for &candidate in &learns {
-                            let count = learns
-                                .iter()
-                                .filter(|&&learn| self.learn_equals(learn, candidate))
-                                .count();
+                    for &candidate in &learns {
+                        let count = learns
+                            .iter()
+                            .filter(|&&learn| self.learn_equals(learn, candidate))
+                            .count();
 
-                            if count >= self.quorum {
-                                logger::log_info(&format!(
-                                    "Learner: Learned full Learn {:?} for slot {} with count {}",
-                                    candidate, slot, count
-                                ));
-                                // Learn: candidate.value or the full candidate
-                                self.learned
-                                    .borrow_mut()
-                                    .insert(slot, candidate.value.clone());
-                                break;
-                            }
+                        if count >= self.quorum {
+                            logger::log_info(&format!(
+                                "Learner: Learned full Learn {:?} for slot {} with count {}",
+                                candidate, slot, count
+                            ));
+                            // Learn: candidate.value or the full candidate
+                            self.learned
+                                .borrow_mut()
+                                .insert(slot, candidate.value.clone());
+                            break;
                         }
                     }
                 }
             }
         }
-
-        self.to_be_executed()
+        return LearnResult::Ignore;
     }
 
     fn to_be_executed(&self) -> LearnResult {
@@ -156,10 +153,11 @@ impl GuestLearnerResource for MyLearnerResource {
             }
         }
 
-        let now = Instant::now();
-
-        // Alwasys send out between 5 and 10 slots or if the timeout has passed
-        if contiguous_ready >= 5 || now.duration_since(self.last_flush.get()) > self.flush_timout {
+        // Ensure 10 is sent at the sime time - boost throughput by 50ops/s ca. Need to itroduce some mechanism here to ensure that
+        // if we do not have 10 slots ready based on some timeout we need to send the slots we have
+        // or else the system will be stuck wating for more slots to be learned.
+        // This is fine when we are testing with with request_size % 10 = 0
+        if contiguous_ready >= 10 {
             let mut to_be_executed = Vec::new();
             let mut execution_log = self.execution_log.borrow_mut();
 
@@ -175,7 +173,6 @@ impl GuestLearnerResource for MyLearnerResource {
                     self.next_to_execute.set(next_to_execute);
                 }
             }
-            self.last_flush.set(now);
 
             return LearnResult::Execute(to_be_executed);
         } else {
@@ -189,27 +186,23 @@ impl GuestLearnerResource for MyLearnerResource {
     /// If the slot already has a learned value, a warning is logged and the new value is ignored.
     /// Can only execute consecutive slots starting from the next_to_execute slot.
     fn learn(&self, slot: Slot, value: Value) -> LearnResult {
-        {
-            let mut learned_map = self.learned.borrow_mut();
-            let execution_log = self.execution_log.borrow_mut();
+        let mut learned_map = self.learned.borrow_mut();
+        let execution_log = self.execution_log.borrow_mut();
 
-            // Insert learn if have not learned yet
-            if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
-                logger::log_info(&format!(
-                    "[Core Learner]: For slot {}, learned value {:?}",
-                    slot, value
-                ));
-                learned_map.insert(slot, value);
-            } else {
-                logger::log_warn(&format!(
-                    "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
-                    slot, value
-                ));
-            }
+        // Insert learn if have not learned yet
+        if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
+            logger::log_info(&format!(
+                "[Core Learner]: For slot {}, learned value {:?}",
+                slot, value
+            ));
+            learned_map.insert(slot, value);
+        } else {
+            logger::log_warn(&format!(
+                "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
+                slot, value
+            ));
         }
-
-        // Check if some learns are ready to be executed in order
-        self.to_be_executed()
+        return LearnResult::Ignore;
     }
 
     // Checker for gaps in the learned slots. Should be called at reasoinable a interval.
@@ -232,7 +225,7 @@ impl GuestLearnerResource for MyLearnerResource {
         let gap = max_learned_slot - next_to_execute;
 
         let now = Instant::now();
-        // Only return a gap if it exceeds the maximum allowed gap size.
+        // return if gap is > max_gap_size or if the time since last message is > retry_timeout
         if gap >= self.max_gap_size
             || (gap > 0 && now.duration_since(self.last_message_recieved.get()) > self.rety_timeout)
         {

@@ -408,11 +408,6 @@ impl GuestProposerResource for MyProposerResource {
             .get_proposal_by_status(slot, ProposalStatus::InFlight)
             .is_none()
         {
-            // let curr = self.proposals.borrow().get(&slot).map(|e| e.status.clone());
-            // logger::log_error(&format!(
-            //     "[Proposer] Cannot finalize slot {} in status {:?}; expected CommitPending.",
-            //     slot, curr
-            // ));
             return None;
         }
 
@@ -423,26 +418,6 @@ impl GuestProposerResource for MyProposerResource {
             slot, val
         ));
         Some(val)
-    }
-
-    /// Marks and inflight proposal finalized and retires the proposal for new slot
-    fn mark_proposal_finalized_and_retry(&self, slot: Slot) -> Option<Value> {
-        if let Some(prop) = self.get_proposal_by_status(slot, ProposalStatus::InFlight) {
-            let val = self.update_proposal_status(slot, ProposalStatus::Finalized)?;
-            logger::log_info(&format!(
-                "[Proposer] Proposal slot {} marked Finalized with noop: {:?} and retrying with new slot.",
-                slot, &val
-            ));
-            self.enqueue_client_request(prop.value.clone());
-            Some(prop.value)
-        } else {
-            // logger::log_error(&format!(
-            //     "[Proposer] Cannot finalize slot {} in status {:?}; expected InFlight.",
-            //     slot,
-            //     self.proposals.borrow().get(&slot).map(|e| e.status.clone())
-            // ));
-            None
-        }
     }
 
     fn increase_ballot(&self) -> Ballot {

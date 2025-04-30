@@ -40,8 +40,6 @@ interface proposer {
         /// Finalizes the proposal after learner execution
         mark-proposal-finalized: func(slot: slot) -> option<value>;
 
-        mark-proposal-finalized-and-retry: func(slot: slot) -> option<value>;
-
         // Increases ballot and returns it
         increase-ballot: func() -> ballot;
 
@@ -251,7 +249,7 @@ interface proposer-agent {
         collect-client-responses: func() -> list<client-response>;
 
         // Process the Executed from learners, and synchronously returns the created client responses 
-        process-executed: func(executed: executed) -> list<client-response>;
+        process-executed: func(executed: executed);
 
         retry-learn: func(slot: slot);
 

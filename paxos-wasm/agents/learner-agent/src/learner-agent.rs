@@ -44,8 +44,6 @@ pub struct MyLearnerAgentResource {
 
     retries: RefCell<HashMap<Slot, Instant>>,
     retry_interval: Duration,
-
-    next_to_execute: Cell<Slot>,
 }
 
 impl MyLearnerAgentResource {
@@ -98,7 +96,6 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             kv_store,
             retries: RefCell::new(HashMap::new()),
             retry_interval,
-            next_to_execute: Cell::new(1),
         }
     }
 
@@ -124,7 +121,10 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 slot,
                 value: value.clone(),
             };
-            if let LearnResult::Execute(learns) = self.learner.handle_learn(&learn, &from) {
+
+            self.learner.handle_learn(&learn, &from);
+
+            if let LearnResult::Execute(learns) = self.learner.to_be_executed() {
                 for le in learns {
                     let res = self.kv_store.apply(&le.value.command);
                     execs.push(ExecuteResult {
@@ -137,7 +137,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             }
         } else {
             // Learn the slot first then check for to be executed slots
-            if let LearnResult::Execute(learns) = self.learner.learn(slot, &value) {
+            self.learner.learn(slot, &value);
+            if let LearnResult::Execute(learns) = self.learner.to_be_executed() {
                 for le in learns {
                     let res = self.kv_store.apply(&le.value.command);
                     execs.push(ExecuteResult {
@@ -174,56 +175,33 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
     // Ticker called from host at a slower interval than proposer ticker
     fn run_paxos_loop(&self) {
-        if self.node.node_id == 2 {
-            match self.evaluate_retry() {
-                RetryLearnResult::NoGap => {
-                    // nothing to do
-                }
+        match self.evaluate_retry() {
+            RetryLearnResult::NoGap => {
+                // nothing to do
+            }
 
-                RetryLearnResult::Skip(slot) => {
-                    logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
-                }
+            RetryLearnResult::Skip(slot) => {
+                logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
+            }
 
-                //* Assume event driven here */
-                RetryLearnResult::Retry(slot) => {
-                    let retry_msg = NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::RetryLearn(slot),
-                    };
-                    logger::log_warn(&format!(
-                        "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
-                        slot
-                    ));
+            //* Assume event driven here */
+            RetryLearnResult::Retry(slot) => {
+                let retry_msg = NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::RetryLearn(slot),
+                };
+                logger::log_warn(&format!(
+                    "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
+                    slot
+                ));
 
-                    if self.config.acceptors_send_learns {
-                        network::send_message_forget(&self.acceptors, &retry_msg);
-                    } else {
-                        network::send_message_forget(&self.proposers, &retry_msg);
-                    }
+                if self.config.acceptors_send_learns {
+                    network::send_message_forget(&self.acceptors, &retry_msg);
+                } else {
+                    network::send_message_forget(&self.proposers, &retry_msg);
                 }
             }
         }
-
-        // TODO: HAVE
-        // if self.config.acceptors_send_learns {
-        //     let dummy_value = Value {
-        //         command: None,
-        //         client_id: "".to_string(),
-        //         client_seq: 1,
-        //     };
-        //     let executed = self.learn_and_execute(0, dummy_value);
-
-        //     if executed.results.is_empty() {
-        //         return;
-        //     }
-        //     let exec_msg = NetworkMessage {
-        //         sender: self.node.clone(),
-        //         payload: MessagePayload::Executed(executed),
-        //     };
-        //     if self.config.is_event_driven {
-        //         network::send_message_forget(&self.proposers, &exec_msg);
-        //     }
-        // }
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -234,15 +212,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload.slot, payload.value
                 ));
 
-                let executed: Executed;
-
-                if self.config.acceptors_send_learns {
-                    executed =
-                        self.learn_and_execute(payload.slot, payload.value.clone(), message.sender); // dummy slot and value not used when acceptors_send_learns
-                } else {
-                    executed =
-                        self.learn_and_execute(payload.slot, payload.value.clone(), message.sender);
-                }
+                let executed =
+                    self.learn_and_execute(payload.slot, payload.value.clone(), message.sender);
 
                 if executed.results.is_empty() || !self.config.learners_send_executed {
                     return NetworkMessage {
@@ -257,16 +228,11 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload: MessagePayload::Executed(executed),
                 };
 
-                if self.config.is_event_driven {
-                    if self.node.node_id == 2 {
-                        network::send_message_forget(&self.proposers, &exec_msg);
-                    }
-                    NetworkMessage {
-                        sender: self.node.clone(),
-                        payload: MessagePayload::Ignore,
-                    }
-                } else {
-                    exec_msg
+                network::send_message_forget(&self.proposers, &exec_msg);
+
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore,
                 }
             }
 

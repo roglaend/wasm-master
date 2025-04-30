@@ -55,7 +55,7 @@ pub struct MyProposerAgentResource {
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
     in_flight_accepted: RefCell<BTreeMap<Slot, HashMap<u64, Accepted>>>, //* Per slot accepted per sender */
 
-    client_responses: RefCell<VecDeque<ClientResponse>>,
+    client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
 
     client_responses_test: RefCell<BTreeMap<u64, (ClientResponse, bool)>>,
 
@@ -449,7 +449,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             last_prepare_start: Cell::new(None),
             failure_detector,
 
-            client_responses: RefCell::new(VecDeque::new()),
+            client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
             batch_size,
             test_skip_slot: Cell::new(10),
@@ -643,7 +643,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
         for _ in 0..self.batch_size {
-            if let Some(resp) = queue.pop_front() {
+            if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {
                 break;
@@ -652,7 +652,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         out
     }
 
-    fn process_executed(&self, executed: Executed) -> Vec<ClientResponse> {
+    fn process_executed(&self, executed: Executed) {
         if executed.adu > self.adu.get() {
             self.adu.set(executed.adu);
         }
@@ -661,10 +661,9 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Executed received but not a leader; skipping client-response.",
             );
-            return Vec::new();
+            return;
         }
 
-        let mut out = Vec::new();
         for r in &executed.results {
             if let Some(cmd_res) = r.cmd_result.clone() {
                 let _ = self.mark_proposal_finalized(r.slot);
@@ -676,44 +675,40 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     command_result: Some(cmd_res),
                 };
 
-                let mut client_queue = self.client_responses.borrow_mut();
-                if !client_queue.contains(&resp) {
-                    client_queue.push_back(resp.clone());
-                }
+                // Store the client response in the queue.
+                self.client_responses
+                    .borrow_mut()
+                    .insert(r.slot, resp.clone());
 
                 logger::log_info(&format!(
                     "[Proposer Agent] Created ClientResponse for slot {}",
                     r.slot
                 ));
-
-                // TODO: Needed?
-                if !out.contains(&resp) {
-                    out.push(resp);
-                }
             } else {
                 // No cmd result -> noop reenqueue proposal.
                 // Set that specific slot + noop to finalized and reinsert into request queue
-                let _ = self.proposer.mark_proposal_finalized_and_retry(r.slot);
-                for prop in self.proposals_to_accept() {
-                    let accept_result = self.accept_phase(
-                        prop.value.clone(),
-                        prop.slot,
-                        prop.ballot,
-                        vec![], // no initial accepts
-                    );
-                    if let AcceptResult::IsEventDriven = accept_result {
-                        // OK, keep going
-                    } else {
-                        logger::log_error(
-                            "[Proposer Agent] Run loop is only supporting event driven.",
+                // Send out accepted messages including the new enqueued proposal
+                if let Some(value) = self.proposer.mark_proposal_finalized(r.slot) {
+                    self.proposer.enqueue_client_request(&value);
+                    for prop in self.proposals_to_accept() {
+                        let accept_result = self.accept_phase(
+                            prop.value.clone(),
+                            prop.slot,
+                            prop.ballot,
+                            vec![], // no initial accepts
                         );
-                        panic!("accept_commit only supports event-driven accepts");
+                        if let AcceptResult::IsEventDriven = accept_result {
+                            // OK, keep going
+                        } else {
+                            logger::log_error(
+                                "[Proposer Agent] Run loop is only supporting event driven.",
+                            );
+                            panic!("accept_commit only supports event-driven accepts");
+                        }
                     }
                 }
             }
         }
-
-        out
     }
 
     fn retry_learn(&self, slot: Slot) {
@@ -806,12 +801,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     let result = self.process_accepted(slot, accepted_list);
                     self.handle_accept_result(slot, result);
                 }
-                // TESTING: TODO: Remove this
-                // if !self.config.acceptors_send_learns {
-                //     for learn in self.learns_to_commit() {
-                //         self.broadcast_learn(learn);
-                //     }
-                // }
+
                 NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore,
@@ -855,7 +845,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
             }
             MessagePayload::Executed(executed) => {
-                _ = self.process_executed(executed);
+                self.process_executed(executed);
 
                 NetworkMessage {
                     sender: self.node.clone(),

@@ -32,6 +32,7 @@ pub struct MyAcceptorAgentResource {
     node: Node,
     learners: Vec<Node>,
     acceptor: Arc<AcceptorResource>,
+    proposers: Vec<Node>,
 }
 
 impl MyAcceptorAgentResource {}
@@ -48,12 +49,19 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
             .collect();
 
+        let proposers: Vec<_> = nodes
+            .clone()
+            .into_iter()
+            .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
+            .collect();
+
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
             learners,
             acceptor,
+            proposers,
         }
     }
 
@@ -85,7 +93,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
         if let Some(pvalue) = self.acceptor.get_accepted(slot) {
             // Have accepted value, just send it back to messsage sender
-            value = pvalue.value.unwrap(); // should be safe to unwrap ??
+            value = pvalue.value.unwrap();
         } else {
             // No accepted value for this slot, missing from proposer, send noop to learn to ensure progress
             value = Value {
@@ -190,12 +198,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                                 sender: self.node.clone(),
                                 payload: MessagePayload::Learn(learn.clone()),
                             };
-                            _ = network::send_message(&self.learners, &learn_msg);
-                        } else {
-                            if self.config.is_event_driven {
-                                //* Fire-and-forget */
-                                network::send_message_forget(&vec![message.sender.clone()], &msg);
-                            }
+
+                            network::send_message_forget(&self.learners, &learn_msg);
                         }
                         msg
                     }
