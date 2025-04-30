@@ -12,9 +12,9 @@
 # wait
 # echo "All clients finished."
 
-NUM_CLIENTS=1
-NUM_REQUESTS=500
-DEADLINE=20
+NUM_CLIENTS=10
+NUM_REQUESTS=100
+DEADLINE=100
 
 pids=()
 

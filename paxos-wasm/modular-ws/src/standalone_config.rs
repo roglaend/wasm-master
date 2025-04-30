@@ -39,8 +39,8 @@ impl SharedConfig {
                 Node {
                     node_id: i as u64 + 1, // Node IDs are 1-indexed
                     address: format!("{}:{}", base_ip, base_port + i as u16),
-                    // role: get_role_by_index(i),
-                    role: PaxosRole::Coordinator,
+                    role: get_role_by_index(i),
+                    // role: PaxosRole::Coordinator,
                 }
             })
             .collect();
