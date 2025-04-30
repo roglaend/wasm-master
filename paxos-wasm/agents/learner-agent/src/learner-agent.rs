@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use bindings::paxos::default::learner::LearnerResource;
 use bindings::paxos::default::learner_types::{LearnResult, LearnerState, RetryLearnResult};
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    ExecuteResult, Executed, KvPair, Node, PaxosRole, RunConfig, Slot, Value,
+    ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::{logger, network};
 
@@ -38,12 +38,14 @@ pub struct MyLearnerAgentResource {
 
     node: Node,
     proposers: Vec<Node>,
-    // acceptors: Vec<Node>,
+    acceptors: Vec<Node>,
     learner: Arc<LearnerResource>,
     kv_store: Arc<KvStoreResource>,
 
     retries: RefCell<HashMap<Slot, Instant>>,
     retry_interval: Duration,
+
+    next_to_execute: Cell<Slot>,
 }
 
 impl MyLearnerAgentResource {
@@ -78,24 +80,25 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
 
-        // let acceptors: Vec<_> = nodes
-        //     .clone()
-        //     .into_iter()
-        //     .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
-        //     .collect();
+        let acceptors: Vec<_> = nodes
+            .clone()
+            .into_iter()
+            .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
+            .collect();
 
-        let retry_interval = Duration::from_millis(500); // TODO: Get from config
+        let retry_interval = Duration::from_millis(10000); // TODO: Get from config
 
         logger::log_info("[Learner Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
             proposers,
-            // acceptors,
+            acceptors,
             learner,
             kv_store,
             retries: RefCell::new(HashMap::new()),
-            retry_interval: retry_interval,
+            retry_interval,
+            next_to_execute: Cell::new(1),
         }
     }
 
@@ -111,17 +114,39 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         self.learner.get_next_to_execute()
     }
 
-    fn learn_and_execute(&self, slot: Slot, value: Value) -> Executed {
+    // This name is weird now - When acceptor send learns we do
+    fn learn_and_execute(&self, slot: Slot, value: Value, from: Node) -> Executed {
         let mut execs: Vec<ExecuteResult> = Vec::new();
-        if let LearnResult::Execute(learns) = self.learner.learn(slot, &value) {
-            for le in learns {
-                let res = self.kv_store.apply(&le.value.command);
-                execs.push(ExecuteResult {
-                    value: le.value.clone(),
-                    slot: le.slot,
-                    success: true,
-                    cmd_result: res,
-                });
+
+        if self.config.acceptors_send_learns {
+            // Just check for ready to be executed slots
+            let learn = Learn {
+                slot,
+                value: value.clone(),
+            };
+            if let LearnResult::Execute(learns) = self.learner.handle_learn(&learn, &from) {
+                for le in learns {
+                    let res = self.kv_store.apply(&le.value.command);
+                    execs.push(ExecuteResult {
+                        value: le.value.clone(),
+                        slot: le.slot,
+                        success: true,
+                        cmd_result: res,
+                    });
+                }
+            }
+        } else {
+            // Learn the slot first then check for to be executed slots
+            if let LearnResult::Execute(learns) = self.learner.learn(slot, &value) {
+                for le in learns {
+                    let res = self.kv_store.apply(&le.value.command);
+                    execs.push(ExecuteResult {
+                        value: le.value.clone(),
+                        slot: le.slot,
+                        success: true,
+                        cmd_result: res,
+                    });
+                }
             }
         }
 
@@ -149,28 +174,56 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
     // Ticker called from host at a slower interval than proposer ticker
     fn run_paxos_loop(&self) {
-        match self.evaluate_retry() {
-            RetryLearnResult::NoGap => {
-                // nothing to do
-            }
+        if self.node.node_id == 2 {
+            match self.evaluate_retry() {
+                RetryLearnResult::NoGap => {
+                    // nothing to do
+                }
 
-            RetryLearnResult::Skip(slot) => {
-                logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
-            }
+                RetryLearnResult::Skip(slot) => {
+                    logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
+                }
 
-            //* Assume event driven here */
-            RetryLearnResult::Retry(slot) => {
-                let retry_msg = NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::RetryLearn(slot),
-                };
-                logger::log_warn(&format!(
-                    "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
-                    slot
-                ));
-                network::send_message_forget(&self.proposers, &retry_msg);
+                //* Assume event driven here */
+                RetryLearnResult::Retry(slot) => {
+                    let retry_msg = NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::RetryLearn(slot),
+                    };
+                    logger::log_warn(&format!(
+                        "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
+                        slot
+                    ));
+
+                    if self.config.acceptors_send_learns {
+                        network::send_message_forget(&self.acceptors, &retry_msg);
+                    } else {
+                        network::send_message_forget(&self.proposers, &retry_msg);
+                    }
+                }
             }
         }
+
+        // TODO: HAVE
+        // if self.config.acceptors_send_learns {
+        //     let dummy_value = Value {
+        //         command: None,
+        //         client_id: "".to_string(),
+        //         client_seq: 1,
+        //     };
+        //     let executed = self.learn_and_execute(0, dummy_value);
+
+        //     if executed.results.is_empty() {
+        //         return;
+        //     }
+        //     let exec_msg = NetworkMessage {
+        //         sender: self.node.clone(),
+        //         payload: MessagePayload::Executed(executed),
+        //     };
+        //     if self.config.is_event_driven {
+        //         network::send_message_forget(&self.proposers, &exec_msg);
+        //     }
+        // }
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -181,7 +234,15 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload.slot, payload.value
                 ));
 
-                let executed = self.learn_and_execute(payload.slot, payload.value.clone());
+                let executed: Executed;
+
+                if self.config.acceptors_send_learns {
+                    executed =
+                        self.learn_and_execute(payload.slot, payload.value.clone(), message.sender); // dummy slot and value not used when acceptors_send_learns
+                } else {
+                    executed =
+                        self.learn_and_execute(payload.slot, payload.value.clone(), message.sender);
+                }
 
                 if executed.results.is_empty() || !self.config.learners_send_executed {
                     return NetworkMessage {
@@ -197,7 +258,9 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 };
 
                 if self.config.is_event_driven {
-                    network::send_message_forget(&self.proposers, &exec_msg);
+                    if self.node.node_id == 2 {
+                        network::send_message_forget(&self.proposers, &exec_msg);
+                    }
                     NetworkMessage {
                         sender: self.node.clone(),
                         payload: MessagePayload::Ignore,

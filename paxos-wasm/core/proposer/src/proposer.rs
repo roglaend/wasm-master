@@ -355,20 +355,6 @@ impl GuestProposerResource for MyProposerResource {
             .filter(|a| a.slot == prop.slot && a.ballot == prop.ballot && a.success)
             .count();
 
-        // TODO: Fix this, if we want to ensure submitted client request will eventually get committed.
-        // if count >= self.num_acceptors as usize {
-        //     logger::log_debug(&format!(
-        //         "[Core Proposer] Accept phase failed for slot {}. All acceptors answered.",
-        //         slot
-        //     ));
-        //     self.prioritized_values.borrow_mut().push_back(PValue {
-        //         // TODO: Add back to queue as just a Value?
-        //         slot: slot,
-        //         ballot: self.current_ballot.get(),
-        //         value: Some(prop.value.clone()),
-        //     });
-        // }
-
         if count < self.quorum() as usize {
             logger::log_debug(&format!(
                 "[Core Proposer] Accept phase failed for slot {}: {} acceptances received (quorum is {}).",
@@ -417,15 +403,16 @@ impl GuestProposerResource for MyProposerResource {
 
     /// Marks a commit‐pending proposal “finalized” once it has executed.
     fn mark_proposal_finalized(&self, slot: Slot) -> Option<Value> {
+        // swithc between infligh for acceptors send learns and commit pending for the rest
         if self
-            .get_proposal_by_status(slot, ProposalStatus::CommitPending)
+            .get_proposal_by_status(slot, ProposalStatus::InFlight)
             .is_none()
         {
-            let curr = self.proposals.borrow().get(&slot).map(|e| e.status.clone());
-            logger::log_error(&format!(
-                "[Proposer] Cannot finalize slot {} in status {:?}; expected CommitPending.",
-                slot, curr
-            ));
+            // let curr = self.proposals.borrow().get(&slot).map(|e| e.status.clone());
+            // logger::log_error(&format!(
+            //     "[Proposer] Cannot finalize slot {} in status {:?}; expected CommitPending.",
+            //     slot, curr
+            // ));
             return None;
         }
 
@@ -436,6 +423,26 @@ impl GuestProposerResource for MyProposerResource {
             slot, val
         ));
         Some(val)
+    }
+
+    /// Marks and inflight proposal finalized and retires the proposal for new slot
+    fn mark_proposal_finalized_and_retry(&self, slot: Slot) -> Option<Value> {
+        if let Some(prop) = self.get_proposal_by_status(slot, ProposalStatus::InFlight) {
+            let val = self.update_proposal_status(slot, ProposalStatus::Finalized)?;
+            logger::log_info(&format!(
+                "[Proposer] Proposal slot {} marked Finalized with noop: {:?} and retrying with new slot.",
+                slot, &val
+            ));
+            self.enqueue_client_request(prop.value.clone());
+            Some(prop.value)
+        } else {
+            // logger::log_error(&format!(
+            //     "[Proposer] Cannot finalize slot {} in status {:?}; expected InFlight.",
+            //     slot,
+            //     self.proposals.borrow().get(&slot).map(|e| e.status.clone())
+            // ));
+            None
+        }
     }
 
     fn increase_ballot(&self) -> Ballot {

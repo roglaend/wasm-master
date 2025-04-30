@@ -75,6 +75,34 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         self.acceptor.accept(slot, ballot, &value)
     }
 
+    fn retry_learn(&self, slot: Slot, from: Node) {
+        logger::log_info(&format!(
+            "[Acceptor Agent] Retrying learn for slot {}",
+            slot
+        ));
+
+        let value: Value;
+
+        if let Some(pvalue) = self.acceptor.get_accepted(slot) {
+            // Have accepted value, just send it back to messsage sender
+            value = pvalue.value.unwrap(); // should be safe to unwrap ??
+        } else {
+            // No accepted value for this slot, missing from proposer, send noop to learn to ensure progress
+            value = Value {
+                command: None,
+                client_id: "".to_string(),
+                client_seq: 0,
+            };
+        }
+
+        let learn = Learn { slot, value };
+
+        let learn_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Learn(learn.clone()),
+        };
+        _ = network::send_message(&vec![from], &learn_msg);
+    }
     // Commit phase: broadcasts a learn message if configured to do so.
     fn commit_phase(&self, slot: Slot, value: Value) -> Option<Learn> {
         if self.config.acceptors_send_learns {
@@ -93,7 +121,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 sender: self.node.clone(),
                 payload: MessagePayload::Learn(learn.clone()),
             };
-            _ = network::send_message(&vec![], &learn_msg);
+            _ = network::send_message(&self.learners, &learn_msg);
             Some(learn)
         } else {
             logger::log_warn(
@@ -141,10 +169,10 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             MessagePayload::Accept(payload) => {
                 logger::log_info(&format!(
                     "[Acceptor Agent] Handling ACCEPT: slot={}, ballot={}, value={:?}",
-                    payload.slot, payload.ballot, payload.value
+                    payload.slot, payload.ballot, &payload.value
                 ));
                 let accepted_result =
-                    self.process_accept(payload.slot, payload.ballot, payload.value);
+                    self.process_accept(payload.slot, payload.ballot, payload.value.clone());
                 let response = match accepted_result {
                     AcceptedResult::Accepted(accepted) => {
                         let msg = NetworkMessage {
@@ -152,9 +180,22 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                             payload: MessagePayload::Accepted(accepted),
                         };
 
-                        //* Fire-and-forget */
-                        if self.config.is_event_driven {
-                            network::send_message_forget(&vec![message.sender.clone()], &msg);
+                        if self.config.acceptors_send_learns {
+                            let learn = Learn {
+                                slot: accepted.slot,
+                                value: payload.value,
+                            };
+
+                            let learn_msg = NetworkMessage {
+                                sender: self.node.clone(),
+                                payload: MessagePayload::Learn(learn.clone()),
+                            };
+                            _ = network::send_message(&self.learners, &learn_msg);
+                        } else {
+                            if self.config.is_event_driven {
+                                //* Fire-and-forget */
+                                network::send_message_forget(&vec![message.sender.clone()], &msg);
+                            }
                         }
                         msg
                     }
@@ -164,6 +205,19 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     },
                 };
                 response
+            }
+            MessagePayload::RetryLearn(slot) => {
+                logger::log_warn(&format!(
+                    "[Acceptor Agent] Handling LEARN RETRY: slots={:?}",
+                    slot
+                ));
+
+                self.retry_learn(slot, message.sender);
+
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore,
+                }
             }
             MessagePayload::Heartbeat(payload) => {
                 logger::log_debug(&format!(
