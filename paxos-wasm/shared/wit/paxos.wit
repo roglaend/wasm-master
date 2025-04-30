@@ -40,6 +40,8 @@ interface proposer {
         /// Finalizes the proposal after learner execution
         mark-proposal-finalized: func(slot: slot) -> option<value>;
 
+        mark-proposal-finalized-and-retry: func(slot: slot) -> option<value>;
+
         // Increases ballot and returns it
         increase-ballot: func() -> ballot;
 
@@ -56,27 +58,31 @@ interface proposer {
 
 interface acceptor {
     use paxos-types.{slot, ballot, value, prepare, promise, accept, accepted, learn};
-    use acceptor-types.{promise-result, accepted-result, acceptor-state};
+    use acceptor-types.{promise-result, accepted-result, acceptor-state, p-value};
 
     resource acceptor-resource {
         constructor(gc-window: option<u64>);
         get-state: func() -> acceptor-state;
         prepare: func(slot: slot, ballot: ballot) -> promise-result;
         accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
+        get-accepted: func(slot: slot) -> option<p-value>;
     }
 }
 
 interface learner {
-    use paxos-types.{slot, value};
+    use paxos-types.{slot, value, learn};
+    use network-types.{node};
     use learner-types.{learned-entry, learner-state, learn-result};
 
     resource learner-resource {
         constructor();
         get-state: func() -> learner-state;
         learn: func(slot: slot, value: value) -> learn-result;
+        handle-learn: func(learn: learn, %from: node) -> learn-result;
         get-learned: func(slot: slot) -> option<learned-entry>;
         get-next-to-execute : func() -> slot;
         check-for-gap: func() -> option<slot>;
+        to-be-executed: func() -> learn-result;
     }
 }
 
@@ -288,6 +294,8 @@ interface acceptor-agent {
         commit-phase: func(slot: slot, value: value) -> option<learn>;
 
         handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
+    
+        retry-learn: func(slot: slot, %from: node);
     }
 
 }
@@ -307,7 +315,7 @@ interface learner-agent {
         get-next-to-execute : func() -> slot;
 
         /// Learn the new value, and return a list of executed values and adu.
-        learn-and-execute: func(slot: slot, value: value) -> executed;  
+        learn-and-execute: func(slot: slot, value: value, %from: node) -> executed;  
 
         evaluate-retry: func() -> retry-learn-result;
 
