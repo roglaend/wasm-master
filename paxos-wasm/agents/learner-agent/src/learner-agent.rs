@@ -73,15 +73,15 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         let kv_store = Arc::new(KvStoreResource::new());
 
         let proposers: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Proposer | PaxosRole::Coordinator))
+            .cloned()
             .collect();
 
         // let acceptors: Vec<_> = nodes
         //     .clone()
         //     .into_iter()
-        //     .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
+        //     .filter(|x| matches!(x.role, PaxosRole::Acceptor | PaxosRole::Coordinator))
         //     .collect();
 
         let retry_interval = Duration::from_millis(500); // TODO: Get from config

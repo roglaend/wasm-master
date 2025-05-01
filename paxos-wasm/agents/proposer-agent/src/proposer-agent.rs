@@ -27,7 +27,7 @@ use bindings::paxos::default::{
     failure_detector::FailureDetectorResource, logger, network, proposer::ProposerResource,
 };
 
-enum CollectedResponses<T, R> {
+enum CollectedResponses<T, R> {  
     Synchronous(Vec<T>),
     EventDriven(R),
 }
@@ -384,30 +384,20 @@ impl MyProposerAgentResource {
 impl GuestProposerAgentResource for MyProposerAgentResource {
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
         let acceptors: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Acceptor | PaxosRole::Coordinator))
+            .cloned()
             .collect();
-        // TODO: make this more future proof?
-        let num_acceptors = acceptors.len() as u64
-            + if node.role == PaxosRole::Coordinator {
-                1
-            } else {
-                0
-            };
 
         let learners: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Learner | PaxosRole::Coordinator))
+            .cloned()
             .collect();
 
-        let num_learners = learners.len() as u64
-            + if node.role == PaxosRole::Coordinator {
-                1
-            } else {
-                0
-            };
+        let self_is_coordinator = node.role == PaxosRole::Coordinator;
+        let num_acceptors = acceptors.len() as u64 + self_is_coordinator as u64;
+        let num_learners = learners.len() as u64 + self_is_coordinator as u64;
 
         let init_ballot = node.node_id;
         let proposer = Arc::new(ProposerResource::new(is_leader, num_acceptors, init_ballot));
@@ -629,7 +619,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             return Vec::new();
         }
 
-        let mut out = Vec::new();
         for r in &executed.results {
             let _ = self.mark_proposal_finalized(r.slot);
 
@@ -645,13 +634,13 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 r.slot
             ));
 
-            // TODO: Needed?
-            if !out.contains(&resp) {
-                out.push(resp);
+            let mut all_responses = self.client_responses.borrow_mut();
+            if !all_responses.contains(&resp) {
+                all_responses.push_back(resp);
             }
         }
 
-        out
+        [].into()
     }
 
     fn retry_learn(&self, slot: Slot) {

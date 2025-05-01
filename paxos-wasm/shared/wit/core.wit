@@ -1,0 +1,112 @@
+/// The core proposer contains all Paxos logic for proposals.
+interface proposer {
+    use paxos-types.{slot, ballot, value, client-request, prepare, promise, accept, proposal, accepted, learn};
+    use proposer-types.{prepare-result, accept-result, proposer-state, proposal-status};
+
+    resource proposer-resource {
+        /// Constructs a new proposer with an initial ballot, number of acceptors, and leadership flag.
+        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot);
+
+        /// Returns the current state of the proposer.
+        get-state: func() -> proposer-state;
+
+        /// Enqueues a client request for later processing.
+        enqueue-client-request: func(request: value) -> bool;
+
+        get-current-slot: func() -> slot;
+
+        get-current-ballot: func() -> ballot;
+
+        /// Gets a proposal depending on its ProposerStatus
+        get-proposal-by-status: func(slot: slot, ps: proposal-status) -> option<proposal>;
+
+        /// Reserves the next chosen proposal, setting the proposals status from Chosen to CommitPending
+        reserve-next-chosen-proposal: func() -> option<proposal>;
+
+        /// Creates the next proposal from the pending queue (if available).
+        create-proposal: func() -> option<proposal>;
+
+        /// Processes a complete set of promise responses for a given slot.
+        process-prepare: func(slot: slot, promises: list<promise>) -> prepare-result;
+
+        /// Processes a complete set of accepted responses for a given slot.
+        process-accept: func(slot: slot, accepts: list<accepted>) -> accept-result;
+
+        /// Marks the proposal as chosen when accepted by a quorum of acceptors
+        mark-proposal-chosen: func(slot: slot ) -> option<value>;
+
+        /// Finalizes the proposal after learner execution
+        mark-proposal-finalized: func(slot: slot) -> option<value>;
+
+        // Increases ballot and returns it
+        increase-ballot: func() -> ballot;
+
+        // If the proposer is leader.
+        is-leader: func() -> bool;
+
+        /// Transitions this proposer into leader mode.
+        become-leader: func() -> bool;
+
+        /// Relinquishes leadership.
+        resign-leader: func() -> bool;
+    }
+}
+
+interface acceptor {
+    use paxos-types.{slot, ballot, value, prepare, promise, accept, accepted, learn};
+    use acceptor-types.{promise-result, accepted-result, acceptor-state};
+
+    resource acceptor-resource {
+        constructor(gc-window: option<u64>);
+        get-state: func() -> acceptor-state;
+        prepare: func(slot: slot, ballot: ballot) -> promise-result;
+        accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
+    }
+}
+
+interface learner {
+    use paxos-types.{slot, value};
+    use learner-types.{learned-entry, learner-state, learn-result};
+
+    resource learner-resource {
+        constructor();
+        get-state: func() -> learner-state;
+        learn: func(slot: slot, value: value) -> learn-result;
+        get-learned: func(slot: slot) -> option<learned-entry>;
+        get-next-to-execute : func() -> slot;
+        check-for-gap: func() -> option<slot>;
+    }
+}
+
+interface kv-store {
+    use paxos-types.{kv-pair, cmd, cmd-result};
+
+    resource kv-store-resource {
+        constructor();
+        apply: func(cmd: cmd) -> cmd-result;
+        get-state: func() -> list<kv-pair>;
+        get-history: func() -> list<cmd>;
+    }
+}
+
+interface failure-detector {
+    use paxos-types.{node};
+
+    resource failure-detector-resource {
+        constructor(node-id: u64, nodes: list<node>, delta: u64);
+        checker: func() -> option<u64>;
+        heartbeat: func(node: u64);
+    }   
+}
+
+// TODO: Change these to use the node type instead of just node_ids?
+
+interface leader-detector {
+
+    resource leader-detector-resource {
+        constructor(nodes: list<u64>, local-node-id: u64);
+        suspect: func(node: u64) -> option<u64>;
+        restore: func(node: u64) -> option<u64>;
+        nodes: func() -> list<u64>;
+    }
+}

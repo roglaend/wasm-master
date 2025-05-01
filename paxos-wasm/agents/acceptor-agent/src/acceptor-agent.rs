@@ -41,11 +41,10 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         let garbage_collection_window = Some(100);
         let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
 
-        // TODO: make this more future proof?
         let learners: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Learner | PaxosRole::Coordinator))
+            .cloned()
             .collect();
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");

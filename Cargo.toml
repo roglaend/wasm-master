@@ -10,7 +10,8 @@ default-members = [
     # "paxos-wasm/composed-grpc",
     # "paxos-wasm/modular-grpc",
     "paxos-wasm/modular-ws",
-    "paxos-wasm/modular-ws-test",
+    "paxos-wasm/modular-ws-client",
+    "paxos-wasm/runner-ws",
 ]
 
 members = [
@@ -35,11 +36,21 @@ members = [
 
     "paxos-wasm/runners",
     "paxos-wasm/runners/paxos-coordinator",
+    "paxos-wasm/runners/runner",
 
     "paxos-wasm/composed-grpc",
     "paxos-wasm/composed-grpc/client",
     "paxos-wasm/composed-grpc/client-cli",
     "paxos-wasm/composed-grpc/command",
+
+    "paxos-wasm/network-ws",
+    "paxos-wasm/network-ws/serializer",
+    "paxos-wasm/network-ws/network_server",
+    "paxos-wasm/network-ws/client_server",
+    "paxos-wasm/network-ws/tcp-client",
+    "paxos-wasm/network-ws/udp-client",
+
+    "paxos-wasm/runner-ws",
 
     # TODO: Enable when fixed
     # "paxos-wasm/modular-grpc",
@@ -47,14 +58,11 @@ members = [
 
     "paxos-wasm/modular-ws",
     "paxos-wasm/modular-ws/client",
-    "paxos-wasm/modular-ws/serializer",
     "paxos-wasm/modular-ws/tcp-server",
-    "paxos-wasm/modular-ws/tcp-client",
     "paxos-wasm/modular-ws/udp-server",
-    "paxos-wasm/modular-ws/udp-client",
 
-    "paxos-wasm/modular-ws-test",
-    "paxos-wasm/modular-ws-test/paxos-client-test",
+    "paxos-wasm/modular-ws-client",
+    "paxos-wasm/modular-ws-client/paxos-ws-client",
 
     "paxos-wasm/shared/utils",
     "paxos-wasm/shared/grpc",

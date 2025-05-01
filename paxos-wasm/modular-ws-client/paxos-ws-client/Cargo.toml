@@ -1,0 +1,12 @@
+[package]
+name = "paxos-ws-client"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/paxos-client.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.41"
+wasi = "0.14.2"

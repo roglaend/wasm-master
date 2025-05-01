@@ -34,7 +34,7 @@ impl ComponentRunStates {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
-            role: node.role as u64,
+            role: node.role as u64, 
         };
         ComponentRunStates {
             wasi_ctx: WasiCtxBuilder::new()
@@ -53,7 +53,7 @@ impl ComponentRunStates {
 pub struct PaxosWasmtime {
     pub _engine: Engine,
     pub store: Mutex<Store<ComponentRunStates>>,
-    pub bindings: bindings::PaxosWsWorld,
+    pub bindings: bindings::PaxosRunnerWorld,
     pub resource_handle: ResourceAny,
 }
 
@@ -83,24 +83,17 @@ impl PaxosWasmtime {
             .expect("Workspace folder")
             .to_owned();
 
-        //    let composed_component = Component::from_file(
-        //         &engine,
-        //         workspace_dir.join("target/wasm32-wasip2/release/final_composed_udp_server.wasm"),
-        //     )?;
-
-        // TODO: Make the component/model swap much better, thankyou :)
-
         let composed_component = Component::from_file(
             &engine,
-            workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
+            workspace_dir.join("target/wasm32-wasip2/release/final_composed_runner.wasm"),
         )?;
 
         let final_bindings =
-            bindings::PaxosWsWorld::instantiate_async(&mut store, &composed_component, &linker)
+            bindings::PaxosRunnerWorld::instantiate_async(&mut store, &composed_component, &linker)
                 .await?;
 
-        let guest = final_bindings.paxos_default_ws_server();
-        let resource = guest.ws_server_resource();
+        let guest = final_bindings.paxos_default_runner();
+        let resource = guest.runner_resource();
 
         let resource_handle = resource
             .call_constructor(&mut store, &node, &nodes, is_leader, run_config)
@@ -115,14 +108,14 @@ impl PaxosWasmtime {
     }
 
     //Helper methods to access WASM guest.
-    pub fn guest<'a>(&'a self) -> &'a bindings::exports::paxos::default::ws_server::Guest {
-        self.bindings.paxos_default_ws_server()
+    pub fn guest<'a>(&'a self) -> &'a bindings::exports::paxos::default::runner::Guest {
+        self.bindings.paxos_default_runner()
     }
 
     pub fn resource<'a>(
         &'a self,
-    ) -> bindings::exports::paxos::default::ws_server::GuestWsServerResource<'a> {
-        self.guest().ws_server_resource()
+    ) -> bindings::exports::paxos::default::runner::GuestRunnerResource<'a> {
+        self.guest().runner_resource()
     }
 }
 

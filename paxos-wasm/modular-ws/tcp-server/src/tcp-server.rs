@@ -8,6 +8,7 @@ use std::time::Duration;
 use std::time::Instant;
 use wasi::sockets::tcp::InputStream;
 use wasi::sockets::tcp::OutputStream;
+use wasi::sockets::tcp::ShutdownType;
 
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
@@ -22,7 +23,7 @@ pub mod bindings {
     });
 }
 
-bindings::export!(MyProposerTcp with_types_in bindings);
+bindings::export!(MyWsServerTcp with_types_in bindings);
 
 use bindings::exports::paxos::default::ws_server::{Guest, GuestWsServerResource, RunConfig};
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
@@ -31,9 +32,9 @@ use bindings::paxos::default::{
     acceptor_agent, learner_agent, logger, paxos_coordinator, proposer_agent, serializer,
 };
 
-pub struct MyProposerTcp;
+pub struct MyWsServerTcp;
 
-impl Guest for MyProposerTcp {
+impl Guest for MyWsServerTcp {
     type WsServerResource = MyTcpServerResource;
 }
 
@@ -56,11 +57,11 @@ impl Connection {
     }
 
     pub fn shutdown(mut self) {
+        let _ = self.socket.shutdown(ShutdownType::Both);
         // Take the streams out of the struct so they are dropped here.
         let _ = self.input.take();
         let _ = self.output.take();
         // When self goes out of scope, socket gets dropped after its children.
-        // Optionally, you can try to invoke any shutdown on the socket if available.
     }
 }
 
@@ -94,7 +95,7 @@ impl Runner {
     fn is_leader(&self) -> bool {
         match self {
             Runner::Proposer(runner) => runner.is_leader(),
-            Runner::Coordinator(runner) => runner.is_leader(),
+            // Runner::Coordinator(runner) => runner.is_leader(),
             _ => false,
         }
     }

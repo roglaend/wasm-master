@@ -1,5 +1,5 @@
 [package]
-name = "modular-ws-test"
+name = "runners-ws"
 version = "0.1.0"
 edition = "2024"
 
@@ -14,8 +14,11 @@ dashmap = "5"
 once_cell = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+yaml-rust = "0.4"
 
 
 [build-dependencies]
-paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }
+paxos-wasm-utils = { path = "../shared/utils" }
+network-ws = { path = "../network-ws" }
 agents = { path = "../agents" }
+runners = { path = "../runners" }
