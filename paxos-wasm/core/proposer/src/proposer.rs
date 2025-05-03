@@ -129,7 +129,7 @@ impl MyProposerResource {
             Some(old_value)
         } else {
             logger::log_error(&format!(
-                "[Proposer] Tried to update status for unknown slot {}.",
+                "[Core Proposer] Tried to update status for unknown slot {}.",
                 slot
             ));
             None
@@ -385,7 +385,7 @@ impl GuestProposerResource for MyProposerResource {
             .is_none()
         {
             logger::log_error(&format!(
-                "[Proposer] No in‐flight proposal for slot {} to mark as chosen.",
+                "[Core Proposer] No in‐flight proposal for slot {} to mark as chosen.",
                 slot
             ));
             return None;
@@ -394,7 +394,7 @@ impl GuestProposerResource for MyProposerResource {
         let val = self.update_proposal_status(slot, ProposalStatus::Chosen)?;
 
         logger::log_info(&format!(
-            "[Proposer] Proposal slot {} marked Chosen with value {:?}.",
+            "[Core Proposer] Proposal slot {} marked Chosen with value {:?}.",
             slot, val
         ));
         Some(val)
@@ -412,7 +412,7 @@ impl GuestProposerResource for MyProposerResource {
         let val = self.update_proposal_status(slot, ProposalStatus::Finalized)?;
 
         logger::log_info(&format!(
-            "[Proposer] Proposal slot {} marked Finalized with value {:?}.",
+            "[Core Proposer] Proposal slot {} marked Finalized with value {:?}.",
             slot, val
         ));
         Some(val)

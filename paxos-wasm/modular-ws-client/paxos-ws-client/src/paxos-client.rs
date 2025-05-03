@@ -82,7 +82,7 @@ impl Connection {
     /// Client is done *sending* requests: shut down the send half and drop our OutputStream.
     pub fn shutdown_send(&mut self) {
         // Tell the OS we will send no more data (FIN to peer)
-        let _ = self.socket.shutdown(ShutdownType::Send);
+        // let _ = self.socket.shutdown(ShutdownType::Send); // TODO: doesn't work. Server can't handle it correctly.
         // Drop our write stream so we can’t send again
         self.output.take();
     }
@@ -90,7 +90,7 @@ impl Connection {
     /// Client is done *receiving* responses: shut down the receive half and drop our InputStream.
     pub fn shutdown_receive(&mut self) {
         // Tell the OS we are not reading any more (discard inbound)
-        let _ = self.socket.shutdown(ShutdownType::Receive);
+        // let _ = self.socket.shutdown(ShutdownType::Receive); // TODO: doesn't work. Server can't handle it correctly.
         self.input.take();
     }
 
@@ -101,7 +101,7 @@ impl Connection {
         //   - drop streams
         //   - drop socket
         let mut this = self;
-        let _ = this.socket.shutdown(ShutdownType::Both);
+        // let _ = this.socket.shutdown(ShutdownType::Both); // TODO: doesn't work. Server can't handle it correctly.
         let _ = this.input.take();
         let _ = this.output.take();
         // socket is dropped here

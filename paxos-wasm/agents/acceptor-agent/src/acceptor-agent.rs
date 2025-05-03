@@ -179,25 +179,28 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     self.process_accept(payload.slot, payload.ballot, payload.value.clone());
                 let response = match accepted_result {
                     AcceptedResult::Accepted(accepted) => {
-                        let msg = NetworkMessage {
+                        let accepted_msg = NetworkMessage {
                             sender: self.node.clone(),
                             payload: MessagePayload::Accepted(accepted),
                         };
+                        if self.config.is_event_driven {
+                            if self.config.acceptors_send_learns {
+                                let learn = Learn {
+                                    slot: accepted.slot,
+                                    value: payload.value,
+                                };
 
-                        if self.config.acceptors_send_learns {
-                            let learn = Learn {
-                                slot: accepted.slot,
-                                value: payload.value,
-                            };
+                                let learn_msg = NetworkMessage {
+                                    sender: self.node.clone(),
+                                    payload: MessagePayload::Learn(learn),
+                                };
 
-                            let learn_msg = NetworkMessage {
-                                sender: self.node.clone(),
-                                payload: MessagePayload::Learn(learn),
-                            };
-
-                            network::send_message_forget(&self.learners, &learn_msg);
+                                network::send_message_forget(&self.learners, &learn_msg);
+                            } else {
+                                network::send_message_forget(&vec![message.sender], &accepted_msg);
+                            }
                         }
-                        msg
+                        accepted_msg
                     }
                     AcceptedResult::Rejected(_ballot) => NetworkMessage {
                         sender: self.node.clone(),
