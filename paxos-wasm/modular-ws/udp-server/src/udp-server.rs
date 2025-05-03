@@ -23,16 +23,16 @@ pub mod bindings {
     });
 }
 
-bindings::export!(MyTcpServer with_types_in bindings);
+bindings::export!(MyWsServerUdp with_types_in bindings);
 
 use bindings::exports::paxos::default::ws_server::{Guest, GuestWsServerResource, RunConfig};
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{ClientResponse, Node, Operation, PaxosRole, Value};
 use bindings::paxos::default::{acceptor_agent, learner_agent, logger, proposer_agent, serializer};
 
-pub struct MyTcpServer;
+pub struct MyWsServerUdp;
 
-impl Guest for MyTcpServer {
+impl Guest for MyWsServerUdp {
     type WsServerResource = MyTcpServerResource;
 }
 

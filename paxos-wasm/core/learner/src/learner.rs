@@ -6,6 +6,7 @@ mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "learner-world",
+    additional_derives: [PartialEq],
     });
 }
 
@@ -13,61 +14,54 @@ bindings::export!(MyLearner with_types_in bindings);
 
 use bindings::paxos::default::paxos_types::{Accepted, Learn, Node, Slot, Value};
 
-use crate::bindings::exports::paxos::default::learner::{
+use bindings::exports::paxos::default::learner::{
     Guest, GuestLearnerResource, LearnResult, LearnedEntry, LearnerState,
 };
-use crate::bindings::paxos::default::logger;
+use bindings::paxos::default::logger;
 
-pub struct MyLearner;
+struct MyLearner;
 
 impl Guest for MyLearner {
     type LearnerResource = MyLearnerResource;
 }
 
-/// Our learner now uses a BTreeMap to store learned values per slot.
-/// This ensures that each slot only has one learned value and that the entries remain ordered.
-pub struct MyLearnerResource {
+struct MyLearnerResource {
     learned: RefCell<BTreeMap<Slot, Value>>,
     next_to_execute: Cell<Slot>,
     execution_log: RefCell<BTreeMap<Slot, Value>>,
-    // executed_order: RefCell<Vec<LearnedEntry>>,
     max_gap_size: u64,
-    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>,
-    // slots_chosen: RefCell<BTreeMap<Slot, Learn>>,
-    quorum: usize,
+    num_acceptors: u64,
 
-    flush_timout: Duration,
-    last_flush: Cell<Instant>,
+    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: new, needed?
+    flush_timeout: Duration,
+    last_flush: Cell<Instant>, // TODO: move to agent
 
-    rety_timeout: Duration,
-    last_message_recieved: Cell<Instant>,
+    retry_timeout: Duration, // TODO: move to agent
+    last_message_time: Cell<Instant>,
 }
 
 impl MyLearnerResource {
-    fn learn_equals(&self, l1: &Learn, l2: &Learn) -> bool {
-        l1.slot == l2.slot
-            && l1.value.client_id == l2.value.client_id
-            && l1.value.client_seq == l2.value.client_seq
+    fn quorum(&self) -> usize {
+        return ((self.num_acceptors / 2) + 1) as usize;
     }
 }
 
 impl GuestLearnerResource for MyLearnerResource {
     /// Constructor: Initialize an empty BTreeMap.
-    fn new() -> Self {
+    fn new(num_acceptors: u64) -> Self {
         Self {
             learned: RefCell::new(BTreeMap::new()),
             next_to_execute: Cell::new(1),
             execution_log: RefCell::new(BTreeMap::new()),
-            // executed_order: RefCell::new(Vec::new()),
-            max_gap_size: 1,
+            max_gap_size: 10,
+            num_acceptors,
+
             slot_learns: RefCell::new(BTreeMap::new()),
-            // slots_chosen: RefCell::new(BTreeMap::new()),
-            quorum: 2, // Hardcoded for now, but should be set by the config
-            flush_timout: Duration::from_millis(10),
+            flush_timeout: Duration::from_millis(10),
             last_flush: Cell::new(Instant::now()),
 
-            rety_timeout: Duration::from_millis(500),
-            last_message_recieved: Cell::new(Instant::now()),
+            retry_timeout: Duration::from_millis(500),
+            last_message_time: Cell::new(Instant::now()),
         }
     }
 
@@ -90,10 +84,35 @@ impl GuestLearnerResource for MyLearnerResource {
         self.next_to_execute.get()
     }
 
-    // Handles incoming learns from acceptors. Checks for quorum and and stores the learned value. Returns ready to be executed slots if any
+    /// Record that a value has been learned for a given slot.
+    /// If the slot already has a learned value, a warning is logged and the new value is ignored.
+    /// Can only execute consecutive slots starting from the next_to_execute slot.
+    fn learn(&self, slot: Slot, value: Value) -> LearnResult {
+        let mut learned_map = self.learned.borrow_mut();
+        let execution_log = self.execution_log.borrow_mut();
+
+        // Insert learn if have not learned yet
+        if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
+            logger::log_info(&format!(
+                "[Core Learner]: For slot {}, learned value {:?}",
+                slot, value
+            ));
+            learned_map.insert(slot, value);
+        } else {
+            logger::log_warn(&format!(
+                "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
+                slot, value
+            ));
+        }
+        return LearnResult::Ignore;
+    }
+
+    // TODO
+
+    // Handles incoming learns from acceptors. Checks for quorum and and stores the learned value. Returns ready to be executed slots if any.
     fn handle_learn(&self, learn: Learn, from: Node) -> LearnResult {
         let now = Instant::now();
-        self.last_message_recieved.set(now);
+        self.last_message_time.set(now);
         let execution_log = self.execution_log.borrow();
         if !execution_log.contains_key(&learn.slot) {
             logger::log_info(&format!(
@@ -108,18 +127,15 @@ impl GuestLearnerResource for MyLearnerResource {
                 .insert(from.node_id, learn.clone());
 
             if let Some(sender_map) = self.slot_learns.borrow().get(&slot) {
-                if sender_map.len() >= self.quorum {
+                if sender_map.len() >= self.quorum() {
                     let learns: Vec<&Learn> = sender_map.values().collect();
 
                     for &candidate in &learns {
-                        let count = learns
-                            .iter()
-                            .filter(|&&learn| self.learn_equals(learn, candidate))
-                            .count();
+                        let count = learns.iter().filter(|&&learn| learn == candidate).count();
 
-                        if count >= self.quorum {
+                        if count >= self.quorum() {
                             logger::log_info(&format!(
-                                "Learner: Learned full Learn {:?} for slot {} with count {}",
+                                "[Core Learner]: Learned full Learn {:?} for slot {} with count {}",
                                 candidate, slot, count
                             ));
                             // Learn: candidate.value or the full candidate
@@ -134,6 +150,8 @@ impl GuestLearnerResource for MyLearnerResource {
         }
         return LearnResult::Ignore;
     }
+
+    // TODO
 
     fn to_be_executed(&self) -> LearnResult {
         let mut learned_map = self.learned.borrow_mut();
@@ -180,30 +198,6 @@ impl GuestLearnerResource for MyLearnerResource {
         }
         // Check if some learns are ready to
     }
-    // TODO: Take into account the client-id and client_seq when executing, and not just the slot
-
-    /// Record that a value has been learned for a given slot.
-    /// If the slot already has a learned value, a warning is logged and the new value is ignored.
-    /// Can only execute consecutive slots starting from the next_to_execute slot.
-    fn learn(&self, slot: Slot, value: Value) -> LearnResult {
-        let mut learned_map = self.learned.borrow_mut();
-        let execution_log = self.execution_log.borrow_mut();
-
-        // Insert learn if have not learned yet
-        if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
-            logger::log_info(&format!(
-                "[Core Learner]: For slot {}, learned value {:?}",
-                slot, value
-            ));
-            learned_map.insert(slot, value);
-        } else {
-            logger::log_warn(&format!(
-                "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
-                slot, value
-            ));
-        }
-        return LearnResult::Ignore;
-    }
 
     // Checker for gaps in the learned slots. Should be called at reasoinable a interval.
     fn check_for_gap(&self) -> Option<Slot> {
@@ -227,7 +221,7 @@ impl GuestLearnerResource for MyLearnerResource {
         let now = Instant::now();
         // return if gap is > max_gap_size or if the time since last message is > retry_timeout
         if gap >= self.max_gap_size
-            || (gap > 0 && now.duration_since(self.last_message_recieved.get()) > self.rety_timeout)
+            || (gap > 0 && now.duration_since(self.last_message_time.get()) > self.retry_timeout)
         {
             Some(next_to_execute)
         } else {

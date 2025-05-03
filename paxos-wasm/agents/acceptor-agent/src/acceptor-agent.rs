@@ -42,11 +42,10 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         let garbage_collection_window = Some(100);
         let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
 
-        // TODO: make this more future proof?
         let learners: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Learner || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Learner | PaxosRole::Coordinator))
+            .cloned()
             .collect();
 
         let proposers: Vec<_> = nodes
@@ -83,34 +82,6 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         self.acceptor.accept(slot, ballot, &value)
     }
 
-    fn retry_learn(&self, slot: Slot, from: Node) {
-        logger::log_info(&format!(
-            "[Acceptor Agent] Retrying learn for slot {}",
-            slot
-        ));
-
-        let value: Value;
-
-        if let Some(pvalue) = self.acceptor.get_accepted(slot) {
-            // Have accepted value, just send it back to messsage sender
-            value = pvalue.value.unwrap();
-        } else {
-            // No accepted value for this slot, missing from proposer, send noop to learn to ensure progress
-            value = Value {
-                command: None,
-                client_id: "".to_string(),
-                client_seq: 0,
-            };
-        }
-
-        let learn = Learn { slot, value };
-
-        let learn_msg = NetworkMessage {
-            sender: self.node.clone(),
-            payload: MessagePayload::Learn(learn.clone()),
-        };
-        _ = network::send_message(&vec![from], &learn_msg);
-    }
     // Commit phase: broadcasts a learn message if configured to do so.
     fn commit_phase(&self, slot: Slot, value: Value) -> Option<Learn> {
         if self.config.acceptors_send_learns {
@@ -123,13 +94,11 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 value: value.clone(),
             };
 
-            // TODO: Copy pasted from paxos coordinator, not ready to be used, needs to be reconsidered.
-
             let learn_msg = NetworkMessage {
                 sender: self.node.clone(),
                 payload: MessagePayload::Learn(learn.clone()),
             };
-            _ = network::send_message(&self.learners, &learn_msg);
+            network::send_message_forget(&self.learners, &learn_msg);
             Some(learn)
         } else {
             logger::log_warn(
@@ -137,6 +106,33 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             );
             None
         }
+    }
+
+    fn retry_learn(&self, slot: Slot, sender: Node) {
+        logger::log_info(&format!(
+            "[Acceptor Agent] Retrying learn for slot {}",
+            slot
+        ));
+
+        // Have accepted value, just send it back to message sender
+        // Otherwise, no accepted value for this slot, missing from proposer, send noop to learner to ensure progress
+        let value = self
+            .acceptor
+            .get_accepted(slot)
+            .and_then(|p| p.value)
+            .unwrap_or_else(|| Value {
+                command: None,
+                client_id: "".to_string(),
+                client_seq: 0,
+            });
+
+        let learn = Learn { slot, value };
+
+        let learn_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Learn(learn.clone()),
+        };
+        network::send_message_forget(&vec![sender], &learn_msg);
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -163,7 +159,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
                         //* Fire-and-forget */
                         if self.config.is_event_driven {
-                            network::send_message_forget(&vec![message.sender.clone()], &msg);
+                            network::send_message_forget(&vec![message.sender], &msg);
                         }
                         msg
                     }
@@ -183,25 +179,28 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     self.process_accept(payload.slot, payload.ballot, payload.value.clone());
                 let response = match accepted_result {
                     AcceptedResult::Accepted(accepted) => {
-                        let msg = NetworkMessage {
+                        let accepted_msg = NetworkMessage {
                             sender: self.node.clone(),
                             payload: MessagePayload::Accepted(accepted),
                         };
+                        if self.config.is_event_driven {
+                            if self.config.acceptors_send_learns {
+                                let learn = Learn {
+                                    slot: accepted.slot,
+                                    value: payload.value,
+                                };
 
-                        if self.config.acceptors_send_learns {
-                            let learn = Learn {
-                                slot: accepted.slot,
-                                value: payload.value,
-                            };
+                                let learn_msg = NetworkMessage {
+                                    sender: self.node.clone(),
+                                    payload: MessagePayload::Learn(learn),
+                                };
 
-                            let learn_msg = NetworkMessage {
-                                sender: self.node.clone(),
-                                payload: MessagePayload::Learn(learn.clone()),
-                            };
-
-                            network::send_message_forget(&self.learners, &learn_msg);
+                                network::send_message_forget(&self.learners, &learn_msg);
+                            } else {
+                                network::send_message_forget(&vec![message.sender], &accepted_msg);
+                            }
                         }
-                        msg
+                        accepted_msg
                     }
                     AcceptedResult::Rejected(_ballot) => NetworkMessage {
                         sender: self.node.clone(),

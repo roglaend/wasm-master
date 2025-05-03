@@ -8,5 +8,4 @@ crate-type = ["cdylib"]
 path = "src/proposer-agent.rs"
 
 [dependencies]
-rand = "0.8"
 wit-bindgen = "0.41"

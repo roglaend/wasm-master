@@ -69,20 +69,23 @@ impl MyLearnerAgentResource {
 
 impl GuestLearnerAgentResource for MyLearnerAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let learner = Arc::new(LearnerResource::new());
-        let kv_store = Arc::new(KvStoreResource::new());
-
         let proposers: Vec<_> = nodes
-            .clone()
-            .into_iter()
-            .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
+            .iter()
+            .filter(|x| matches!(x.role, PaxosRole::Proposer | PaxosRole::Coordinator))
+            .cloned()
             .collect();
 
         let acceptors: Vec<_> = nodes
             .clone()
             .into_iter()
-            .filter(|x| x.role == PaxosRole::Acceptor || x.role == PaxosRole::Coordinator)
+            .filter(|x| matches!(x.role, PaxosRole::Acceptor | PaxosRole::Coordinator))
             .collect();
+
+        let self_is_coordinator = node.role == PaxosRole::Coordinator;
+        let num_acceptors = acceptors.len() as u64 + self_is_coordinator as u64;
+
+        let learner = Arc::new(LearnerResource::new(num_acceptors));
+        let kv_store = Arc::new(KvStoreResource::new());
 
         let retry_interval = Duration::from_millis(10000); // TODO: Get from config
 
@@ -99,7 +102,6 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         }
     }
 
-    // TODO : fix proto for this so that it can actually be used
     fn get_state(&self) -> (LearnerState, Vec<KvPair>) {
         let learner_state = self.learner.get_state();
         let kv_store_state = self.kv_store.get_state();
@@ -111,8 +113,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         self.learner.get_next_to_execute()
     }
 
-    // This name is weird now - When acceptor send learns we do
-    fn learn_and_execute(&self, slot: Slot, value: Value, from: Node) -> Executed {
+    // TODO
+    fn learn_and_execute(&self, slot: Slot, value: Value, sender: Node) -> Executed {
         let mut execs: Vec<ExecuteResult> = Vec::new();
 
         if self.config.acceptors_send_learns {
@@ -122,7 +124,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 value: value.clone(),
             };
 
-            self.learner.handle_learn(&learn, &from);
+            self.learner.handle_learn(&learn, &sender);
 
             if let LearnResult::Execute(learns) = self.learner.to_be_executed() {
                 for le in learns {
@@ -219,8 +221,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     return NetworkMessage {
                         sender: self.node.clone(),
                         payload: MessagePayload::Ignore,
-                    }
-                    .clone();
+                    };
                 }
 
                 let exec_msg = NetworkMessage {
@@ -228,11 +229,14 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload: MessagePayload::Executed(executed),
                 };
 
-                network::send_message_forget(&self.proposers, &exec_msg);
-
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Ignore,
+                if self.config.is_event_driven {
+                    network::send_message_forget(&self.proposers, &exec_msg);
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Ignore,
+                    }
+                } else {
+                    exec_msg
                 }
             }
 

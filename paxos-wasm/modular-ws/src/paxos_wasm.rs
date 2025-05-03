@@ -95,12 +95,6 @@ impl PaxosWasmtime {
             workspace_dir.join("target/wasm32-wasip2/release/final_composed_tcp_server.wasm"),
         )?;
 
-        // let composed_component = Component::from_file(
-        //     &engine,
-        //     workspace_dir
-        //         .join("target/wasm32-wasip2/release/final_coordinator_composed_tcp_server.wasm"),
-        // )?;
-
         let final_bindings =
             bindings::PaxosWsWorld::instantiate_async(&mut store, &composed_component, &linker)
                 .await?;

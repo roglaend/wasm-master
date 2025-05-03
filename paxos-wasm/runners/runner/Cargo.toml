@@ -1,0 +1,12 @@
+[package]
+name = "runner"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/runner.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.41"
+rand = "0.9"

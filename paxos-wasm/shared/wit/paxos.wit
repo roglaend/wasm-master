@@ -1,121 +1,20 @@
 package paxos:default;
 
-/// The core proposer contains all Paxos logic for proposals.
-interface proposer {
-    use paxos-types.{slot, ballot, value, client-request, prepare, promise, accept, proposal, accepted, learn};
-    use proposer-types.{prepare-result, accept-result, proposer-state, proposal-status};
-
-    resource proposer-resource {
-        /// Constructs a new proposer with an initial ballot, number of acceptors, and leadership flag.
-        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot);
-
-        /// Returns the current state of the proposer.
-        get-state: func() -> proposer-state;
-
-        /// Enqueues a client request for later processing.
-        enqueue-client-request: func(request: value) -> bool;
-
-        get-current-slot: func() -> slot;
-
-        get-current-ballot: func() -> ballot;
-
-        /// Gets a proposal depending on its ProposerStatus
-        get-proposal-by-status: func(slot: slot, ps: proposal-status) -> option<proposal>;
-
-        /// Reserves the next chosen proposal, setting the proposals status from Chosen to CommitPending
-        reserve-next-chosen-proposal: func() -> option<proposal>;
-
-        /// Creates the next proposal from the pending queue (if available).
-        create-proposal: func() -> option<proposal>;
-
-        /// Processes a complete set of promise responses for a given slot.
-        process-prepare: func(slot: slot, promises: list<promise>) -> prepare-result;
-
-        /// Processes a complete set of accepted responses for a given slot.
-        process-accept: func(slot: slot, accepts: list<accepted>) -> accept-result;
-
-        /// Marks the proposal as chosen when accepted by a quorum of acceptors
-        mark-proposal-chosen: func(slot: slot ) -> option<value>;
-
-        /// Finalizes the proposal after learner execution
-        mark-proposal-finalized: func(slot: slot) -> option<value>;
-
-        // Increases ballot and returns it
-        increase-ballot: func() -> ballot;
-
-        // If the proposer is leader.
-        is-leader: func() -> bool;
-
-        /// Transitions this proposer into leader mode.
-        become-leader: func() -> bool;
-
-        /// Relinquishes leadership.
-        resign-leader: func() -> bool;
+interface logger {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
     }
+    // log: func(level: level, msg: string); 
+
+    log-debug: func(msg: string);
+    log-info: func(msg: string);
+    log-warn: func(msg: string);
+    log-error: func(msg: string);
 }
 
-interface acceptor {
-    use paxos-types.{slot, ballot, value, prepare, promise, accept, accepted, learn};
-    use acceptor-types.{promise-result, accepted-result, acceptor-state, p-value};
-
-    resource acceptor-resource {
-        constructor(gc-window: option<u64>);
-        get-state: func() -> acceptor-state;
-        prepare: func(slot: slot, ballot: ballot) -> promise-result;
-        accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
-        get-accepted: func(slot: slot) -> option<p-value>;
-    }
-}
-
-interface learner {
-    use paxos-types.{slot, value, learn};
-    use network-types.{node};
-    use learner-types.{learned-entry, learner-state, learn-result};
-
-    resource learner-resource {
-        constructor();
-        get-state: func() -> learner-state;
-        learn: func(slot: slot, value: value) -> learn-result;
-        handle-learn: func(learn: learn, %from: node) -> learn-result;
-        get-learned: func(slot: slot) -> option<learned-entry>;
-        get-next-to-execute : func() -> slot;
-        check-for-gap: func() -> option<slot>;
-        to-be-executed: func() -> learn-result;
-    }
-}
-
-interface kv-store {
-    use paxos-types.{kv-pair, cmd, cmd-result};
-
-    resource kv-store-resource {
-        constructor();
-        apply: func(cmd: cmd) -> cmd-result;
-        get-state: func() -> list<kv-pair>;
-        get-history: func() -> list<cmd>;
-    }
-}
-
-interface failure-detector {
-    use paxos-types.{node};
-
-    resource failure-detector-resource {
-        constructor(node-id: u64, nodes: list<node>, delta: u64);
-        checker: func() -> option<u64>;
-        heartbeat: func(node: u64);
-    }   
-}
-
-// TODO: Change these to use the node type instead of just node_ids?
-
-interface leader-detector {
-
-    resource leader-detector-resource {
-        constructor(nodes: list<u64>, local-node-id: u64);
-        suspect: func(node: u64) -> option<u64>;
-        restore: func(node: u64) -> option<u64>;
-        nodes: func() -> list<u64>;
-    }
-}
 
 interface network {
     use paxos-types.{node};
@@ -173,181 +72,12 @@ interface paxos-coordinator {
     } 
 }
 
-interface logger {
-    enum level {
-        debug,
-        info,
-        warn,
-        error,
-    }
-    // log: func(level: level, msg: string); 
-
-    log-debug: func(msg: string);
-    log-info: func(msg: string);
-    log-warn: func(msg: string);
-    log-error: func(msg: string);
-}
-
-// interface client {
-//     send-request: func(value: string) -> bool;
-//     get-response: func() -> option<string>;
-// }
-
-
-/// THIS IS FOR THE MODULAR GRPC MODEL ///
-
-interface proposer-agent {
-    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn, executed};
-    use proposer-types.{prepare-result, accept-result, proposal-status};
-    use network-types.{network-message};
-
-    resource proposer-agent-resource {
-        /// Constructs a new proposer agent given this node’s id and the list of all cluster nodes.
-        constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
-
-        // Checks the current paxos phase of the proposer agent
-        get-paxos-phase: func() -> paxos-phase;
-
-        /// Submits a client request to the system.
-        submit-client-request: func(request: value) -> bool;
-
-        // Gets a proposal depending on its ProposerStatus
-        get-proposal-by-status: func(slot: slot, ps: proposal-status) -> option<proposal>;
-
-        reserve-next-chosen-proposal: func() -> option<proposal>;
-
-        get-current-slot: func() -> slot;
-
-        get-current-ballot: func() -> ballot;
-
-        /// Create the next proposal using the core proposer (if any)
-        create-proposal: func() -> option<proposal>;
-
-        /// Broadcasts prepare messages and merges optional local promise payloads with remote responses,
-        /// then invokes the core proposer’s process-prepare.
-        prepare-phase: func(slot: slot, ballot: ballot, promises: list<promise>) -> prepare-result;
-
-        /// Broadcasts accept messages and merges optional local accepted payloads with remote responses,
-        /// then invokes the core proposer’s process-accept.
-        accept-phase: func(proposal-value: value, slot: slot, ballot: ballot, accepts: list<accepted>) -> accept-result;
-
-        broadcast-learn: func(learn: learn);
-
-        /// Marks the proposal as chosen when accepted by a quorum of acceptors
-        mark-proposal-chosen: func(slot: slot ) -> option<value>;
-
-        /// Finalizes the proposal after learner execution
-        mark-proposal-finalized: func(slot: slot) -> option<value>;
-
-        /// Up to "batch_size" proposals that passed local accept.
-        proposals-to-accept: func() -> list<proposal>;
-
-        /// Up to "batch_size" learns that are ready to commit.
-        learns-to-commit: func() -> list<learn>;
-
-        /// Up to "batch_size" client‐responses queued for sending.
-        collect-client-responses: func() -> list<client-response>;
-
-        // Process the Executed from learners, and synchronously returns the created client responses 
-        process-executed: func(executed: executed);
-
-        retry-learn: func(slot: slot);
-
-        /// Handles incoming network messages relevant to the proposer.
-        handle-message: func(message: network-message) -> network-message;
-
-        // Transitions PaxosPhase from Start to first PrepareSend
-        start-leader-loop: func();
-
-        // Check the timeout of the prepare-phase
-        check-prepare-timeout: func() -> bool;
-
-        // If the proposer is leader.
-        is-leader: func() -> bool;
-
-        /// Transitions this proposer into leader mode.
-        become-leader: func() -> bool;
-
-        /// Relinquishes leadership.
-        resign-leader: func() -> bool;
-
-        run-paxos-loop: func() -> option<list<client-response>>;
-
-        failure-service: func();
-    }
-}
-
-interface acceptor-agent {
-    use paxos-types.{node, slot, ballot, value, run-config, learn};
-    use acceptor-types.{promise-result, accepted-result};
-    use network.{network-message};
-
-    resource acceptor-agent-resource {
-        constructor(node: node, nodes: list<node>, config: run-config);
-        
-        process-prepare: func(slot: slot, ballot: ballot) -> promise-result;
-
-        process-accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
-
-        commit-phase: func(slot: slot, value: value) -> option<learn>;
-
-        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
-    
-        retry-learn: func(slot: slot, %from: node);
-    }
-
-}
-
-interface learner-agent {
-    // use paxos-coordinator.{paxos-state};
-    use paxos-types.{node, slot, ballot, value, run-config, executed, kv-pair};
-    use network.{network-message};
-    use learner-types.{learn-result, learned-entry, learner-state, retry-learn-result};
-
-    resource learner-agent-resource {
-        constructor(node: node, nodes: list<node>, config: run-config);
-
-        /// Returns a snapshot of the full Paxos state (e.g. learned entries, kv-store state).
-        get-state: func() -> tuple<learner-state, list<kv-pair>>;
-
-        get-next-to-execute : func() -> slot;
-
-        /// Learn the new value, and return a list of executed values and adu.
-        learn-and-execute: func(slot: slot, value: value, %from: node) -> executed;  
-
-        evaluate-retry: func() -> retry-learn-result;
-
-        /// Processes incoming network messages (such as commit notifications and accepted responses).
-        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
-    
-        run-paxos-loop: func();
-    }
-}
-
-interface ws-server {
+interface runner {
     use paxos-types.{node, run-config};
-    use network-types.{network-message};
+    
+    resource runner-resource {
+    constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
 
-    resource ws-server-resource {
-        constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
-        
-        run: func();
+    run: func();
     }
-}
-
-interface serializer {
-    use network-types.{network-message};
-
-    /// Convert a NetworkMessage into bytes.
-    serialize: func(message: network-message) -> list<u8>;
-
-    /// Convert bytes into a NetworkMessage.
-    deserialize: func(serialized: list<u8>) -> network-message;
-}
-
-interface paxos-client {
-    use paxos-types.{client-response, value};
-
-    perform-request: func(leader-url: string, value: value)-> option<client-response>;
-
 }
