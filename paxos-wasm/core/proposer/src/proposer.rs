@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -36,13 +36,13 @@ pub struct MyProposerResource {
     current_ballot: Cell<Ballot>,
 
     pending_client_requests: RefCell<VecDeque<Value>>,
-    prioritized_values: RefCell<BTreeMap<Slot, Option<Value>>>,
+    prioritized_values: RefCell<VecDeque<Value>>,
     proposals: RefCell<BTreeMap<Slot, ProposalEntry>>,
 }
 
 impl MyProposerResource {
-    fn quorum(&self) -> u64 {
-        return (self.num_acceptors / 2) + 1;
+    fn quorum(&self) -> usize {
+        return ((self.num_acceptors / 2) + 1) as usize;
     }
 
     fn get_next_slot(&self) -> Slot {
@@ -52,8 +52,8 @@ impl MyProposerResource {
     }
 
     fn next_value(&self) -> Option<Value> {
-        if let Some((_, value)) = self.prioritized_values.borrow_mut().pop_first() {
-            value
+        if let Some(req) = self.prioritized_values.borrow_mut().pop_front() {
+            Some(req)
         } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
             Some(req)
         } else {
@@ -61,71 +61,64 @@ impl MyProposerResource {
         }
     }
 
-    /// Collect all accepted values for slots higher than min_slot,
-    /// ensuring that only those slots that have reached quorum are kept.
-    /// Also fills in missing slots with no-op PValue entries.
-    fn collect_accepted_values_with_quorum(
-        &self,
-        min_slot: Slot,
-        promises: &[Promise],
-    ) -> Vec<PValue> {
-        let quorum = self.quorum() as usize;
+    /// Collects the highest-ballot accepted value per slot across all promises,
+    /// starting from `min_slot`. Fills any missing slots with a no-op proposal (None).
+    fn collect_accepted_values(&self, min_slot: Slot, promises: &[Promise]) -> Vec<PValue> {
         let ballot = self.current_ballot.get();
-
         self.current_slot.set(min_slot - 1);
-        // Map each slot to (count, best accepted value)
-        let mut slot_map: HashMap<Slot, (usize, PValue)> = HashMap::new();
+
+        // Map each slot to (Value for slot with highest ballot)
+        let mut slot_map: HashMap<Slot, PValue> = HashMap::new();
 
         for promise in promises {
             for accepted in &promise.accepted {
-                // Consider only accepted values for slots higher than min_slot.
                 if accepted.slot >= min_slot {
-                    // Get or insert the current entry for the slot.
-                    let entry = slot_map
+                    slot_map
                         .entry(accepted.slot)
-                        .or_insert((0, accepted.clone()));
-                    entry.0 += 1; // The counter
-                    // Choose the accepted value with the highest ballot.
-                    if accepted.ballot > entry.1.ballot {
-                        entry.1 = accepted.clone();
-                    }
+                        .and_modify(|existing| {
+                            if accepted.ballot > existing.ballot {
+                                *existing = accepted.clone();
+                            }
+                        })
+                        .or_insert_with(|| accepted.clone());
                 }
             }
         }
 
-        // Collect only the accepted values that meet the quorum requirement.
-        let mut accepted_with_quorum: Vec<PValue> = slot_map
-            .into_iter()
-            .filter_map(|(_slot, (count, accepted))| {
-                if count >= quorum {
-                    Some(accepted)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // Create a sorted list of all slots that appear in the map
+        let mut slots: Vec<Slot> = slot_map.keys().cloned().collect();
+        slots.sort_unstable();
 
-        accepted_with_quorum.sort_by_key(|accepted| accepted.slot);
+        let mut result = Vec::new();
+        let mut expected_slot = min_slot;
 
-        // Fill in missing slots with no-op PValue entries.
-        let mut complete_values = Vec::new();
-        let mut expected_slot = min_slot + 1;
-        for accepted in accepted_with_quorum.into_iter() {
-            // For any missing slot, insert a no-op value.
-            let cur_slot = accepted.slot;
-            while expected_slot < cur_slot {
-                complete_values.push(PValue {
+        for slot in slots {
+            // Fill any gaps with no-ops
+            while expected_slot < slot {
+                result.push(PValue {
                     slot: expected_slot,
                     ballot,
                     value: None,
                 });
                 expected_slot += 1;
             }
-            complete_values.push(accepted);
-            expected_slot = cur_slot + 1;
+
+            // Add the actual accepted value
+            result.push(slot_map.remove(&slot).unwrap());
+            expected_slot = slot + 1;
         }
 
-        complete_values
+        result
+    }
+    fn get_proposal_by<F>(&self, slot: Slot, pred: F) -> Option<Proposal>
+    where
+        F: Fn(&ProposalStatus) -> bool,
+    {
+        self.proposals
+            .borrow()
+            .get(&slot)
+            .filter(|e| pred(&e.status))
+            .map(|e| e.proposal.clone())
     }
 
     fn update_proposal_status(&self, slot: Slot, new_status: ProposalStatus) -> Option<Value> {
@@ -164,7 +157,7 @@ impl GuestProposerResource for MyProposerResource {
             current_ballot: Cell::new(init_ballot),
 
             pending_client_requests: RefCell::new(VecDeque::new()),
-            prioritized_values: RefCell::new(BTreeMap::new()),
+            prioritized_values: RefCell::new(VecDeque::new()),
             proposals: RefCell::new(BTreeMap::new()),
         }
     }
@@ -201,6 +194,12 @@ impl GuestProposerResource for MyProposerResource {
         true
     }
 
+    /// Enqueues a prioritized value, called after leader change or retry.
+    fn enqueue_prioritized_request(&self, req: Value) {
+        self.prioritized_values.borrow_mut().push_back(req.clone());
+        logger::log_debug("[Core Proposer] Enqueued prioritized request.");
+    }
+
     fn get_current_slot(&self) -> Slot {
         self.current_slot.get()
     }
@@ -210,11 +209,7 @@ impl GuestProposerResource for MyProposerResource {
     }
 
     fn get_proposal_by_status(&self, slot: Slot, ps: ProposalStatus) -> Option<Proposal> {
-        self.proposals
-            .borrow()
-            .get(&slot)
-            .filter(|e| e.status == ps)
-            .map(|e| e.proposal.clone())
+        self.get_proposal_by(slot, |status| *status == ps)
     }
 
     fn reserve_next_chosen_proposal(&self) -> Option<Proposal> {
@@ -281,7 +276,7 @@ impl GuestProposerResource for MyProposerResource {
     /// If min_slot = adu, we can use it for the normal approach. Where we collect the accepted
     /// values higher than adu to get them recommitted
     fn process_prepare(&self, min_slot: Slot, promises: Vec<Promise>) -> PrepareResult {
-        let quorum: usize = self.quorum() as usize;
+        let quorum: usize = self.quorum();
         let _current_slot = self.current_slot.get();
         let current_ballot = self.current_ballot.get();
 
@@ -308,7 +303,7 @@ impl GuestProposerResource for MyProposerResource {
 
         // TODO: use "current_slot" instead of having the "min_slot" argument?
 
-        let accepted_values = self.collect_accepted_values_with_quorum(min_slot, &promises);
+        let accepted_values = self.collect_accepted_values(min_slot, &promises);
 
         logger::log_info(&format!(
             "[Core Proposer] Collected {} accepted values for slot: {:?}",
@@ -320,10 +315,14 @@ impl GuestProposerResource for MyProposerResource {
                 .join(", ")
         ));
 
+        // Deduplicate by slot and push to prioritized queue
+        let mut seen_slots = HashSet::new();
         for p in accepted_values {
-            self.prioritized_values
-                .borrow_mut()
-                .insert(p.slot.clone(), p.value.clone());
+            if seen_slots.insert(p.slot) {
+                if let Some(value) = p.value {
+                    self.enqueue_prioritized_request(value);
+                }
+            }
         }
 
         logger::log_info(&format!(
@@ -355,21 +354,7 @@ impl GuestProposerResource for MyProposerResource {
             .filter(|a| a.slot == prop.slot && a.ballot == prop.ballot && a.success)
             .count();
 
-        // TODO: Fix this, if we want to ensure submitted client request will eventually get committed.
-        // if count >= self.num_acceptors as usize {
-        //     logger::log_debug(&format!(
-        //         "[Core Proposer] Accept phase failed for slot {}. All acceptors answered.",
-        //         slot
-        //     ));
-        //     self.prioritized_values.borrow_mut().push_back(PValue {
-        //         // TODO: Add back to queue as just a Value?
-        //         slot: slot,
-        //         ballot: self.current_ballot.get(),
-        //         value: Some(prop.value.clone()),
-        //     });
-        // }
-
-        if count < self.quorum() as usize {
+        if count < self.quorum() {
             logger::log_debug(&format!(
                 "[Core Proposer] Accept phase failed for slot {}: {} acceptances received (quorum is {}).",
                 slot,
@@ -415,17 +400,12 @@ impl GuestProposerResource for MyProposerResource {
         Some(val)
     }
 
-    /// Marks a commit‐pending proposal “finalized” once it has executed.
+    /// Marks a proposal “finalized” once it has executed.
     fn mark_proposal_finalized(&self, slot: Slot) -> Option<Value> {
         if self
-            .get_proposal_by_status(slot, ProposalStatus::CommitPending)
+            .get_proposal_by(slot, |status| *status != ProposalStatus::Finalized)
             .is_none()
         {
-            let curr = self.proposals.borrow().get(&slot).map(|e| e.status.clone());
-            logger::log_error(&format!(
-                "[Proposer] Cannot finalize slot {} in status {:?}; expected CommitPending.",
-                slot, curr
-            ));
             return None;
         }
 

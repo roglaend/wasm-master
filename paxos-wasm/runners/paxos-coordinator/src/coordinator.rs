@@ -245,9 +245,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         for learn in to_commit {
             self.proposer_agent.broadcast_learn(&learn);
 
-            let executed = self
-                .learner_agent
-                .learn_and_execute(learn.slot, &learn.value);
+            let executed =
+                self.learner_agent
+                    .learn_and_execute(learn.slot, &learn.value, &self.node);
             _ = self.proposer_agent.process_executed(&executed);
         }
 

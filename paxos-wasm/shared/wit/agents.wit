@@ -47,11 +47,11 @@ interface proposer-agent {
         /// Up to "batch_size" learns that are ready to commit.
         learns-to-commit: func() -> list<learn>;
 
+        // Process the Executed from learners
+        process-executed: func(executed: executed);
+
         /// Up to "batch_size" client‐responses queued for sending.
         collect-client-responses: func() -> list<client-response>;
-
-        // Process the Executed from learners, and synchronously returns the created client responses 
-        process-executed: func(executed: executed) -> list<client-response>;
 
         retry-learn: func(slot: slot);
 
@@ -93,13 +93,13 @@ interface acceptor-agent {
 
         commit-phase: func(slot: slot, value: value) -> option<learn>;
 
-        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
+        handle-message: func(message: network-message) -> network-message;
+    
+        retry-learn: func(slot: slot, sender: node);
     }
-
 }
 
 interface learner-agent {
-    // use paxos-coordinator.{paxos-state};
     use paxos-types.{node, slot, ballot, value, run-config, executed, kv-pair};
     use network.{network-message};
     use learner-types.{learn-result, learned-entry, learner-state, retry-learn-result};
@@ -113,12 +113,12 @@ interface learner-agent {
         get-next-to-execute : func() -> slot;
 
         /// Learn the new value, and return a list of executed values and adu.
-        learn-and-execute: func(slot: slot, value: value) -> executed;  
+        learn-and-execute: func(slot: slot, value: value, sender: node) -> executed;  
 
         evaluate-retry: func() -> retry-learn-result;
 
         /// Processes incoming network messages (such as commit notifications and accepted responses).
-        handle-message: func(message: network-message) -> network-message; // Note that they only care about a subset of the message types
+        handle-message: func(message: network-message) -> network-message;
     
         run-paxos-loop: func();
     }

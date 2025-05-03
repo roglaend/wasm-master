@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ use bindings::paxos::default::{
     failure_detector::FailureDetectorResource, logger, network, proposer::ProposerResource,
 };
 
-enum CollectedResponses<T, R> {  
+enum CollectedResponses<T, R> {
     Synchronous(Vec<T>),
     EventDriven(R),
 }
@@ -53,13 +53,10 @@ pub struct MyProposerAgentResource {
     // A mapping from Ballot to unique promises per node_id.
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
     in_flight_accepted: RefCell<BTreeMap<Slot, HashMap<u64, Accepted>>>, //* Per slot accepted per sender */
-
-    client_responses: RefCell<VecDeque<ClientResponse>>,
-
+    client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
     adu: Cell<u64>,
 
-    last_prepare_start: Cell<Option<Instant>>, // Need a timeout mechanism to retry the prepare phase in case of failure (?)
-
+    last_prepare_start: Cell<Option<Instant>>,
     batch_size: u64,
 }
 
@@ -360,8 +357,10 @@ impl MyProposerAgentResource {
             }
         }
 
-        for learn in self.learns_to_commit() {
-            self.broadcast_learn(learn);
+        if !self.config.acceptors_send_learns {
+            for learn in self.learns_to_commit() {
+                self.broadcast_learn(learn);
+            }
         }
 
         let mut client_responses = Vec::new();
@@ -432,7 +431,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             last_prepare_start: Cell::new(None),
             failure_detector,
 
-            client_responses: RefCell::new(VecDeque::new()),
+            client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
             batch_size,
         }
@@ -598,7 +597,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
         for _ in 0..self.batch_size {
-            if let Some(resp) = queue.pop_front() {
+            if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {
                 break;
@@ -607,7 +606,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         out
     }
 
-    fn process_executed(&self, executed: Executed) -> Vec<ClientResponse> {
+    fn process_executed(&self, executed: Executed) {
         if executed.adu > self.adu.get() {
             self.adu.set(executed.adu);
         }
@@ -616,31 +615,34 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Executed received but not a leader; skipping client-response.",
             );
-            return Vec::new();
+            return;
         }
 
-        for r in &executed.results {
-            let _ = self.mark_proposal_finalized(r.slot);
+        for result in &executed.results {
+            // Try to finalize proposal once
+            if let Some(value) = self.proposer.mark_proposal_finalized(result.slot) {
+                if let Some(cmd_res) = result.cmd_result.clone() {
+                    // Normal case: generate client response
+                    let resp = ClientResponse {
+                        client_id: value.client_id.clone(),
+                        client_seq: value.client_seq,
+                        success: true,
+                        command_result: Some(cmd_res),
+                    };
+                    self.client_responses
+                        .borrow_mut()
+                        .insert(result.slot, resp.clone());
 
-            let resp = ClientResponse {
-                client_id: r.value.client_id.clone(),
-                client_seq: r.value.client_seq,
-                success: true,
-                command_result: r.cmd_result.clone(),
-            };
-
-            logger::log_debug(&format!(
-                "[Proposer Agent] Created ClientResponse for slot {}",
-                r.slot
-            ));
-
-            let mut all_responses = self.client_responses.borrow_mut();
-            if !all_responses.contains(&resp) {
-                all_responses.push_back(resp);
+                    logger::log_info(&format!(
+                        "[Proposer Agent] Created ClientResponse for slot {}",
+                        result.slot
+                    ));
+                } else {
+                    // No-op case: reenqueue value
+                    self.proposer.enqueue_prioritized_request(&value);
+                }
             }
         }
-
-        [].into()
     }
 
     fn retry_learn(&self, slot: Slot) {
@@ -776,7 +778,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
             }
             MessagePayload::Executed(executed) => {
-                _ = self.process_executed(executed);
+                self.process_executed(executed);
 
                 NetworkMessage {
                     sender: self.node.clone(),

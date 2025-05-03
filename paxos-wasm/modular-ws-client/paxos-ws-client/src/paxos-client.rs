@@ -129,7 +129,7 @@ impl Guest for PaxosClient {
             return None;
         }
 
-        if let Ok(buf) = read_with_timeout(&mut input, Duration::from_secs(1)) {
+        if let Ok(buf) = read_with_timeout(&mut input, Duration::from_secs(5)) {
             if let MessagePayload::ClientResponse(resp) = serializer::deserialize(&buf).payload {
                 return Some(resp);
             }
