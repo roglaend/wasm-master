@@ -245,9 +245,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         for learn in to_commit {
             self.proposer_agent.broadcast_learn(&learn);
 
-            let executed = self
-                .learner_agent
-                .learn_and_execute(learn.slot, &learn.value);
+            let executed =
+                self.learner_agent
+                    .learn_and_execute(learn.slot, &learn.value, &self.node);
             _ = self.proposer_agent.process_executed(&executed);
         }
 
@@ -284,8 +284,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
 
             MessagePayload::Executed(_) => {
+                if self.node.role != PaxosRole::Coordinator {
+                    self.proposer_agent.handle_message(&message);
+                }
                 //* Not needed by non-leader coordinators due to them having access to "adu" by the learners "next_to_execute" */
-                // self.proposer_agent.handle_message(&message)
                 ignore_msg
             }
 

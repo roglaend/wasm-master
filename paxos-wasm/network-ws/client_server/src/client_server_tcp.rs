@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
+use wasi::io::streams::StreamError;
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, InputStream, OutputStream, TcpSocket};
@@ -143,7 +144,7 @@ impl GuestClientServerResource for MyClientServerTcpResource {
                         }
                     }
                     Ok(_) => {
-                        // Do nothing
+                        // Nothing to read. Can't be used to detect FIN/closed connection. Do nothing.
                     }
                     Err(e) => {
                         logger::log_error(&format!(

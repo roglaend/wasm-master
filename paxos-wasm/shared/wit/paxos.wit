@@ -72,7 +72,6 @@ interface paxos-coordinator {
     } 
 }
 
-
 interface runner {
     use paxos-types.{node, run-config};
     

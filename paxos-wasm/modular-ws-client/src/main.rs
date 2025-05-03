@@ -124,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let deadline = start + Duration::from_secs(args.timeout_secs);
 
             while (seen.len() as u64) < total && Instant::now() < deadline {
-                // send
+                // Send request
                 if next < total {
                     let req = Value {
                         client_id: args.client_id.to_string(),
@@ -141,16 +141,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // receive
+                // Try receive
                 let replies = resource
                     .call_try_receive(&mut *store, handle, &args.leader)
                     .await?;
                 for resp in replies {
                     let seq = resp.client_seq;
                     if seen.insert(seq) {
-                        let dt = sent.remove(&seq).unwrap().elapsed();
-                        println!("← recv seq={} in {:?}", seq, dt);
-                        lats.push(dt);
+                        if let Some(t0) = sent.remove(&seq) {
+                            let dt = t0.elapsed();
+                            println!("← recv seq={} → {:?} in {:?}", seq, resp.command_result, dt);
+                            lats.push(dt);
+                        } else {
+                            println!("← recv seq={} (late or duplicate)", seq);
+                        }
                     }
                 }
 
@@ -160,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             resource
                 .call_close(&mut *store, handle, &args.leader)
                 .await?;
+
             let wall = start.elapsed();
             let tput = seen.len() as f64 / wall.as_secs_f64();
             println!("\nPersistent throughput: {:.2} req/sec\n", tput);

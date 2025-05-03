@@ -13,6 +13,9 @@ interface proposer {
         /// Enqueues a client request for later processing.
         enqueue-client-request: func(request: value) -> bool;
 
+        /// Enqueues a prioritized request.
+        enqueue-prioritized-request: func(request: value);
+
         get-current-slot: func() -> slot;
 
         get-current-ballot: func() -> ballot;
@@ -54,27 +57,31 @@ interface proposer {
 
 interface acceptor {
     use paxos-types.{slot, ballot, value, prepare, promise, accept, accepted, learn};
-    use acceptor-types.{promise-result, accepted-result, acceptor-state};
+    use acceptor-types.{promise-result, accepted-result, acceptor-state, p-value};
 
     resource acceptor-resource {
         constructor(gc-window: option<u64>);
         get-state: func() -> acceptor-state;
         prepare: func(slot: slot, ballot: ballot) -> promise-result;
         accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
+        get-accepted: func(slot: slot) -> option<p-value>;
     }
 }
 
 interface learner {
-    use paxos-types.{slot, value};
+    use paxos-types.{slot, value, learn};
+    use network-types.{node};
     use learner-types.{learned-entry, learner-state, learn-result};
 
     resource learner-resource {
-        constructor();
+        constructor(num-acceptors: u64);
         get-state: func() -> learner-state;
         learn: func(slot: slot, value: value) -> learn-result;
+        handle-learn: func(learn: learn, sender: node) -> learn-result;
         get-learned: func(slot: slot) -> option<learned-entry>;
         get-next-to-execute : func() -> slot;
         check-for-gap: func() -> option<slot>;
+        to-be-executed: func() -> learn-result;
     }
 }
 
