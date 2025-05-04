@@ -1,23 +1,27 @@
 world proposer-world {
     import logger;
-
+    import storage;
+    
     export proposer;
 }
 
 world acceptor-world {
     import logger;
+    import storage;
 
     export acceptor;
 }
 
 world learner-world {
     import logger;
+    import storage;
 
     export learner;
 }
 
 world kv-store-world {
     import logger;
+    import storage;
 
     export kv-store;
 }
@@ -157,4 +161,9 @@ world learner-ws-world {
     import logger;
 
     export ws-server;
+}
+
+
+world storage-world {
+    export storage;
 }

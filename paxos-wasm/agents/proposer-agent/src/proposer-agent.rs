@@ -57,8 +57,6 @@ pub struct MyProposerAgentResource {
 
     client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
 
-    client_responses_test: RefCell<BTreeMap<u64, (ClientResponse, bool)>>,
-
     adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>, // Need a timeout mechanism to retry the prepare phase in case of failure (?)
@@ -417,7 +415,21 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             };
 
         let init_ballot = node.node_id;
-        let proposer = Arc::new(ProposerResource::new(is_leader, num_acceptors, init_ballot));
+        let proposer = Arc::new(ProposerResource::new(
+            is_leader,
+            num_acceptors,
+            init_ballot,
+            &node.node_id.to_string(),
+        ));
+
+        match proposer.load_state() {
+            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Err(e) => logger::log_warn(&format!(
+                "[Proposer Agent] Failed to load state. Ignore if no state saved: {}",
+                e
+            )),
+        }
+
         logger::log_info(&format!(
             "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
             node.node_id,
@@ -453,8 +465,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             adu: Cell::new(0),
             batch_size,
             test_skip_slot: Cell::new(10),
-
-            client_responses_test: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -653,8 +663,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     fn process_executed(&self, executed: Executed) {
-        if executed.adu > self.adu.get() {
-            self.adu.set(executed.adu);
+        if executed.adu > self.proposer.get_adu() {
+            self.proposer.set_adu(executed.adu);
         }
 
         if !self.proposer.is_leader() {
@@ -910,7 +920,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
-                let slot = self.adu.get() + 1;
+                let slot = self.proposer.get_adu() + 1;
                 let ballot = self.proposer.get_current_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);

@@ -1,12 +1,22 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use bincode;
+use serde::{Deserialize, Serialize, Serializer};
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "proposer-world",
         // generate_unused_types: true,
-        additional_derives: [PartialEq, Clone],
+        additional_derives: [
+            PartialEq,
+            serde::Deserialize,
+            serde::Serialize,
+            Clone,
+            PartialOrd,
+            Ord,
+            Eq,
+        ],
     });
 }
 
@@ -20,6 +30,7 @@ use bindings::paxos::default::paxos_types::{
 use bindings::paxos::default::proposer_types::{
     AcceptResult, PrepareResult, ProposalEntry, ProposalStatus,
 };
+use bindings::paxos::default::storage;
 
 pub struct MyProposer;
 
@@ -27,20 +38,62 @@ impl Guest for MyProposer {
     type ProposerResource = MyProposerResource;
 }
 
+#[derive(Deserialize, Serialize, Clone)]
 pub struct MyProposerResource {
+    #[serde(skip)]
     is_leader: Cell<bool>,
+    #[serde(skip)]
     num_acceptors: u64,
+    #[serde(skip)]
     ballot_delta: Ballot,
-
+    #[serde(skip)]
     current_slot: Cell<Slot>,
+
     current_ballot: Cell<Ballot>,
+    adu: Cell<Slot>,
 
+    #[serde(skip)]
+    node_id: String,
+
+    #[serde(skip)]
     pending_client_requests: RefCell<VecDeque<Value>>,
+    #[serde(skip)]
     prioritized_values: RefCell<BTreeMap<Slot, Option<Value>>>,
+    #[serde(skip)]
     proposals: RefCell<BTreeMap<Slot, ProposalEntry>>,
+    // TODO: maybe persist the infliht proposals also. Although with acceptor send learns the in flight will be committed
+    // even though the proposer crash. This is not the case if proposer send learns
 }
-
 impl MyProposerResource {
+    fn save_state(&self) -> Result<(), String> {
+        let json = serde_json::to_string(&self)
+            .map_err(|e| format!("Failed to serialize to json: {}", e))?;
+
+        storage::save_state(&self.node_id, &json)
+            .map_err(|e| format!("Failed to save state: {}", e))?;
+
+        Ok(())
+    }
+
+    fn load_state(&self) -> Result<(), String> {
+        let json = storage::load_state(&self.node_id)
+            .map_err(|e| format!("Failed to load state: {}", e))?;
+
+        let state: Self = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to deserialize from json: {}", e))?;
+
+        self.current_ballot.set(state.current_ballot.get());
+        self.adu.set(state.adu.get());
+
+        logger::log_warn(&format!(
+            "[Proposer] Loaded state: current_ballot = {}, adu = {}",
+            state.current_ballot.get(),
+            state.adu.get()
+        ));
+
+        Ok(())
+    }
+
     fn quorum(&self) -> u64 {
         return (self.num_acceptors / 2) + 1;
     }
@@ -147,7 +200,7 @@ impl MyProposerResource {
 // TODO: Make the proposer also increase ballot if phase 1 fails and try again
 
 impl GuestProposerResource for MyProposerResource {
-    fn new(is_leader: bool, num_acceptors: u64, init_ballot: Ballot) -> Self {
+    fn new(is_leader: bool, num_acceptors: u64, init_ballot: Ballot, node_id: String) -> Self {
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
             if is_leader { "leader" } else { "normal" },
@@ -162,6 +215,8 @@ impl GuestProposerResource for MyProposerResource {
 
             current_slot: Cell::new(0),
             current_ballot: Cell::new(init_ballot),
+            adu: Cell::new(0),
+            node_id,
 
             pending_client_requests: RefCell::new(VecDeque::new()),
             prioritized_values: RefCell::new(BTreeMap::new()),
@@ -207,6 +262,15 @@ impl GuestProposerResource for MyProposerResource {
 
     fn get_current_ballot(&self) -> Ballot {
         self.current_ballot.get()
+    }
+
+    fn get_adu(&self) -> Slot {
+        self.adu.get()
+    }
+
+    fn set_adu(&self, adu: Slot) {
+        self.adu.set(adu);
+        self.save_state().expect("Failed to save state");
     }
 
     fn get_proposal_by_status(&self, slot: Slot, ps: ProposalStatus) -> Option<Proposal> {
@@ -412,7 +476,6 @@ impl GuestProposerResource for MyProposerResource {
         }
 
         let val = self.update_proposal_status(slot, ProposalStatus::Finalized)?;
-
         logger::log_info(&format!(
             "[Proposer] Proposal slot {} marked Finalized with value {:?}.",
             slot, val
@@ -427,6 +490,7 @@ impl GuestProposerResource for MyProposerResource {
             "Core Proposer] Increased current ballot to: {}",
             new_ballot
         ));
+        self.save_state().expect("Failed to save state");
         new_ballot
     }
 
@@ -462,5 +526,9 @@ impl GuestProposerResource for MyProposerResource {
             logger::log_warn("[Core Proposer] Not leader; resign operation aborted.");
             false
         }
+    }
+
+    fn load_state(&self) -> Result<(), String> {
+        self.load_state()
     }
 }

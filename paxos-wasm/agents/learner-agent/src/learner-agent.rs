@@ -69,8 +69,13 @@ impl MyLearnerAgentResource {
 
 impl GuestLearnerAgentResource for MyLearnerAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let learner = Arc::new(LearnerResource::new());
+        let learner = Arc::new(LearnerResource::new(&node.node_id.to_string()));
         let kv_store = Arc::new(KvStoreResource::new());
+
+        match learner.load_state() {
+            Ok(_) => logger::log_info("[Learner Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!("[Learner Agent] Failed to load state: {}", e)),
+        }
 
         let proposers: Vec<_> = nodes
             .clone()
@@ -202,6 +207,21 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 }
             }
         }
+        // let dummy_value = Value {
+        //     command: None,
+        //     client_id: "".to_string(),
+        //     client_seq: 0,
+        // };
+        // let executed = self.learn_and_execute(0, dummy_value, self.node.clone());
+        // if executed.results.is_empty() {
+        //     return;
+        // }
+        // let exec_msg = NetworkMessage {
+        //     sender: self.node.clone(),
+        //     payload: MessagePayload::Executed(executed),
+        // };
+
+        // network::send_message_forget(&self.proposers, &exec_msg);
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -211,6 +231,13 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     "[Learner Agent] Handling LEARN: slot={}, value={:?}",
                     payload.slot, payload.value
                 ));
+
+                let learn = Learn {
+                    slot: payload.slot,
+                    value: payload.value.clone(),
+                };
+
+                self.learner.handle_learn(&learn, &message.sender);
 
                 let executed =
                     self.learn_and_execute(payload.slot, payload.value.clone(), message.sender);

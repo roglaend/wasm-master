@@ -1,3 +1,4 @@
+use core::net;
 use std::sync::Arc;
 
 pub mod bindings {
@@ -40,7 +41,15 @@ impl MyAcceptorAgentResource {}
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
         let garbage_collection_window = Some(100);
-        let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
+        let acceptor = Arc::new(AcceptorResource::new(
+            garbage_collection_window,
+            &node.node_id.to_string(),
+        ));
+
+        match acceptor.load_state() {
+            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!("[Acceptor Agent] Failed to load state: {}", e)),
+        }
 
         // TODO: make this more future proof?
         let learners: Vec<_> = nodes
@@ -200,6 +209,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                             };
 
                             network::send_message_forget(&self.learners, &learn_msg);
+                        } else {
+                            network::send_message_forget(&vec![message.sender], &msg);
                         }
                         msg
                     }

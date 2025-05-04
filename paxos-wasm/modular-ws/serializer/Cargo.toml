@@ -1,11 +1,14 @@
 [package]
+edition = "2024"
 name = "serializer"
 version = "0.1.0"
-edition = "2024"
 
 [lib]
-path = "src/serializer.rs"
 crate-type = ["cdylib"]
+path = "src/serializer.rs"
+
+[profile.release]
+debug = true
 
 [dependencies]
 wit-bindgen = "0.41"

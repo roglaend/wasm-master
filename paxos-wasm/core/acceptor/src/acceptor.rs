@@ -1,11 +1,27 @@
+use chrono::Utc;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+
+use std::fs;
+use std::io::Write;
+use std::time::Instant;
+
+use bincode;
+use serde::{Deserialize, Serialize, Serializer};
 
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "acceptor-world",
-        additional_derives: [PartialEq],
+        additional_derives: [
+            PartialEq,
+            serde::Deserialize,
+            serde::Serialize,
+            Clone,
+            PartialOrd,
+            Ord,
+            Eq,
+        ],
     });
 }
 
@@ -15,6 +31,7 @@ use bindings::exports::paxos::default::acceptor::{Guest, GuestAcceptorResource};
 use bindings::paxos::default::acceptor_types::{AcceptedResult, AcceptorState, PromiseResult};
 use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{Accepted, Ballot, PValue, Promise, Slot, Value};
+use bindings::paxos::default::storage;
 
 pub struct MyAcceptor;
 
@@ -22,17 +39,24 @@ impl Guest for MyAcceptor {
     type AcceptorResource = MyAcceptorResource;
 }
 
+#[derive(Deserialize, Serialize)]
+struct PartialAcceptorSnapshot {
+    promises: Vec<Ballot>,
+    accepted: BTreeMap<Slot, PValue>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
 pub struct MyAcceptorResource {
-    // A list of all promised ballots. // TODO: Only care about latest, but still nice to keep track of.
     promises: RefCell<Vec<Ballot>>,
-    // Map from slot to the accepted proposal.
     accepted: RefCell<BTreeMap<Slot, PValue>>,
 
-    // The garbage collection window: number of recent slots to retain.
+    #[serde(skip)]
+    node_id: String,
+    #[serde(skip)]
     gc_window: u64,
-    // Interval of performing GC.
+    #[serde(skip)]
     gc_interval: u64,
-    // The slot number when GC was last performed.
+    #[serde(skip)]
     last_gc: Cell<Slot>,
 }
 
@@ -52,7 +76,7 @@ impl MyAcceptorResource {
     }
 
     /// Returns the highest slot present in the accepted proposals map (or 0 if none).
-    fn _highest_accepted_slot(&self) -> Slot {
+    fn highest_accepted_slot(&self) -> Slot {
         self.accepted
             .borrow()
             .keys()
@@ -60,14 +84,164 @@ impl MyAcceptorResource {
             .cloned()
             .unwrap_or(0)
     }
+
+    pub fn merge_snapshots_from_jsons(&self, snapshots: &Vec<String>) -> Result<(), String> {
+        for json in snapshots {
+            let partial: PartialAcceptorSnapshot = serde_json::from_str(&json)
+                .map_err(|e| format!("Failed to parse snapshot: {}", e))?;
+
+            // Merge promises
+            let mut promises = self.promises.borrow_mut();
+            promises.extend(partial.promises);
+
+            // Merge accepted
+            let mut accepted = self.accepted.borrow_mut();
+            accepted.extend(partial.accepted);
+        }
+        Ok(())
+    }
+
+    pub fn apply_changes_from_json(&self, state_changes: &Vec<String>) -> Result<(), String> {
+        let mut accepted = self.accepted.borrow_mut();
+
+        for change_json in state_changes {
+            let pvalue: PValue = serde_json::from_str(&change_json)
+                .map_err(|e| format!("Failed to parse PValue change: {}", e))?;
+            accepted.insert(pvalue.slot, pvalue);
+        }
+
+        Ok(())
+    }
+
+    fn save_state_segment(&self) -> Result<(), String> {
+        let now = Instant::now();
+
+        // let bytes = bincode::serialize(&self);
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+
+        let accepted = self.accepted.borrow();
+        let acceptetd_trimmed: BTreeMap<_, _> = accepted
+            .iter()
+            .rev()
+            .take(500)
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let snapshot = PartialAcceptorSnapshot {
+            promises: self.promises.borrow().clone(),
+            accepted: acceptetd_trimmed,
+        };
+
+        let json = serde_json::to_string(&snapshot)
+            .map_err(|e| format!("Failed to serialize to json: {}", e))?;
+
+        // Only take last 500 slots in accepted map
+
+        storage::save_state_segment(&self.node_id, &json, &timestamp)?;
+
+        let elapsed = now.elapsed();
+        logger::log_warn(&format!(
+            "[Core Acceptor] Saved state to file in {} ms",
+            elapsed.as_millis()
+        ));
+
+        Ok(())
+    }
+
+    fn save_change(&self, accepted: &PValue) -> Result<(), String> {
+        let now = Instant::now();
+        let json = serde_json::to_string(accepted)
+            .map_err(|e| format!("Failed to serialize to json: {}", e))?;
+        storage::save_change(&self.node_id, &json)?;
+        let elapsed = now.elapsed();
+        logger::log_info(&format!(
+            "[Core Acceptor] Saved change to file in {} ms",
+            elapsed.as_millis()
+        ));
+        Ok(())
+    }
+
+    fn load_and_combine_state(&self) -> Result<(), String> {
+        let now = Instant::now();
+        let (state_snapshots, state_changes) = storage::load_state_and_changes(&self.node_id)?;
+        self.merge_snapshots_from_jsons(&state_snapshots)?;
+        self.apply_changes_from_json(&state_changes)?;
+
+        let elapsed = now.elapsed();
+        logger::log_warn(&format!(
+            "[Core Acceptor] Loaded state from file in {} ms",
+            elapsed.as_millis()
+        ));
+
+        logger::log_warn(&format!(
+            "[Core Acceptor] Loaded state from file with {} snapshots and {} changes",
+            &state_snapshots.len(),
+            &state_changes.len()
+        ));
+
+        let highest_promised = self.highest_promised_ballot();
+        let highest_accepted = self.highest_accepted_slot();
+        logger::log_warn(&format!(
+            "[Core Acceptor] Highest promised ballot: {}, highest accepted slot: {}",
+            highest_promised, highest_accepted
+        ));
+
+        Ok(())
+    }
+
+    // fn storage_test(&self) -> bool {
+    //     // let state = serde_json::to_string(&self);
+    //     let bytes = bincode::serialize(&self);
+    //     match bytes {
+    //         Ok(bytes) => storage::save(&self.node_id, &bytes),
+    //         Err(e) => panic!("Failed to serialize state: {}", e),
+    //     }
+
+    //     // let path = format!("state/{}.bin", self.node_id);
+    //     // let file = fs::File::create(&path);
+    //     // match file {
+    //     //     Ok(file) => {
+    //     //         match bincode::serialize_into(file, &self) {
+    //     //             Ok(_) => {
+    //     //                 logger::log_info(&format!(
+    //     //                     "[Core Acceptor] Successfully serialized state to {}",
+    //     //                     path
+    //     //                 ));
+    //     //             }
+    //     //             Err(e) => {
+    //     //                 eprintln!("Failed to serialize state: {}", e);
+    //     //                 return false;
+    //     //             }
+    //     //         }
+    //     //         true
+    //     //     }
+    //     //     Err(e) => {
+    //     //         eprintln!("Failed to create file: {}", e);
+    //     //         false
+    //     //     }
+
+    //     // match fs::File::create(&path) {
+    //     //     Ok(mut file) => {
+    //     //         if let Err(e) = file.write_all() {
+    //     //             eprintln!("Failed to write to file: {}", e);
+    //     //             return false;
+    //     //         }
+    //     //         true
+    //     //     }
+    //     //     Err(e) => {
+    //     //         eprintln!("Failed to create file: {}", e);
+    //     //         false
+    //     //     }
+    //     // }
+    // }
 }
 
 impl GuestAcceptorResource for MyAcceptorResource {
-    fn new(gc_window: Option<u64>) -> Self {
+    fn new(gc_window: Option<u64>, node_id: String) -> Self {
         Self {
             promises: RefCell::new(Vec::new()),
             accepted: RefCell::new(BTreeMap::new()),
-
+            node_id,
             gc_window: gc_window.unwrap_or(100), // use provided gc_window or default to 100
             gc_interval: 10, // default to 10 for now, maybe pass it down from main config as with gc_window
             last_gc: Cell::new(0),
@@ -118,6 +292,8 @@ impl GuestAcceptorResource for MyAcceptorResource {
             accepted,
         };
 
+        // self.storage_test_json(); // TODO: Remove this line after testing.
+
         // self.auto_garbage_collect(slot);
         PromiseResult::Promised(promise)
     }
@@ -143,6 +319,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
                     "[Core Acceptor] Re-accepted idempotently for slot {} with ballot {}",
                     slot, ballot
                 ));
+
                 return AcceptedResult::Accepted(Accepted {
                     slot,
                     ballot,
@@ -172,12 +349,23 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 ballot,
                 value: Some(value.clone()),
             };
-            accepted_map.insert(slot, p_value);
+            accepted_map.insert(slot, p_value.clone());
             logger::log_info(&format!(
                 "[Core Acceptor] Accepted proposal for slot {} with ballot {}",
                 slot, ballot
             ));
+            drop(accepted_map);
             // self.auto_garbage_collect(slot);
+            // self.storage_test_json();
+
+            // save change every request
+            self.save_change(&p_value).expect("Failed to save change");
+
+            // save the state every 500 slots
+            if slot % 500 == 0 {
+                self.save_state_segment().expect("Failed to save state");
+            };
+
             return AcceptedResult::Accepted(Accepted {
                 slot,
                 ballot,
@@ -198,6 +386,10 @@ impl GuestAcceptorResource for MyAcceptorResource {
             promises: promises_list,
             accepted: accepted_list,
         }
+    }
+
+    fn load_state(&self) -> Result<(), String> {
+        self.load_and_combine_state()
     }
 }
 

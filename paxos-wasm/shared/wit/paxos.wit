@@ -7,7 +7,7 @@ interface proposer {
 
     resource proposer-resource {
         /// Constructs a new proposer with an initial ballot, number of acceptors, and leadership flag.
-        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot);
+        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot, node-id: string);
 
         /// Returns the current state of the proposer.
         get-state: func() -> proposer-state;
@@ -18,6 +18,10 @@ interface proposer {
         get-current-slot: func() -> slot;
 
         get-current-ballot: func() -> ballot;
+
+        get-adu: func() -> slot;
+
+        set-adu: func(adu: slot);
 
         /// Gets a proposal depending on its ProposerStatus
         get-proposal-by-status: func(slot: slot, ps: proposal-status) -> option<proposal>;
@@ -51,6 +55,8 @@ interface proposer {
 
         /// Relinquishes leadership.
         resign-leader: func() -> bool;
+
+        load-state: func() -> result<_, string>;
     }
 }
 
@@ -59,11 +65,12 @@ interface acceptor {
     use acceptor-types.{promise-result, accepted-result, acceptor-state, p-value};
 
     resource acceptor-resource {
-        constructor(gc-window: option<u64>);
+        constructor(gc-window: option<u64>, node-id: string);
         get-state: func() -> acceptor-state;
         prepare: func(slot: slot, ballot: ballot) -> promise-result;
         accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
         get-accepted: func(slot: slot) -> option<p-value>;
+        load-state: func() -> result<_, string>;
     }
 }
 
@@ -73,7 +80,7 @@ interface learner {
     use learner-types.{learned-entry, learner-state, learn-result};
 
     resource learner-resource {
-        constructor();
+        constructor(node-id: string);
         get-state: func() -> learner-state;
         learn: func(slot: slot, value: value) -> learn-result;
         handle-learn: func(learn: learn, %from: node) -> learn-result;
@@ -81,6 +88,7 @@ interface learner {
         get-next-to-execute : func() -> slot;
         check-for-gap: func() -> option<slot>;
         to-be-executed: func() -> learn-result;
+        load-state: func() -> result<_, string>;
     }
 }
 
@@ -350,4 +358,15 @@ interface paxos-client {
 
     perform-request: func(leader-url: string, value: value)-> option<client-response>;
 
+}
+
+interface storage {
+    save-state-segment: func(key: string, state-json: string, timestamp: string) -> result<_, string>;
+    save-change: func(key: string, change-json: string) -> result<_, string>;
+    load-state-and-changes: func(key: string) -> result<tuple<list<string>, list<string>>, string>;
+
+    save-state: func(key: string, state-json: string) -> result<_, string>;
+    load-state: func(key: string) -> result<string, string>;
+    
+    delete: func(key: string) -> bool;
 }
