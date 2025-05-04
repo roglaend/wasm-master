@@ -1,3 +1,5 @@
+// Core
+
 world proposer-world {
     import logger;
     import storage;
@@ -39,29 +41,7 @@ world failure-detector-world {
     export failure-detector;
 }
 
-world paxos-world {
-
-    import proposer-agent;
-    import acceptor-agent;
-    import learner-agent;
-
-    import failure-detector;
-
-    import network;
-    import logger; 
-
-    export paxos-coordinator;
-}
-
-// world paxos-client-world {
-//     import paxos-coordinator;
-//     export client;
-// }
-
-// world command-client-world {
-//     import client;
-// }
-
+// Agents
 
 world proposer-agent-world {
     import proposer;
@@ -90,6 +70,33 @@ world learner-agent-world {
     export learner-agent;
 }
 
+// Runners
+
+world paxos-coordinator-world {
+    import proposer-agent;
+    import acceptor-agent;
+    import learner-agent;
+
+    import failure-detector;
+
+    // import network;
+    import logger; 
+
+    export paxos-coordinator;
+}
+
+world paxos-runner-world {
+    import client-server;
+    import network-server;
+    import paxos-coordinator;
+    
+    import logger;
+
+    export runner;
+}
+
+// Network
+
 world serializer-world {
     // import logger;
     
@@ -98,9 +105,7 @@ world serializer-world {
 
 world ws-client-world {
     import serializer;
-
     import logger;
-
     export network;
 }
 
@@ -109,7 +114,6 @@ world paxos-ws-world {
     import proposer-agent;
     import acceptor-agent;
     import learner-agent;
-
     import paxos-coordinator;
 
     import logger;
@@ -119,50 +123,21 @@ world paxos-ws-world {
 
 world paxos-client-world {
     import serializer;
-
     // import logger;
-
     export paxos-client;
 }
 
-// TODO: Make these work
-
-world paxos-coordinator-ws-world {
+world network-server-world {
     import serializer;
-    import paxos-coordinator;
-
     import logger;
-
-    export ws-server;
+    export network-server;
 }
 
-world proposer-ws-world {
+world client-server-world {
     import serializer;
-    import proposer-agent;
-
     import logger;
-
-    export ws-server;
+    export client-server;
 }
-
-world acceptor-ws-world {
-    import serializer;
-    import acceptor-agent;
-
-    import logger;
-
-    export ws-server;
-}
-
-world learner-ws-world {
-    import serializer;
-    import learner-agent;
-
-    import logger;
-
-    export ws-server;
-}
-
 
 world storage-world {
     export storage;

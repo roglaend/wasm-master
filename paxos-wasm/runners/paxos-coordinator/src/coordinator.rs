@@ -4,28 +4,28 @@ use std::sync::Arc;
 pub mod bindings {
     wit_bindgen::generate!( {
         path: "../../shared/wit",
-        world: "paxos-world",
-        // additional_derives: [Clone],
+        world: "paxos-coordinator-world",
+        additional_derives: [Clone, Hash],
     });
 }
 
-bindings::export!(MyPaxosCoordinator with_types_in bindings);
+bindings::export!(MyCoordinator with_types_in bindings);
 
 use bindings::exports::paxos::default::paxos_coordinator::{
-    AcceptResult, ElectionResult, Guest as CoordinatorGuest, GuestPaxosCoordinatorResource,
-    PaxosState, PrepareResult, RunConfig,
+    AcceptResult, ElectionResult, Guest, GuestPaxosCoordinatorResource, PaxosState, PrepareResult,
+    RunConfig,
 };
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
 use bindings::paxos::default::learner_types::RetryLearnResult;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{ClientResponse, Node, PaxosPhase, Value};
+use bindings::paxos::default::paxos_types::{ClientResponse, Node, PaxosPhase, PaxosRole, Value};
 use bindings::paxos::default::{
     acceptor_agent, failure_detector, learner_agent, logger, proposer_agent,
 };
 
-pub struct MyPaxosCoordinator;
+pub struct MyCoordinator;
 
-impl CoordinatorGuest for MyPaxosCoordinator {
+impl Guest for MyCoordinator {
     type PaxosCoordinatorResource = MyPaxosCoordinatorResource;
 }
 
@@ -33,7 +33,6 @@ pub struct MyPaxosCoordinatorResource {
     config: RunConfig,
 
     node: Node,
-    // The list of nodes in the cluster.
     nodes: Vec<Node>,
 
     // Uses the agents
@@ -60,7 +59,11 @@ impl MyPaxosCoordinatorResource {
                     "[Coordinator] Learner detected gap, retrying learn for slot {}",
                     slot
                 ));
-                self.proposer_agent.retry_learn(slot);
+                if self.config.acceptors_send_learns {
+                    // self.acceptor_agent.retry_learn(slot); // TODO
+                } else {
+                    self.proposer_agent.retry_learn(slot);
+                }
             }
         }
     }
@@ -69,6 +72,7 @@ impl MyPaxosCoordinatorResource {
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Creates a new coordinator resource.
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
+        // TODO: Only load the agents needed based on the role? Like we did in tcp server.
         let proposer_agent = Arc::new(proposer_agent::ProposerAgentResource::new(
             &node, &nodes, is_leader, config,
         ));
@@ -106,37 +110,50 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         self.proposer_agent.is_leader()
     }
 
-    // Ticker called from host
+    // Ticker called from runner
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        if !self.proposer_agent.is_leader() {
-            self.maybe_retry_learn();
-            None
-        } else {
-            match self.proposer_agent.get_paxos_phase() {
-                PaxosPhase::Start => {
-                    logger::log_debug("[Coordinator] Run loop: started.");
-                    if self.proposer_agent.is_leader() {
+        match self.node.role {
+            PaxosRole::Client => {
+                panic!("[Coordinator] Client nodes should never call run_paxos_loop");
+            }
+
+            PaxosRole::Proposer => self.proposer_agent.run_paxos_loop(),
+
+            PaxosRole::Acceptor => {
+                // self.acceptor_agent.run_paxos_loop(); // TODO
+                None
+            }
+
+            PaxosRole::Learner => {
+                self.learner_agent.run_paxos_loop();
+                None
+            }
+
+            PaxosRole::Coordinator => {
+                if !self.proposer_agent.is_leader() {
+                    self.maybe_retry_learn();
+                    return None;
+                }
+
+                match self.proposer_agent.get_paxos_phase() {
+                    PaxosPhase::Start => {
                         self.proposer_agent.start_leader_loop();
+                        None
                     }
-                    None
+                    PaxosPhase::PrepareSend => {
+                        let _ = self.prepare_phase();
+                        None
+                    }
+                    PaxosPhase::PreparePending => {
+                        self.proposer_agent.check_prepare_timeout();
+                        None
+                    }
+                    PaxosPhase::AcceptCommit => {
+                        let _ = self.accept_phase();
+                        self.commit_phase()
+                    }
+                    PaxosPhase::Stop | PaxosPhase::Crash => None,
                 }
-                PaxosPhase::PrepareSend => {
-                    logger::log_debug("[Coordinator] Run loop: Running in phase one.");
-                    self.prepare_phase();
-                    None
-                }
-                PaxosPhase::PreparePending => {
-                    logger::log_debug("[Coordinator] Run loop: Checking Prepare timeout.");
-                    self.proposer_agent.check_prepare_timeout();
-                    None
-                }
-                PaxosPhase::AcceptCommit => {
-                    logger::log_debug("[Coordinator] Run loop: Running in phase two.");
-                    _ = self.accept_phase();
-                    self.commit_phase()
-                }
-                PaxosPhase::Stop => None,  // TODO
-                PaxosPhase::Crash => None, // TODO
             }
         }
     }
@@ -145,7 +162,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self) -> PrepareResult {
         // Starts from 1, or the number the learner has "executed" on leader change.
-        let slot = self.learner_agent.get_next_to_execute() - 1; // TODO: Make adu and next_to_execute consistent?
+        let slot = self.learner_agent.get_next_to_execute() - 1;
         let ballot = self.proposer_agent.get_current_ballot();
 
         // Query local acceptor.
@@ -257,14 +274,24 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             "[Coordinator] Received network message: {:?}",
             message
         ));
+        let ignore_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Ignore,
+        };
         match message.payload {
             //* Forward the relevant messages to the respective agents */
             MessagePayload::Promise(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::Accepted(_) => self.proposer_agent.handle_message(&message),
             MessagePayload::RetryLearn(_) => self.proposer_agent.handle_message(&message),
 
-            //* Not needed in this setup due to having access to "adu" by the learners "next_to_execute" */
-            // MessagePayload::Executed(_) => self.proposer_agent.handle_message(&message),
+            MessagePayload::Executed(_) => {
+                if self.node.role != PaxosRole::Coordinator {
+                    self.proposer_agent.handle_message(&message);
+                }
+                //* Not needed by non-leader coordinators due to them having access to "adu" by the learners "next_to_execute" */
+                ignore_msg
+            }
+
             MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
             MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
 
@@ -288,10 +315,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     "[Coordinator] Received irrelevant message type: {:?}",
                     other_message
                 ));
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Ignore,
-                }
+                ignore_msg
             }
         }
     }

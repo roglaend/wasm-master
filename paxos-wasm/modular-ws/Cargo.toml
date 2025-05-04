@@ -15,7 +15,11 @@ tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 wasmtime = "31"
 wasmtime-wasi = "31"
+yaml-rust = "0.4"
 
 [build-dependencies]
-agents = {path = "../agents"}
+agents = {path = "../agents", package = "agents"}
+network-ws = {path = "../network-ws", package = "network-ws"}
 paxos-wasm-utils = {path = "../shared/utils", package = "paxos-wasm-utils"}
+runners = {path = "../runners", package = "runners"}
+tracing-subscriber = {version = "0.3", features = ["env-filter"]}

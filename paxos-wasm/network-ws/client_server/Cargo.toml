@@ -1,12 +1,13 @@
 [package]
-name = "paxos-client-test"
+name = "client-server-tcp"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "src/paxos-client.rs"
+path = "src/client_server_tcp.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.41"
 wasi = "0.14.2"
+rand = "0.9"

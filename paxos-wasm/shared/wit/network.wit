@@ -1,0 +1,66 @@
+
+interface ws-server {
+    use paxos-types.{node, run-config};
+    use network-types.{network-message};
+
+    resource ws-server-resource {
+        constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
+        
+        run: func();
+    }
+}
+
+interface serializer {
+    use network-types.{network-message};
+
+    /// Convert a NetworkMessage into bytes.
+    serialize: func(message: network-message) -> list<u8>;
+
+    /// Convert bytes into a NetworkMessage.
+    deserialize: func(serialized: list<u8>) -> network-message;
+}
+
+interface paxos-client {
+    use paxos-types.{client-response, value};
+
+    perform-request: func(leader-url: string, value: value)-> option<client-response>;
+
+    resource paxos-client-resource {
+        constructor();
+
+        send-request: func(leader-address: string, value: value) -> bool;
+        try-receive: func(leader-address: string) -> list<client-response>;
+        shutdown-send: func(leader-address: string);
+        shutdown-receive: func(leader-address: string);
+        close: func(leader-address: string);
+    
+    }
+}
+
+interface network-server {
+    use network-types.{network-message};
+    resource network-server-resource {
+        constructor();
+
+        setup-listener: func(bind-addr: string);
+        get-messages: func() -> list<network-message>;
+        get-message: func() -> option<network-message>;
+
+    }
+}
+
+// shared/wit/client-server.wit
+
+interface client-server {
+    use paxos-types.{node, value, client-response};
+
+    resource client-server-resource {
+        constructor();
+        setup-listener: func(bind-addr: string);
+
+        get-requests: func() -> list<value>;
+        get-request: func() -> option<value>;
+
+        send-responses: func(sender: node, responses: list<client-response>);
+    }
+}

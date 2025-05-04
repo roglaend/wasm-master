@@ -93,54 +93,52 @@ impl Guest for MySerializer {
     }
 }
 
-/// Serialize a Node.
+/// Serialize a Node
 fn serialize_node(n: &Node) -> String {
     let role_str = match n.role {
-        PaxosRole::Coordinator => "coordinator",
         PaxosRole::Proposer => "proposer",
         PaxosRole::Acceptor => "acceptor",
         PaxosRole::Learner => "learner",
         PaxosRole::Client => "client",
+        PaxosRole::Coordinator => "coordinator",
     };
     format!(
         "node_id:{},address:{},role:{}",
         n.node_id, n.address, role_str
     )
 }
-
-/// Deserialize a Node.
+/// Deserialize a Node
 fn deserialize_node(s: &str) -> Result<Node, &'static str> {
-    let mut node_id: Option<u64> = None;
-    let mut address: Option<String> = None;
-    let mut role: Option<PaxosRole> = None;
+    let mut node_id = None;
+    let mut address = None;
+    let mut role = None;
+
     for part in s.split(',') {
         let mut kv = part.splitn(2, ':');
-        let key = kv.next().unwrap_or("");
-        let value = kv.next().unwrap_or("");
-        match key {
-            "node_id" => node_id = value.parse().ok(),
-            "address" => address = Some(value.to_string()),
-            "role" => {
-                role = match value {
-                    "coordinator" => Some(PaxosRole::Coordinator),
-                    "proposer" => Some(PaxosRole::Proposer),
-                    "acceptor" => Some(PaxosRole::Acceptor),
-                    "learner" => Some(PaxosRole::Learner),
-                    "client" => Some(PaxosRole::Client),
-                    _ => None,
-                }
+        match (kv.next(), kv.next()) {
+            (Some("node_id"), Some(v)) => node_id = v.parse().ok(),
+            (Some("address"), Some(v)) => address = Some(v.to_string()),
+            (Some("role"), Some(v)) => {
+                role = Some(match v {
+                    "proposer" => PaxosRole::Proposer,
+                    "acceptor" => PaxosRole::Acceptor,
+                    "learner" => PaxosRole::Learner,
+                    "client" => PaxosRole::Client,
+                    "coordinator" => PaxosRole::Coordinator,
+                    _ => return Err("unknown role"),
+                });
             }
             _ => {}
         }
     }
-    if let (Some(id), Some(addr), Some(r)) = (node_id, address, role) {
-        Ok(Node {
+
+    match (node_id, address, role) {
+        (Some(id), Some(addr), Some(r)) => Ok(Node {
             node_id: id,
             address: addr,
             role: r,
-        })
-    } else {
-        Err("Failed to deserialize Node")
+        }),
+        _ => Err("missing node_id, address, or role"),
     }
 }
 

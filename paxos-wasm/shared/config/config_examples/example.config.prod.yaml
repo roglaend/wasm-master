@@ -1,0 +1,40 @@
+# ─── Production Paxos Cluster ───────────────────────────
+
+leader_id: 1
+
+# full list of nodes and which paxos-role they have
+nodes:
+  - node_id: 1
+    address: "10.0.1.11:50000"
+    role: "learner"
+  - node_id: 2
+    address: "10.0.1.12:50000"
+    role: "learner"
+  - node_id: 3
+    address: "10.0.1.13:50000"
+    role: "acceptor"
+  - node_id: 4
+    address: "10.0.1.14:50000"
+    role: "acceptor"
+  - node_id: 5
+    address: "10.0.1.15:50000"
+    role: "acceptor"
+  - node_id: 6
+    address: "10.0.1.16:50000"
+    role: "proposer"
+  - node_id: 7
+    address: "10.0.1.17:50000"
+    role: "proposer" # Last node has to be either "proposer" or "coordinator"
+  # - node_id: 8
+  #   address: "10.0.1.18:50000"
+  #   role: "coordinator"
+
+# ─── run-loop tuning ───────────────────────────────────
+run_config:
+  is_event_driven: true
+  acceptors_send_learns: false
+  learners_send_executed: true
+  prepare_timeout: 1000
+  demo_client: false
+  tick_ms: 10
+  client_server_port: 60000

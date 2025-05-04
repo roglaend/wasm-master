@@ -3,6 +3,11 @@ name = "runners"
 version = "0.1.0"
 edition = "2024"
 
+[dependencies]
+wasmtime = "31"
+wasmtime-wasi = "31"
+
 [build-dependencies]
 paxos-wasm-utils = { path = "../shared/utils" }
+network-ws = { path = "../network-ws" }
 agents = { path = "../agents" }

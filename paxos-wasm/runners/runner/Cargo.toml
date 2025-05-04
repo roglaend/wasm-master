@@ -1,14 +1,12 @@
 [package]
-edition = "2024"
-name = "serializer"
+name = "runner"
 version = "0.1.0"
+edition = "2024"
 
 [lib]
+path = "src/runner.rs"
 crate-type = ["cdylib"]
-path = "src/serializer.rs"
-
-[profile.release]
-debug = true
 
 [dependencies]
 wit-bindgen = "0.41"
+rand = "0.9"

@@ -1,0 +1,10 @@
+[package]
+name = "paxos-wasm-config"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/shared-config.rs"
+
+[dependencies]
+yaml-rust = "0.4"
