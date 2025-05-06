@@ -2,11 +2,14 @@ mod bindings;
 mod config;
 mod host_logger;
 mod paxos_wasm;
+mod run;
 
 use clap::Parser;
 use config::Config;
 use paxos_wasm::PaxosWasmtime;
+use run::{run_same_runtime, run_standalone};
 use tracing::info;
+use wasmtime::Engine;
 
 #[derive(Parser)]
 struct Args {
@@ -22,25 +25,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     host_logger::init_tracing();
     let args = Args::parse();
 
-    let cfg = Config::load(&args.config, args.node_id);
-    info!(
-        "Node {} @{} role={:?} is_leader={}",
-        cfg.node.node_id, cfg.node.address, cfg.node.role, cfg.is_leader,
-    );
+    let mut wasm_config = wasmtime::Config::default();
+    wasm_config.async_support(true);
+    let engine = Engine::new(&wasm_config)?;
 
-    let paxos = PaxosWasmtime::new(
-        cfg.node.clone(),
-        cfg.remote_nodes.clone(),
-        cfg.is_leader,
-        cfg.run_config.clone(),
-    )
-    .await?;
+    // run_standalone(args.node_id, args.config, &engine).await?;
 
-    let mut store = paxos.store.lock().await;
-    paxos
-        .resource()
-        .call_run(&mut *store, paxos.resource_handle.clone())
-        .await?;
+    // or
+
+    run_same_runtime(args.node_id, args.config, &engine).await?;
 
     Ok(())
 }
