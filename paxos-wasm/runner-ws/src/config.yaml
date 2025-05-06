@@ -1,5 +1,6 @@
 # ─── global cluster settings ───────────────────────────
 leader_id: 1
+log_level: warning
 
 # full list of nodes and which paxos-role they have
 nodes:
@@ -23,14 +24,19 @@ nodes:
     role: "proposer"
   - node_id: 7
     address: "127.0.0.1:50057"
-    role: "proposer" # Last node has to be either "proposer" or "coordinator"
+    role: "coordinator" # Last node has to be either "proposer" or "coordinator"
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
   is_event_driven: true
   acceptors_send_learns: true
-  learners_send_executed: true
+  learners_send_executed: false
   prepare_timeout: 1000
   demo_client: false
-  tick_ms: 10
+  batch_size: 10
+  tick_ms: 5
+  exec_interval_ms: 100
+  retry_interval_ms: 500
+  learn_max_gap: 10
+  executed_batch_size: 10
   client_server_port: 60000

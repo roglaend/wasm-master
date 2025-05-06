@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use wasi::io::streams::StreamError;
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, InputStream, OutputStream, TcpSocket};

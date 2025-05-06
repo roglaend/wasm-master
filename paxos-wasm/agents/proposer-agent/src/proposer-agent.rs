@@ -19,8 +19,8 @@ use bindings::exports::paxos::default::proposer_agent::{
 };
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, Ballot, ClientResponse, Executed, Learn, Node, PaxosPhase, PaxosRole,
-    Prepare, Promise, Proposal, RunConfig, Slot, Value,
+    Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
+    PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{
@@ -619,27 +619,53 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         }
 
         for result in &executed.results {
-            // Try to finalize proposal once
             if let Some(value) = self.proposer.mark_proposal_finalized(result.slot) {
-                if let Some(cmd_res) = result.cmd_result.clone() {
-                    // Normal case: generate client response
-                    let resp = ClientResponse {
-                        client_id: value.client_id.clone(),
-                        client_seq: value.client_seq,
-                        success: true,
-                        command_result: Some(cmd_res),
-                    };
-                    self.client_responses
-                        .borrow_mut()
-                        .insert(result.slot, resp.clone());
+                let resp = ClientResponse {
+                    client_id: value.client_id.clone(),
+                    client_seq: value.client_seq,
+                    success: result.success, // No-op, or executed a valid operation.
+                    command_result: result.cmd_result.clone(),
+                };
+                self.client_responses
+                    .borrow_mut()
+                    .insert(result.slot, resp.clone());
 
-                    logger::log_info(&format!(
-                        "[Proposer Agent] Created ClientResponse for slot {}",
-                        result.slot
-                    ));
-                } else {
-                    // No-op case: reenqueue value
-                    self.proposer.enqueue_prioritized_request(&value);
+                match &result.cmd_result {
+                    CmdResult::NoOp => {
+                        logger::log_warn(&format!(
+                            "[Proposer Agent] Slot {} was no-op; responding with failure",
+                            result.slot
+                        ));
+                        // only retry if there was a original valid value on the slot
+                        if value.command.is_some() {
+                            self.proposer.enqueue_prioritized_request(&value);
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Re-enqueued client request for slot {}",
+                                result.slot
+                            ));
+                        }
+                    }
+                    CmdResult::CmdValue(cmd_result_value) if result.success => {
+                        // real command, and Paxos said it succeeded
+                        if cmd_result_value.is_some() {
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Slot {}: command succeeded; client response queued",
+                                result.slot
+                            ));
+                        } else {
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Slot {}: command succeeded with no return value; response queued",
+                                result.slot
+                            ));
+                        }
+                    }
+                    CmdResult::CmdValue(_) => {
+                        // real command, but Paxos said it failed. //* Can't happen? */
+                        logger::log_warn(&format!(
+                            "[Proposer Agent] Slot {}: command failed; client response queued",
+                            result.slot
+                        ));
+                    }
                 }
             }
         }

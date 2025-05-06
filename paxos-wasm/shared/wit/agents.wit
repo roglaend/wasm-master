@@ -95,7 +95,7 @@ interface acceptor-agent {
 
         handle-message: func(message: network-message) -> network-message;
     
-        retry-learn: func(slot: slot, sender: node);
+        retry-learn: func(slot: slot);
     }
 }
 
@@ -110,10 +110,13 @@ interface learner-agent {
         /// Returns a snapshot of the full Paxos state (e.g. learned entries, kv-store state).
         get-state: func() -> tuple<learner-state, list<kv-pair>>;
 
-        get-next-to-execute : func() -> slot;
+        /// The highest learned slot.
+        get-adu: func() -> slot;
 
         /// Learn the new value, and return a list of executed values and adu.
         learn-and-execute: func(slot: slot, value: value, sender: node) -> executed;  
+
+        execute-and-collect: func(max-batch: option<u64>) -> executed;
 
         evaluate-retry: func() -> retry-learn-result;
 
