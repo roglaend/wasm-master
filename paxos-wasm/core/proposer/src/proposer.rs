@@ -68,15 +68,16 @@ impl MyProposerResource {
         let json = serde_json::to_string(&self)
             .map_err(|e| format!("Failed to serialize to json: {}", e))?;
 
-        storage::save_state(&self.node_id, &json)
-            .map_err(|e| format!("Failed to save state: {}", e))?;
+        let key = format!("{}-{}", self.node_id, "proposer");
+
+        storage::save_state(&key, &json).map_err(|e| format!("Failed to save state: {}", e))?;
 
         Ok(())
     }
 
     fn load_state(&self) -> Result<(), String> {
-        let json = storage::load_state(&self.node_id)
-            .map_err(|e| format!("Failed to load state: {}", e))?;
+        let key = format!("{}-{}", self.node_id, "proposer");
+        let json = storage::load_state(&key).map_err(|e| format!("Failed to load state: {}", e))?;
 
         let state: Self = serde_json::from_str(&json)
             .map_err(|e| format!("Failed to deserialize from json: {}", e))?;

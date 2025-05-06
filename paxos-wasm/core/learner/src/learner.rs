@@ -124,7 +124,9 @@ impl MyLearnerResource {
         };
         let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
 
-        storage::save_state_segment(&self.node_id, &json, &timestamp)?;
+        let key = format!("{}-{}", self.node_id, "learner");
+
+        storage::save_state_segment(&key, &json, &timestamp)?;
 
         let elapsed = now.elapsed();
         logger::log_warn(&format!(
@@ -139,7 +141,8 @@ impl MyLearnerResource {
         let now = Instant::now();
         let json = serde_json::to_string(learn)
             .map_err(|e| format!("Failed to serialize to json: {}", e))?;
-        storage::save_change(&self.node_id, &json)?;
+        let key = format!("{}-{}", self.node_id, "learner");
+        storage::save_change(&key, &json)?;
         let elapsed = now.elapsed();
         logger::log_warn(&format!(
             "[Core Learner] Saved change to file in {} ms",
@@ -150,7 +153,8 @@ impl MyLearnerResource {
 
     fn load_and_combine_state(&self) -> Result<(), String> {
         let now = Instant::now();
-        let (state_snapshots, state_changes) = storage::load_state_and_changes(&self.node_id)?;
+        let key = format!("{}-{}", self.node_id, "learner");
+        let (state_snapshots, state_changes) = storage::load_state_and_changes(&key)?;
 
         self.merge_snapshots_from_jsons(&state_snapshots)?;
         self.apply_changes_from_json(&state_changes)?;

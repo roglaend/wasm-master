@@ -137,7 +137,9 @@ impl MyAcceptorResource {
 
         // Only take last 500 slots in accepted map
 
-        storage::save_state_segment(&self.node_id, &json, &timestamp)?;
+        let key = format!("{}-{}", self.node_id, "acceptor");
+
+        storage::save_state_segment(&key, &json, &timestamp)?;
 
         let elapsed = now.elapsed();
         logger::log_warn(&format!(
@@ -152,7 +154,9 @@ impl MyAcceptorResource {
         let now = Instant::now();
         let json = serde_json::to_string(accepted)
             .map_err(|e| format!("Failed to serialize to json: {}", e))?;
-        storage::save_change(&self.node_id, &json)?;
+
+        let key = format!("{}-{}", self.node_id, "acceptor");
+        storage::save_change(&key, &json)?;
         let elapsed = now.elapsed();
         logger::log_info(&format!(
             "[Core Acceptor] Saved change to file in {} ms",
@@ -163,7 +167,8 @@ impl MyAcceptorResource {
 
     fn load_and_combine_state(&self) -> Result<(), String> {
         let now = Instant::now();
-        let (state_snapshots, state_changes) = storage::load_state_and_changes(&self.node_id)?;
+        let key = format!("{}-{}", self.node_id, "acceptor");
+        let (state_snapshots, state_changes) = storage::load_state_and_changes(&key)?;
         self.merge_snapshots_from_jsons(&state_snapshots)?;
         self.apply_changes_from_json(&state_changes)?;
 
@@ -188,52 +193,6 @@ impl MyAcceptorResource {
 
         Ok(())
     }
-
-    // fn storage_test(&self) -> bool {
-    //     // let state = serde_json::to_string(&self);
-    //     let bytes = bincode::serialize(&self);
-    //     match bytes {
-    //         Ok(bytes) => storage::save(&self.node_id, &bytes),
-    //         Err(e) => panic!("Failed to serialize state: {}", e),
-    //     }
-
-    //     // let path = format!("state/{}.bin", self.node_id);
-    //     // let file = fs::File::create(&path);
-    //     // match file {
-    //     //     Ok(file) => {
-    //     //         match bincode::serialize_into(file, &self) {
-    //     //             Ok(_) => {
-    //     //                 logger::log_info(&format!(
-    //     //                     "[Core Acceptor] Successfully serialized state to {}",
-    //     //                     path
-    //     //                 ));
-    //     //             }
-    //     //             Err(e) => {
-    //     //                 eprintln!("Failed to serialize state: {}", e);
-    //     //                 return false;
-    //     //             }
-    //     //         }
-    //     //         true
-    //     //     }
-    //     //     Err(e) => {
-    //     //         eprintln!("Failed to create file: {}", e);
-    //     //         false
-    //     //     }
-
-    //     // match fs::File::create(&path) {
-    //     //     Ok(mut file) => {
-    //     //         if let Err(e) = file.write_all() {
-    //     //             eprintln!("Failed to write to file: {}", e);
-    //     //             return false;
-    //     //         }
-    //     //         true
-    //     //     }
-    //     //     Err(e) => {
-    //     //         eprintln!("Failed to create file: {}", e);
-    //     //         false
-    //     //     }
-    //     // }
-    // }
 }
 
 impl GuestAcceptorResource for MyAcceptorResource {
