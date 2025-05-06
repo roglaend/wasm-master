@@ -4,7 +4,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{
+    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
+};
 
 use crate::bindings;
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
@@ -34,17 +36,35 @@ impl ComponentRunStates {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
-            role: node.role as u64, 
+            role: node.role as u64,
         };
-        ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new()
-                .inherit_stdio()
-                .inherit_env()
-                .inherit_args()
-                .inherit_network()
-                .build(),
-            resource_table: ResourceTable::new(),
 
+        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("Must have a parent")
+            .parent()
+            .expect("Workspace folder")
+            .to_owned();
+
+        let mut builder = WasiCtxBuilder::new();
+        builder.inherit_stdio();
+        builder.inherit_env();
+        builder.inherit_args();
+        builder.inherit_network();
+        builder
+            .preopened_dir(
+                workspace_dir.join("paxos-wasm/logs/state"),
+                "/state",
+                DirPerms::all(),
+                FilePerms::all(),
+            )
+            .expect("Failed to preopen dir");
+
+        let wasi_ctx = builder.build();
+
+        ComponentRunStates {
+            wasi_ctx,
+            resource_table: ResourceTable::new(),
             logger: Arc::new(HostLogger::new_from_workspace(host_node)),
         }
     }

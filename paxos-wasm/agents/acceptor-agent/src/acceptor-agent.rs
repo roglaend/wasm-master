@@ -1,3 +1,4 @@
+use core::net;
 use std::sync::Arc;
 
 pub mod bindings {
@@ -40,7 +41,18 @@ impl MyAcceptorAgentResource {}
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
         let garbage_collection_window = Some(100);
-        let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
+        let acceptor = Arc::new(AcceptorResource::new(
+            garbage_collection_window,
+            &node.node_id.to_string(),
+        ));
+
+        match acceptor.load_state() {
+            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!(
+                "[Acceptor Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
         let learners: Vec<_> = nodes
             .iter()
@@ -183,22 +195,20 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                             sender: self.node.clone(),
                             payload: MessagePayload::Accepted(accepted),
                         };
-                        if self.config.is_event_driven {
-                            if self.config.acceptors_send_learns {
-                                let learn = Learn {
-                                    slot: accepted.slot,
-                                    value: payload.value,
-                                };
+                        if self.config.acceptors_send_learns {
+                            let learn = Learn {
+                                slot: accepted.slot,
+                                value: payload.value,
+                            };
 
-                                let learn_msg = NetworkMessage {
-                                    sender: self.node.clone(),
-                                    payload: MessagePayload::Learn(learn),
-                                };
+                            let learn_msg = NetworkMessage {
+                                sender: self.node.clone(),
+                                payload: MessagePayload::Learn(learn.clone()),
+                            };
 
-                                network::send_message_forget(&self.learners, &learn_msg);
-                            } else {
-                                network::send_message_forget(&vec![message.sender], &accepted_msg);
-                            }
+                            network::send_message_forget(&self.learners, &learn_msg);
+                        } else {
+                            network::send_message_forget(&vec![message.sender], &accepted_msg);
                         }
                         accepted_msg
                     }

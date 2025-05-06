@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, ResourceAny};
-use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime::{Config, Engine, ProfilingStrategy, Store};
+use wasmtime_wasi::{
+    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
+};
 
 use crate::bindings;
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
@@ -36,15 +38,33 @@ impl ComponentRunStates {
             address: node.address.clone(),
             role: node.role as u64,
         };
-        ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new()
-                .inherit_stdio()
-                .inherit_env()
-                .inherit_args()
-                .inherit_network()
-                .build(),
-            resource_table: ResourceTable::new(),
 
+        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("Must have a parent")
+            .parent()
+            .expect("Workspace folder")
+            .to_owned();
+
+        let mut builder = WasiCtxBuilder::new();
+        builder.inherit_stdio();
+        builder.inherit_env();
+        builder.inherit_args();
+        builder.inherit_network();
+        builder
+            .preopened_dir(
+                workspace_dir.join("paxos-wasm/logs/state"),
+                "/state",
+                DirPerms::all(),
+                FilePerms::all(),
+            )
+            .expect("Failed to preopen dir");
+
+        let wasi_ctx = builder.build();
+
+        ComponentRunStates {
+            wasi_ctx,
+            resource_table: ResourceTable::new(),
             logger: Arc::new(HostLogger::new_from_workspace(host_node)),
         }
     }
@@ -64,8 +84,9 @@ impl PaxosWasmtime {
         is_leader: bool,
         run_config: RunConfig,
     ) -> Result<Self, Box<dyn Error>> {
-        let mut config = wasmtime::Config::default();
+        let mut config = Config::new();
         config.async_support(true);
+        config.profiler(ProfilingStrategy::VTune);
         let engine = Engine::new(&config)?;
 
         let state = ComponentRunStates::new(node.clone());

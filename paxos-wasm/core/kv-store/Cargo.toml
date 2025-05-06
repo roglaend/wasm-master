@@ -1,11 +1,11 @@
 [package]
+edition = "2024"
 name = "kv-store"
 version = "0.1.0"
-edition = "2024"
 
 [lib]
-path = "src/kv-store.rs"
 crate-type = ["cdylib"]
+path = "src/kv-store.rs"
 
 [dependencies]
 wit-bindgen = "0.41"

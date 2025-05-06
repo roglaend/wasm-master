@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ─── Tunables ────────────────────────────────────────────
-NUM_CLIENTS=10
-NUM_REQUESTS=100
-MODE="persistent" # "oneshot" or "persistent"
+NUM_CLIENTS=1
+NUM_REQUESTS=1
+MODE="oneshot" # "oneshot" or "persistent"
 LEADER="127.0.0.1:60000"
 TIMEOUT_SECS=20 # used only by client logic now
 TARGET="release" # "release or "debug"

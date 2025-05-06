@@ -399,7 +399,21 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let num_learners = learners.len() as u64 + self_is_coordinator as u64;
 
         let init_ballot = node.node_id;
-        let proposer = Arc::new(ProposerResource::new(is_leader, num_acceptors, init_ballot));
+        let proposer = Arc::new(ProposerResource::new(
+            is_leader,
+            num_acceptors,
+            init_ballot,
+            &node.node_id.to_string(),
+        ));
+
+        match proposer.load_state() {
+            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Err(e) => logger::log_warn(&format!(
+                "[Proposer Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
+
         logger::log_info(&format!(
             "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
             node.node_id,
@@ -607,8 +621,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     fn process_executed(&self, executed: Executed) {
-        if executed.adu > self.adu.get() {
-            self.adu.set(executed.adu);
+        if executed.adu > self.proposer.get_adu() {
+            self.proposer.set_adu(executed.adu);
         }
 
         if !self.proposer.is_leader() {
@@ -843,7 +857,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
-                let slot = self.adu.get() + 1;
+                let slot = self.proposer.get_adu() + 1;
                 let ballot = self.proposer.get_current_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);

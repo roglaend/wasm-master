@@ -1,11 +1,11 @@
 [package]
+edition = "2024"
 name = "acceptor-agent"
 version = "0.1.0"
-edition = "2024"
 
 [lib]
-path = "src/acceptor-agent.rs"
 crate-type = ["cdylib"]
+path = "src/acceptor-agent.rs"
 
 [dependencies]
 wit-bindgen = "0.41"
