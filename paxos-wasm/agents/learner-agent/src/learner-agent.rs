@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -56,59 +56,16 @@ impl MyLearnerAgentResource {
         self.get_adu()
     }
 
-    /// Pop any newly-ready learns out of the Paxos core,
-    /// apply them to the state machine, and buffer their ExecuteResults.
-    fn execute_learns(&self) {
-        if let LearnResult::Execute(entries) = self.learner.to_be_executed() {
-            let mut buf = self.exec_buffer.borrow_mut();
-            for le in entries {
-                let cmd_res = self.kv_store.apply(&le.value.command); //* State Machine */
-                buf.push_back(ExecuteResult {
-                    slot: le.slot,
-                    value: le.value.clone(),
-                    success: !matches!(cmd_res, CmdResult::NoOp),
-                    cmd_result: cmd_res,
-                });
-            }
-        }
-    }
-
-    /// Collect executed results from the buffer.
-    fn collect_exec_batch(&self, batch_size: Option<u64>, require_full_batch: bool) -> Executed {
-        let mut buf = self.exec_buffer.borrow_mut();
-        // Either up to batch size or all.
-        let available = match batch_size {
-            Some(n) => buf.len().min(n as usize),
-            None => buf.len(),
-        };
-
-        // If we require a full batch (and there is a batch_size), but don't have enough, return
-        if require_full_batch && batch_size.map_or(false, |n| available < n as usize) {
-            return Executed {
-                results: Vec::new(),
-                adu: self.adu(),
-            };
-        }
-
-        // Collect exactly the available entries
-        let results: Vec<_> = buf.drain(..available).collect();
-        Executed {
-            results,
-            adu: self.adu(),
-        }
-    }
-
     /// Dispatch any pending Executed batch to the proposers or the caller
-    fn dispatch_executed(&self, executed: Executed) -> Option<NetworkMessage> {
-        if executed.results.is_empty() || !self.config.learners_send_executed {
+    fn dispatch_executed(&self, exec: Executed) -> Option<NetworkMessage> {
+        if !self.config.learners_send_executed || exec.results.is_empty() {
             return None;
         }
 
         let msg = NetworkMessage {
             sender: self.node.clone(),
-            payload: MessagePayload::Executed(executed.clone()),
+            payload: MessagePayload::Executed(exec),
         };
-
         if self.config.is_event_driven {
             network::send_message_forget(&self.proposers, &msg);
             None
@@ -137,6 +94,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
         let learner = Arc::new(LearnerResource::new(num_acceptors));
         let kv_store = Arc::new(KvStoreResource::new());
+        let now = Instant::now();
 
         logger::log_info("[Learner Agent] Initialized.");
         Self {
@@ -146,10 +104,10 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             acceptors,
             learner,
             kv_store,
-            last_learn_time: RefCell::new(Instant::now()),
+            last_learn_time: RefCell::new(now),
             retries: RefCell::new(HashMap::new()),
             exec_buffer: RefCell::new(VecDeque::new()),
-            last_exec_time: RefCell::new(Instant::now()),
+            last_exec_time: RefCell::new(now),
         }
     }
 
@@ -164,84 +122,86 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         self.learner.get_adu()
     }
 
-    fn learn_and_execute(&self, slot: Slot, value: Value, sender: Node) -> Executed {
-        let is_new_learn = if self.config.acceptors_send_learns {
-            // Need to save the learn from the acceptor to check for quorum before executing.
+    // Record a learn (with quorum if needed).
+    fn record_learn(&self, slot: Slot, value: Value, sender: Node) -> bool {
+        let was_new = if self.config.acceptors_send_learns {
             let learn = Learn {
                 slot,
                 value: value.clone(),
             };
+            // Records the learn by the sender and checks quorum for slot before learning.
             self.learner.handle_learn(&learn, &sender)
         } else {
-            // Bypass the quorum check.
+            // Bypasses the quorum check, learn if new.
             self.learner.learn(slot, &value)
         };
 
-        // If no new learn, return empty
-        if !is_new_learn {
+        if was_new {
+            // only bump the timer when it actually was a new learn
+            self.last_learn_time.replace(Instant::now());
+        }
+
+        was_new
+    }
+
+    // Pops learns from core learner, apply to KV‐store, buffer ExecuteResults if enabled.
+    fn execute_chosen_learns(&self) {
+        if let LearnResult::Execute(entries) = self.learner.to_be_executed() {
+            let mut buf = self.exec_buffer.borrow_mut();
+            for le in &entries {
+                let cmd_res = self.kv_store.apply(&le.value.command); //* State Machine */
+                buf.push_back(ExecuteResult {
+                    slot: le.slot,
+                    value: le.value.clone(),
+                    success: !matches!(cmd_res, CmdResult::NoOp),
+                    cmd_result: cmd_res,
+                });
+            }
+            logger::log_info(&format!(
+                "[Learner Agent] Applied {} learns to KV-store; executed buffer now has {} entries",
+                entries.len(),
+                buf.len()
+            ));
+        }
+    }
+
+    /// Collect executed results from the buffer.
+    fn collect_executed(&self, batch_size: Option<u64>, require_full_batch: bool) -> Executed {
+        let mut buf = self.exec_buffer.borrow_mut();
+        // Either up to batch size or all.
+        let available = match batch_size {
+            Some(n) => buf.len().min(n as usize),
+            None => buf.len(),
+        };
+
+        // If we require a full batch (and there is a batch_size), but don't have enough, return
+        if require_full_batch && batch_size.map_or(false, |n| available < n as usize) {
             return Executed {
                 results: Vec::new(),
                 adu: self.adu(),
             };
         }
 
-        // Update timestamp and execute ready learns
-        self.last_learn_time.replace(Instant::now());
-        self.execute_learns();
+        // Collect exactly the available entries
+        let results: Vec<_> = buf.drain(..available).collect();
+        let adu = self.adu();
 
-        // TODO: Lol
-        if self.config.learners_send_executed {
-            // Try to collect a full batch
-            let batch = self.config.executed_batch_size;
-            let exec = self.collect_exec_batch(Some(batch), true);
-
-            if exec.results.is_empty() {
-                let buffered = self.exec_buffer.borrow().len();
-                logger::log_info(&format!(
-                    "[Learner Agent] Learned slot {}, buffered {}/{} for execution",
-                    slot, buffered, batch
-                ));
-            } else {
-                let first = exec.results.first().unwrap().slot;
-                let last = exec.results.last().unwrap().slot;
-                logger::log_info(&format!(
-                    "[Learner Agent] Executed slots {}..{} (adu={})",
-                    first,
-                    last,
-                    self.adu()
-                ));
-            }
-            exec
-        } else {
-            Executed {
-                results: vec![],
-                adu: self.adu(),
-            }
-        }
-    }
-
-    fn execute_and_collect(&self, max_batch: Option<u64>) -> Executed {
-        self.execute_learns();
-        let exec = self.collect_exec_batch(max_batch, false);
-
-        let buffered = self.exec_buffer.borrow().len();
-        if exec.results.is_empty() {
-            logger::log_debug(&format!(
-                "[Learner Agent] No executions ready, buffered {} for execution",
-                buffered
-            ));
-        } else {
-            let first = exec.results.first().unwrap().slot;
-            let last = exec.results.last().unwrap().slot;
+        if !results.is_empty() {
             logger::log_info(&format!(
-                "[Learner Agent] Executed slots {}..{} (adu={})",
-                first,
-                last,
-                self.adu()
+                "[Learner Agent] Collected {} ExecuteResults (adu={})",
+                results.len(),
+                adu
+            ));
+        } else {
+            logger::log_debug(&format!(
+                "[Learner Agent] No ExecuteResults ready to collect (buffered={})",
+                buf.len()
             ));
         }
-
-        exec
+        Executed {
+            results,
+            adu: self.adu(),
+        }
     }
 
     /// Decide whether we need to retry learning `next`:
@@ -266,7 +226,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             return RetryLearnResult::NoGap;
         }
 
-        // We *should* attempt a retry; but check whether we retried `next` too recently
+        // We should attempt a retry, but check whether we retried the same slot too recently
         let mut retries = self.retries.borrow_mut();
         let just_retried = retries
             .get(&next)
@@ -276,15 +236,19 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         if just_retried {
             RetryLearnResult::Skip(next)
         } else {
-            // threshold met and enough time passed → record and tell caller to retry
+            // threshold met, record and tell caller to retry
             retries.insert(next, now);
             self.last_learn_time.replace(now);
+            logger::log_warn(&format!(
+                "[Learner Agent] Retry triggered for slot {}",
+                next
+            ));
             RetryLearnResult::Retry(next)
         }
     }
 
     fn run_paxos_loop(&self) {
-        // 1) retry gaps/timeouts
+        // retry gaps/timeouts
         match self.evaluate_retry() {
             RetryLearnResult::NoGap => {
                 // nothing to do
@@ -309,7 +273,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             }
         }
 
-        // 2) maybe execute & collect, but only every exec_interval_ms
+        // maybe execute & collect, but only every exec_interval_ms
         let now = Instant::now();
         let elapsed = now.duration_since(*self.last_exec_time.borrow());
         let interval = Duration::from_millis(self.config.exec_interval_ms);
@@ -324,10 +288,17 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             return;
         }
 
-        // 3) it’s time! update timestamp and do the work
+        // Update timestamp and do the work
         self.last_exec_time.replace(now);
-        let exec = self.execute_and_collect(Some(self.config.executed_batch_size));
-        let _ = self.dispatch_executed(exec);
+        self.execute_chosen_learns();
+
+        if self.config.learners_send_executed {
+            let exec = self.collect_executed(Some(self.config.executed_batch_size), false);
+
+            if !exec.results.is_empty() {
+                _ = self.dispatch_executed(exec);
+            }
+        }
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -337,14 +308,26 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     "[Learner Agent] Handling LEARN: slot={}, value={:?}",
                     payload.slot, payload.value
                 ));
-
-                let executed =
-                    self.learn_and_execute(payload.slot, payload.value.clone(), message.sender);
-
-                self.dispatch_executed(executed).unwrap_or(NetworkMessage {
+                let ignore_msg = NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore,
-                })
+                };
+
+                if self.record_learn(payload.slot, payload.value, message.sender) {
+                    // New learn
+                    self.execute_chosen_learns();
+
+                    // if configured, only dispatch a full executed batch
+                    if self.config.learners_send_executed {
+                        let exec =
+                            self.collect_executed(Some(self.config.executed_batch_size), true);
+                        if let Some(reply) = self.dispatch_executed(exec) {
+                            return reply;
+                        }
+                    }
+                }
+
+                ignore_msg
             }
 
             other_message => {

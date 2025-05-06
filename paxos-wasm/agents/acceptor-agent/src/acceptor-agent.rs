@@ -104,7 +104,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             logger::log_warn(
                 "[Acceptor Agent] Attempted to broadcast learns, but ability not enabled.",
             );
-            None
+            panic!("Lol")
         }
     }
 

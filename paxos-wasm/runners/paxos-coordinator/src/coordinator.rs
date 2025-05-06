@@ -69,7 +69,10 @@ impl MyPaxosCoordinatorResource {
     }
 
     fn drive_learner(&self) {
-        let exec = self.learner_agent.execute_and_collect(None);
+        self.learner_agent.execute_chosen_learns();
+
+        // TODO: Might add a max batch or require a full batch, but don't think that's valid here.
+        let exec = self.learner_agent.collect_executed(None, false);
 
         if self.proposer_agent.is_leader() && !exec.results.is_empty() {
             let _ = self.proposer_agent.process_executed(&exec);
@@ -217,9 +220,23 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
             match local_acc {
                 AcceptedResult::Accepted(acc) => {
+                    // Sends Accept to all acceptors
                     let accept_result =
                         self.proposer_agent
                             .accept_phase(&p.value, p.slot, p.ballot, &vec![acc]);
+
+                    if self.config.acceptors_send_learns {
+                        if let Some(learn) =
+                            // Sends Learn to all learners
+                            self.acceptor_agent.commit_phase(p.slot, &p.value.clone())
+                        {
+                            let _ = self.learner_agent.record_learn(
+                                learn.slot,
+                                &learn.value,
+                                &self.node,
+                            );
+                        }
+                    }
 
                     logger::log_info(&format!(
                         "[Coordinator] Completed accept phase for slot {}.",
@@ -250,24 +267,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     fn commit_phase(&self) -> Option<Vec<ClientResponse>> {
         if !self.config.acceptors_send_learns {
             let to_commit = self.proposer_agent.learns_to_commit();
-            if to_commit.is_empty() {
-                return None;
-            }
-
-            for learn in to_commit {
-                self.proposer_agent.broadcast_learn(&learn);
-
-                let executed =
-                    self.learner_agent
-                        .learn_and_execute(learn.slot, &learn.value, &self.node);
-                _ = self.proposer_agent.process_executed(&executed);
+            if !to_commit.is_empty() {
+                for learn in to_commit {
+                    if self
+                        .learner_agent
+                        .record_learn(learn.slot, &learn.value, &self.node)
+                    {
+                        self.proposer_agent.broadcast_learn(&learn);
+                    }
+                }
             }
         }
-        // else {
-        //     // Execute and collect all ready learns. Could add a batch size.
-        //     let executed = self.learner_agent.execute_and_collect(None);
-        //     _ = self.proposer_agent.process_executed(&executed);
-        // }
 
         let responses = self.proposer_agent.collect_client_responses();
         (!responses.is_empty()).then(|| {

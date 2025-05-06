@@ -113,11 +113,16 @@ interface learner-agent {
         /// The highest learned slot.
         get-adu: func() -> slot;
 
-        /// Learn the new value, and return a list of executed values and adu.
-        learn-and-execute: func(slot: slot, value: value, sender: node) -> executed;  
+        /// Records the learn, either with quorum check or not. Returns if learned.
+        record-learn: func(slot: slot, value: value, sender: node) -> bool;
 
-        execute-and-collect: func(max-batch: option<u64>) -> executed;
+        /// Pops chosen learns to be executed, and applies them to the state machine.
+        execute-chosen-learns: func();
 
+        /// Collects a batch of executed, either all up to max-batch, or wait for a full batch.
+        collect-executed: func(max-batch: option<u64>, require-full: bool) -> executed;
+
+        /// Evaluates if need to retry a slot, due to too large gap and retry interval.
         evaluate-retry: func() -> retry-learn-result;
 
         /// Processes incoming network messages (such as commit notifications and accepted responses).
