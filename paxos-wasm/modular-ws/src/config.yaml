@@ -1,5 +1,5 @@
 # ─── global cluster settings ───────────────────────────
-leader_id: 1
+log_level: info # "debug", "info", "warning", "error"
 
 # full list of nodes and which paxos-role they have
 nodes:
@@ -33,8 +33,9 @@ run_config:
   prepare_timeout: 1000
   demo_client: false
   batch_size: 10
-  tick_ms: 10
-  exec_interval_ms: 500
-  retry_interval_ms: 1000
+  tick_ms: 5
+  exec_interval_ms: 100
+  retry_interval_ms: 500
   learn_max_gap: 10
+  executed_batch_size: 10
   client_server_port: 60000

@@ -19,7 +19,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    host_logger::init_tracing();
     let args = Args::parse();
 
     let cfg = Config::load(&args.config, args.node_id);
@@ -27,6 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Node {} @{} role={:?} is_leader={}",
         cfg.node.node_id, cfg.node.address, cfg.node.role, cfg.is_leader,
     );
+
+    host_logger::init_tracing_with(cfg.log_level);
 
     let paxos = PaxosWasmtime::new(
         cfg.node.clone(),

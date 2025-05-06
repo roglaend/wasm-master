@@ -2,15 +2,18 @@ use std::{fs, path::Path};
 use yaml_rust::YamlLoader;
 
 use crate::bindings::paxos::default::{
+    logger::Level,
     network_types::PaxosRole,
     paxos_types::{Node, RunConfig},
 };
+
 //* Example config that needs to be copy pasted due to the bindings used. */
 pub struct Config {
     pub node: Node,
     pub remote_nodes: Vec<Node>,
     pub is_leader: bool,
     pub run_config: RunConfig,
+    pub log_level: Level,
 }
 
 impl Config {
@@ -20,6 +23,16 @@ impl Config {
         let doc = &docs[0];
 
         let raw = doc["nodes"].as_vec().unwrap();
+
+        // Get the log level
+        let level_str = doc["log_level"].as_str().unwrap_or("info").to_lowercase();
+        let log_level = match level_str.as_str() {
+            "debug" => Level::Debug,
+            "info" => Level::Info,
+            "warning" => Level::Warn,
+            "error" => Level::Error,
+            other => panic!("unknown log_level `{}`", other),
+        };
 
         // Build all nodes
         let nodes: Vec<Node> = raw
@@ -62,7 +75,12 @@ impl Config {
             learners_send_executed: r["learners_send_executed"].as_bool().unwrap(),
             prepare_timeout: r["prepare_timeout"].as_i64().unwrap() as u64,
             demo_client: r["demo_client"].as_bool().unwrap(),
+            batch_size: r["batch_size"].as_i64().unwrap() as u64,
             tick_ms: r["tick_ms"].as_i64().unwrap() as u64,
+            exec_interval_ms: r["exec_interval_ms"].as_i64().unwrap() as u64,
+            retry_interval_ms: r["retry_interval_ms"].as_i64().unwrap() as u64,
+            learn_max_gap: r["learn_max_gap"].as_i64().unwrap() as u64,
+            executed_batch_size: r["executed_batch_size"].as_i64().unwrap() as u64,
             client_server_port: r["client_server_port"].as_i64().unwrap() as u16,
         };
 
@@ -71,6 +89,7 @@ impl Config {
             remote_nodes,
             is_leader,
             run_config,
+            log_level,
         }
     }
 }

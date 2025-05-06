@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 use yaml_rust::YamlLoader;
 
 use crate::bindings::paxos::default::{
+    logger::Level,
     network_types::PaxosRole,
     paxos_types::{Node, RunConfig},
 };
@@ -11,6 +12,7 @@ pub struct Config {
     pub remote_nodes: Vec<Node>,
     pub is_leader: bool,
     pub run_config: RunConfig,
+    pub log_level: Level,
 }
 
 impl Config {
@@ -20,6 +22,16 @@ impl Config {
         let doc = &docs[0];
 
         let raw = doc["nodes"].as_vec().unwrap();
+
+        // Get the log level
+        let level_str = doc["log_level"].as_str().unwrap_or("info").to_lowercase();
+        let log_level = match level_str.as_str() {
+            "debug" => Level::Debug,
+            "info" => Level::Info,
+            "warning" => Level::Warn,
+            "error" => Level::Error,
+            other => panic!("unknown log_level `{}`", other),
+        };
 
         // Build all nodes
         let nodes: Vec<Node> = raw
@@ -76,6 +88,7 @@ impl Config {
             remote_nodes,
             is_leader,
             run_config,
+            log_level,
         }
     }
 }
