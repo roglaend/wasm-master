@@ -1,20 +1,45 @@
 # ─── global cluster settings ───────────────────────────
-leader_id: 1
+leader_id: 9
 
 # full list of nodes and which paxos-role they have
+# nodes:
+#   - node_id: 1
+#     address: "127.0.0.1:50051"
+#     role: "learner"
+#   - node_id: 2
+#     address: "127.0.0.1:50052"
+#     role: "learner"
+#   - node_id: 3
+#     address: "127.0.0.1:50053"
+#     role: "acceptor"
+#   - node_id: 4
+#     address: "127.0.0.1:50054"
+#     role: "acceptor"
+#   - node_id: 5
+#     address: "127.0.0.1:50055"
+#     role: "acceptor"
+#   - node_id: 6
+#     address: "127.0.0.1:50056"
+#     role: "proposer"
+#   - node_id: 7
+#     address: "127.0.0.1:50057"
+#     role: "proposer" # Last node has to be either "proposer" or "coordinator"
+
+
+# ─── cluster settings ────────────────────────────────── same runtime
 nodes:
   - node_id: 1
     address: "127.0.0.1:50051"
     role: "learner"
   - node_id: 2
     address: "127.0.0.1:50052"
-    role: "learner"
+    role: "acceptor"
   - node_id: 3
     address: "127.0.0.1:50053"
-    role: "acceptor"
+    role: "proposer"
   - node_id: 4
     address: "127.0.0.1:50054"
-    role: "acceptor"
+    role: "learner"
   - node_id: 5
     address: "127.0.0.1:50055"
     role: "acceptor"
@@ -23,7 +48,13 @@ nodes:
     role: "proposer"
   - node_id: 7
     address: "127.0.0.1:50057"
-    role: "proposer" # Last node has to be either "proposer" or "coordinator"
+    role: "learner"
+  - node_id: 8
+    address: "127.0.0.1:50058"
+    role: "acceptor"
+  - node_id: 9
+    address: "127.0.0.1:50059"
+    role: "proposer"
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
