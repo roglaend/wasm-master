@@ -175,7 +175,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self) -> PrepareResult {
         // Starts from 1, or the adu on the learner, the highest slot the learner has chosen.
-        let slot = self.learner_agent.get_adu();
+        let slot = self.learner_agent.get_adu() + 1;
         let ballot = self.proposer_agent.get_current_ballot();
 
         // Query local acceptor.
