@@ -12,8 +12,8 @@ use bindings::exports::paxos::default::serializer::Guest;
 // use bindings::paxos::default::logger;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, ClientResponse, ExecuteResult, Executed, KvPair, Learn, Node, Operation,
-    PValue, PaxosRole, Prepare, Promise, Value,
+    Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
+    Operation, PValue, PaxosRole, Prepare, Promise, Value,
 };
 
 /// Helper function that attempts to deserialize and returns a Result.
@@ -142,6 +142,29 @@ fn deserialize_node(s: &str) -> Result<Node, &'static str> {
     }
 }
 
+fn serialize_cmd_result(cr: &CmdResult) -> String {
+    match cr {
+        CmdResult::NoOp => "no-op".into(),
+        CmdResult::CmdValue(None) => "cmd-value:none".into(),
+        CmdResult::CmdValue(Some(v)) => format!("cmd-value:{}", v),
+    }
+}
+
+fn deserialize_cmd_result(s: &str) -> Result<CmdResult, &'static str> {
+    if s == "no-op" {
+        Ok(CmdResult::NoOp)
+    } else if let Some(rest) = s.strip_prefix("cmd-value:") {
+        // "cmd-value:none" or "cmd-value:<some>"
+        if rest == "none" {
+            Ok(CmdResult::CmdValue(None))
+        } else {
+            Ok(CmdResult::CmdValue(Some(rest.to_string())))
+        }
+    } else {
+        Err("bad cmd-result")
+    }
+}
+
 /// Serialize a MessagePayload to a simple comma-delimited string.
 fn serialize_message_payload(mp: &MessagePayload) -> String {
     match mp {
@@ -158,13 +181,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             )
         }
         MessagePayload::ClientResponse(cr) => {
-            let res = match &cr.command_result {
-                Some(val) => val.clone(),
-                None => "none".into(),
-            };
+            let result = serialize_cmd_result(&cr.command_result);
             format!(
                 "client-response,client_id:{},client_seq:{},success:{},result:{}",
-                cr.client_id, cr.client_seq, cr.success, res
+                cr.client_id, cr.client_seq, cr.success, result
             )
         }
         MessagePayload::Prepare(p) => {
@@ -241,8 +261,6 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
         }
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
-            // Serialize each individual ExecuteResult as
-            // "slot:<slot>,client_id:<id>,client_seq:<seq>,op:<op>,success:<bool>,result:<res>"
             let entries = exec
                 .results
                 .iter()
@@ -252,13 +270,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                         .command
                         .as_ref()
                         .map_or("none".into(), |o| serialize_operation(o));
-                    let cmd_res = match &r.cmd_result {
-                        Some(res) => res.clone(),
-                        None => "none".into(),
-                    };
+                    let result = serialize_cmd_result(&r.cmd_result);
                     format!(
                         "slot:{},client_id:{},client_seq:{},op:{},success:{},result:{}",
-                        r.slot, v.client_id, v.client_seq, op, r.success, cmd_res
+                        r.slot, v.client_id, v.client_seq, op, r.success, result
                     )
                 })
                 .collect::<Vec<_>>()
@@ -326,15 +341,15 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                     _ => {}
                 }
             }
-            if let (Some(cid), Some(cseq), Some(succ), Some(res)) =
+            if let (Some(cid), Some(cseq), Some(suc), Some(res_s)) =
                 (client_id, client_seq, success, result)
             {
-                let cmd_res = if res == "none" { None } else { Some(res) };
+                let cmd_result = deserialize_cmd_result(&res_s)?;
                 Ok(MessagePayload::ClientResponse(ClientResponse {
                     client_id: cid,
                     client_seq: cseq,
-                    success: succ,
-                    command_result: cmd_res,
+                    success: suc,
+                    command_result: cmd_result,
                 }))
             } else {
                 Err("bad client-response")
@@ -632,14 +647,15 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                         } else {
                             Some(deserialize_operation(&op_s).map_err(|_| "bad op")?)
                         };
-                        // parse the command result
-                        let cmd_res = if res_s == "none" { None } else { Some(res_s) };
 
                         let val = Value {
                             command: cmd,
                             client_id: cid,
                             client_seq: cseq,
                         };
+
+                        // parse the command result
+                        let cmd_res = deserialize_cmd_result(&res_s)?;
 
                         results.push(ExecuteResult {
                             value: val,

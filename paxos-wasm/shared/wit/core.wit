@@ -76,12 +76,12 @@ interface learner {
     resource learner-resource {
         constructor(num-acceptors: u64);
         get-state: func() -> learner-state;
-        learn: func(slot: slot, value: value) -> learn-result;
-        handle-learn: func(learn: learn, sender: node) -> learn-result;
-        get-learned: func(slot: slot) -> option<learned-entry>;
-        get-next-to-execute : func() -> slot;
-        check-for-gap: func() -> option<slot>;
+        learn: func(slot: slot, value: value) -> bool;
+        handle-learn: func(learn: learn, sender: node) -> bool;
         to-be-executed: func() -> learn-result;
+        get-highest-learned: func() -> slot;
+        get-adu: func() -> slot;
+        get-learned: func(slot: slot) -> option<learned-entry>;
     }
 }
 

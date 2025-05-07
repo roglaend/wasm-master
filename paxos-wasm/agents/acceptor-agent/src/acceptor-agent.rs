@@ -104,18 +104,19 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             logger::log_warn(
                 "[Acceptor Agent] Attempted to broadcast learns, but ability not enabled.",
             );
-            None
+            panic!("Lol")
         }
     }
 
-    fn retry_learn(&self, slot: Slot, sender: Node) {
+    fn retry_learn(&self, slot: Slot) {
         logger::log_info(&format!(
             "[Acceptor Agent] Retrying learn for slot {}",
             slot
         ));
 
-        // Have accepted value, just send it back to message sender
-        // Otherwise, no accepted value for this slot, missing from proposer, send noop to learner to ensure progress
+        // Have accepted value, which didn't reach learner.
+        // Or, no accepted value for this slot, missing from proposer.
+        // Either get accepted value or noop.
         let value = self
             .acceptor
             .get_accepted(slot)
@@ -132,7 +133,9 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             sender: self.node.clone(),
             payload: MessagePayload::Learn(learn.clone()),
         };
-        network::send_message_forget(&vec![sender], &learn_msg);
+
+        // Broadcasts to all learners, since if one learner need a noop, then they all should?
+        network::send_message_forget(&self.learners, &learn_msg);
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -215,7 +218,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     slot
                 ));
 
-                self.retry_learn(slot, message.sender);
+                self.retry_learn(slot);
 
                 NetworkMessage {
                     sender: self.node.clone(),

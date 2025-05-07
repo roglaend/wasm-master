@@ -65,7 +65,7 @@ impl MyProposerResource {
     /// starting from `min_slot`. Fills any missing slots with a no-op proposal (None).
     fn collect_accepted_values(&self, min_slot: Slot, promises: &[Promise]) -> Vec<PValue> {
         let ballot = self.current_ballot.get();
-        self.current_slot.set(min_slot - 1);
+        self.current_slot.set(min_slot.saturating_sub(1));
 
         // Map each slot to (Value for slot with highest ballot)
         let mut slot_map: HashMap<Slot, PValue> = HashMap::new();
@@ -197,7 +197,10 @@ impl GuestProposerResource for MyProposerResource {
     /// Enqueues a prioritized value, called after leader change or retry.
     fn enqueue_prioritized_request(&self, req: Value) {
         self.prioritized_values.borrow_mut().push_back(req.clone());
-        logger::log_debug("[Core Proposer] Enqueued prioritized request.");
+        logger::log_info(&format!(
+            "[Core Proposer] Enqueued prioritized request with Value: {:?}",
+            req
+        ));
     }
 
     fn get_current_slot(&self) -> Slot {
@@ -306,24 +309,18 @@ impl GuestProposerResource for MyProposerResource {
         let accepted_values = self.collect_accepted_values(min_slot, &promises);
 
         logger::log_info(&format!(
-            "[Core Proposer] Collected {} accepted values for slot: {:?}",
+            "[Core Proposer] Collected {} previously accepted values",
             accepted_values.len(),
-            accepted_values
-                .iter()
-                .map(|p| format!("(slot: {})", p.slot))
-                .collect::<Vec<_>>()
-                .join(", ")
         ));
 
         // Deduplicate by slot and push to prioritized queue
         let mut seen_slots = HashSet::new();
-        for p in accepted_values {
-            if seen_slots.insert(p.slot) {
-                if let Some(value) = p.value {
-                    self.enqueue_prioritized_request(value);
-                }
-            }
-        }
+        accepted_values
+            .into_iter()
+            .filter(|p| seen_slots.insert(p.slot))
+            .filter_map(|p| p.value)
+            .filter(|v| v.command.is_some())
+            .for_each(|v| self.enqueue_prioritized_request(v));
 
         logger::log_info(&format!(
             "[Core Proposer] Prepare phase succeeded with ballot {}.",
