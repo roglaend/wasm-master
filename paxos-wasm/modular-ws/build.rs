@@ -12,7 +12,8 @@ fn main() {
 
     let target = "wasm32-wasip2";
 
-    let base_components = &["tcp-server", "udp-server"];
+    // let base_components = &["tcp-server", "udp-server"];
+    let base_components = &["tcp-server"];
     build_wasm_components(target, base_components);
 
     // --- Build and Plug Modular-WS Components ---
@@ -29,17 +30,17 @@ fn main() {
         output_server,
     );
 
-    let build_list_server_udp: &[&str] = &[];
-    let plugs_server_udp = &["serializer"];
-    let socket_server_udp = "udp_server";
-    let output_server_udp = "composed_udp_server";
-    build_and_plug(
-        target,
-        build_list_server_udp,
-        plugs_server_udp,
-        socket_server_udp,
-        output_server_udp,
-    );
+    // let build_list_server_udp: &[&str] = &[];
+    // let plugs_server_udp = &["serializer"];
+    // let socket_server_udp = "udp_server";
+    // let output_server_udp = "composed_udp_server";
+    // build_and_plug(
+    //     target,
+    //     build_list_server_udp,
+    //     plugs_server_udp,
+    //     socket_server_udp,
+    //     output_server_udp,
+    // );
 
     // --- Compose the Final Server ---
 
@@ -59,19 +60,19 @@ fn main() {
         output_final_tcp,
     );
 
-    let plugs_final_udp = &[
-        "udp_composed_proposer_agent",
-        "udp_composed_acceptor_agent",
-        "udp_composed_learner_agent",
-        // "udp_composed_paxos_coordinator", // TODO
-    ];
-    let socket_final_udp = "composed_udp_server";
-    let output_final_udp = "final_composed_udp_server";
-    build_and_plug(
-        target,
-        &[],
-        plugs_final_udp,
-        socket_final_udp,
-        output_final_udp,
-    );
+    // let plugs_final_udp = &[
+    //     "udp_composed_proposer_agent",
+    //     "udp_composed_acceptor_agent",
+    //     "udp_composed_learner_agent",
+    //     // "udp_composed_paxos_coordinator", // TODO
+    // ];
+    // let socket_final_udp = "composed_udp_server";
+    // let output_final_udp = "final_composed_udp_server";
+    // build_and_plug(
+    //     target,
+    //     &[],
+    //     plugs_final_udp,
+    //     socket_final_udp,
+    //     output_final_udp,
+    // );
 }

@@ -25,7 +25,7 @@ use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, Network
 use bindings::paxos::default::paxos_types::{
     CmdResult, ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
-use bindings::paxos::default::{logger, network};
+use bindings::paxos::default::{logger, network_client};
 
 struct MyLearnerAgent;
 
@@ -41,6 +41,7 @@ struct MyLearnerAgentResource {
     acceptors: Vec<Node>,
     learner: Arc<LearnerResource>,
     kv_store: Arc<KvStoreResource>,
+    network_client: Arc<network_client::NetworkClientResource>,
 
     /// for gap/timeout retries
     last_learn_time: RefCell<Instant>,
@@ -67,7 +68,8 @@ impl MyLearnerAgentResource {
             payload: MessagePayload::Executed(exec),
         };
         if self.config.is_event_driven {
-            network::send_message_forget(&self.proposers, &msg);
+            self.network_client
+                .send_message_forget(&self.proposers, &msg);
             None
         } else {
             Some(msg)
@@ -94,6 +96,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
         let learner = Arc::new(LearnerResource::new(num_acceptors));
         let kv_store = Arc::new(KvStoreResource::new());
+        let network_client = Arc::new(network_client::NetworkClientResource::new());
+
         let now = Instant::now();
 
         logger::log_info("[Learner Agent] Initialized.");
@@ -104,6 +108,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             acceptors,
             learner,
             kv_store,
+            network_client,
             last_learn_time: RefCell::new(now),
             retries: RefCell::new(HashMap::new()),
             exec_buffer: RefCell::new(VecDeque::new()),
@@ -266,9 +271,11 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     slot
                 ));
                 if self.config.acceptors_send_learns {
-                    network::send_message_forget(&self.acceptors, &retry_msg);
+                    self.network_client
+                        .send_message_forget(&self.acceptors, &retry_msg);
                 } else {
-                    network::send_message_forget(&self.proposers, &retry_msg);
+                    self.network_client
+                        .send_message_forget(&self.proposers, &retry_msg);
                 }
             }
         }

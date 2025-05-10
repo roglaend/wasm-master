@@ -82,7 +82,7 @@ interface proposer-agent {
 interface acceptor-agent {
     use paxos-types.{node, slot, ballot, value, run-config, learn};
     use acceptor-types.{promise-result, accepted-result};
-    use network.{network-message};
+    use network-types.{network-message};
 
     resource acceptor-agent-resource {
         constructor(node: node, nodes: list<node>, config: run-config);
@@ -101,7 +101,7 @@ interface acceptor-agent {
 
 interface learner-agent {
     use paxos-types.{node, slot, ballot, value, run-config, executed, kv-pair};
-    use network.{network-message};
+    use network-types.{network-message};
     use learner-types.{learn-result, learned-entry, learner-state, retry-learn-result};
 
     resource learner-agent-resource {

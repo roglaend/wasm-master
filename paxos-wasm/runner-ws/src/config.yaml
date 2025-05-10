@@ -1,5 +1,5 @@
 # ─── Local Paxos Cluster ───────────────────────────
-log_level: info # "debug", "info", "warning", "error"
+log_level: warning # "debug", "info", "warning", "error"
 
 # full list of nodes and which paxos-role they have
 nodes:
@@ -31,7 +31,7 @@ run_config:
   acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 1000
-  demo_client: false
+  demo_client: true
   batch_size: 10
   tick_ms: 5
   exec_interval_ms: 100

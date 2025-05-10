@@ -15,16 +15,6 @@ interface logger {
     log-error: func(msg: string);
 }
 
-
-interface network {
-    use paxos-types.{node};
-    use network-types.{network-message};
-
-    send-hello: func() -> string;
-    send-message: func(nodes: list<node>, message: network-message) -> list<network-message>;
-    send-message-forget: func(nodes: list<node>, message: network-message);
-}
-
 interface paxos-coordinator {
     use paxos-types.{run-config, node, slot, ballot, client-request, value, client-response, kv-pair};
     use proposer-types.{prepare-result, accept-result};

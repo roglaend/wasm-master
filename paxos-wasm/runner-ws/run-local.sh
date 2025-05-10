@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/src/config.yaml"
 
 TARGET=release
-LOG_LEVEL=info
+LOG_LEVEL=warning
 WT=wt.exe
 MODEL=runners-ws
 

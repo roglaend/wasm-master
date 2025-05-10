@@ -17,6 +17,7 @@ bindings::export!(MyProposerAgent with_types_in bindings);
 use bindings::exports::paxos::default::proposer_agent::{
     Guest as GuestProposerAgent, GuestProposerAgentResource,
 };
+use bindings::paxos::default::network_client::NetworkClientResource;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
@@ -24,7 +25,7 @@ use bindings::paxos::default::paxos_types::{
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{
-    failure_detector::FailureDetectorResource, logger, network, proposer::ProposerResource,
+    failure_detector::FailureDetectorResource, logger, network_client, proposer::ProposerResource,
 };
 
 enum CollectedResponses<T, R> {
@@ -49,6 +50,7 @@ pub struct MyProposerAgentResource {
     acceptors: Vec<Node>,
     learners: Vec<Node>,
     failure_detector: Arc<FailureDetectorResource>,
+    network_client: Arc<network_client::NetworkClientResource>,
 
     // A mapping from Ballot to unique promises per node_id.
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
@@ -198,7 +200,7 @@ impl MyProposerAgentResource {
 
         if !self.config.is_event_driven {
             // In synchronous mode, send and collect responses.
-            let responses = network::send_message(&self.acceptors, &msg);
+            let responses = self.network_client.send_message(&self.acceptors, &msg);
             let mut promises = vec![];
             for resp in responses {
                 if let MessagePayload::Promise(prom_payload) = resp.payload {
@@ -214,7 +216,8 @@ impl MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Event-driven mode enabled. Sending fire-and-forget prepare messages.",
             );
-            network::send_message_forget(&self.acceptors, &msg);
+            self.network_client
+                .send_message_forget(&self.acceptors, &msg);
             CollectedResponses::EventDriven(PrepareResult::IsEventDriven)
         }
     }
@@ -243,7 +246,7 @@ impl MyProposerAgentResource {
 
         if !self.config.is_event_driven {
             // In synchronous mode, send and collect responses.
-            let responses = network::send_message(&self.acceptors, &msg);
+            let responses = self.network_client.send_message(&self.acceptors, &msg);
             let mut accepted = vec![];
             for resp in responses {
                 if let MessagePayload::Accepted(acc_payload) = resp.payload {
@@ -259,7 +262,8 @@ impl MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Event-driven mode enabled. Sending fire-and-forget accept messages.",
             );
-            network::send_message_forget(&self.acceptors, &msg);
+            self.network_client
+                .send_message_forget(&self.acceptors, &msg);
             CollectedResponses::EventDriven(AcceptResult::IsEventDriven)
         }
     }
@@ -414,6 +418,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             &nodes,
             failure_delta,
         ));
+        let network_client = Arc::new(NetworkClientResource::new());
 
         let batch_size = 20; // TODO: make part of config/input
 
@@ -430,6 +435,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             in_flight_accepted: RefCell::new(BTreeMap::new()),
             last_prepare_start: Cell::new(None),
             failure_detector,
+            network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
@@ -555,7 +561,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             learn.slot, learn.value
         ));
 
-        network::send_message_forget(&self.learners, &msg);
+        self.network_client
+            .send_message_forget(&self.learners, &msg);
     }
 
     fn mark_proposal_chosen(&self, slot: Slot) -> Option<Value> {
