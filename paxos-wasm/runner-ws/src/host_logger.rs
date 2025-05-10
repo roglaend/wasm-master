@@ -195,6 +195,6 @@ impl HostLogger {
         }
 
         // Append to the in-memory log.
-        let _ = self.append_log(msg);
+        let _ = self.append_log(msg); // TODO: Need this?
     }
 }

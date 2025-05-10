@@ -20,6 +20,18 @@ interface serializer {
     deserialize: func(serialized: list<u8>) -> network-message;
 }
 
+interface network-client {
+    use paxos-types.{node};
+    use network-types.{network-message};
+
+    resource network-client-resource {
+        constructor();
+        
+        send-message: func(nodes: list<node>, message: network-message) -> list<network-message>;
+        send-message-forget: func(nodes: list<node>, message: network-message);
+    }
+}
+
 interface paxos-client {
     use paxos-types.{client-response, value};
 
@@ -33,7 +45,6 @@ interface paxos-client {
         shutdown-send: func(leader-address: string);
         shutdown-receive: func(leader-address: string);
         close: func(leader-address: string);
-    
     }
 }
 

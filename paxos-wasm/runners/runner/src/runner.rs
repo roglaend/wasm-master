@@ -21,7 +21,6 @@ use bindings::paxos::default::{
     paxos_coordinator::PaxosCoordinatorResource,
     paxos_types::{ClientResponse, Node, RunConfig},
 };
-use rand::Rng;
 
 struct DemoClientHelper {
     client_id: String,
@@ -153,7 +152,7 @@ impl MyRunnerResource {
         self.metrics.idle_logged.store(false, Ordering::Relaxed);
     }
 
-    fn demo_client_work(&self, tick_ms: u64) {
+    fn demo_client_work(&self) {
         let Some(ref helper) = self.demo_client else {
             return;
         };
@@ -162,7 +161,7 @@ impl MyRunnerResource {
             return;
         }
 
-        if helper.last_request.borrow().elapsed() >= helper.next_interval.get() {
+        for _ in 0..self.config.batch_size + 10 {
             let seq = helper.client_seq.get();
             helper.client_seq.set(seq + 1);
 
@@ -172,11 +171,6 @@ impl MyRunnerResource {
                 client_seq: seq,
             };
             let _ = self.paxos.submit_client_request(&req);
-            *helper.last_request.borrow_mut() = Instant::now();
-
-            // Randomize next interval
-            let ms = rand::rng().random_range(tick_ms..(2 * tick_ms));
-            helper.next_interval.set(Duration::from_millis(ms));
         }
     }
 }
@@ -254,7 +248,7 @@ impl GuestRunnerResource for MyRunnerResource {
 
             let now = Instant::now();
             if now >= next_tick {
-                self.demo_client_work(tick_ms);
+                self.demo_client_work();
 
                 if let Some(responses) = self.run_paxos_loop() {
                     self.dispatch_responses(responses);

@@ -18,7 +18,7 @@ use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, Network
 use bindings::paxos::default::paxos_types::{
     Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
-use bindings::paxos::default::{logger, network};
+use bindings::paxos::default::{logger, network_client};
 
 pub struct MyAcceptorAgent;
 
@@ -31,8 +31,10 @@ pub struct MyAcceptorAgentResource {
 
     node: Node,
     learners: Vec<Node>,
-    acceptor: Arc<AcceptorResource>,
     proposers: Vec<Node>,
+
+    acceptor: Arc<AcceptorResource>,
+    network_client: Arc<network_client::NetworkClientResource>,
 }
 
 impl MyAcceptorAgentResource {}
@@ -53,14 +55,16 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             .into_iter()
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
+        let network_client = Arc::new(network_client::NetworkClientResource::new());
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
             learners,
-            acceptor,
             proposers,
+            acceptor,
+            network_client,
         }
     }
 
@@ -98,7 +102,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 sender: self.node.clone(),
                 payload: MessagePayload::Learn(learn.clone()),
             };
-            network::send_message_forget(&self.learners, &learn_msg);
+            self.network_client
+                .send_message_forget(&self.learners, &learn_msg);
             Some(learn)
         } else {
             logger::log_warn(
@@ -135,7 +140,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         };
 
         // Broadcasts to all learners, since if one learner need a noop, then they all should?
-        network::send_message_forget(&self.learners, &learn_msg);
+        self.network_client
+            .send_message_forget(&self.learners, &learn_msg);
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -162,7 +168,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
                         //* Fire-and-forget */
                         if self.config.is_event_driven {
-                            network::send_message_forget(&vec![message.sender], &msg);
+                            self.network_client
+                                .send_message_forget(&vec![message.sender], &msg);
                         }
                         msg
                     }
@@ -198,9 +205,11 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                                     payload: MessagePayload::Learn(learn),
                                 };
 
-                                network::send_message_forget(&self.learners, &learn_msg);
+                                self.network_client
+                                    .send_message_forget(&self.learners, &learn_msg);
                             } else {
-                                network::send_message_forget(&vec![message.sender], &accepted_msg);
+                                self.network_client
+                                    .send_message_forget(&vec![message.sender], &accepted_msg);
                             }
                         }
                         accepted_msg
@@ -243,7 +252,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 };
                 //* Fire-and-forget */
                 // if self.config.is_event_driven { // TODO: Needed?
-                //     network::send_message_forget(&vec![message.sender.clone()], &response);
+                //     self.network_client.send_message_forget(&vec![message.sender.clone()], &response);
                 // }
                 response
             }
