@@ -269,12 +269,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             let to_commit = self.proposer_agent.learns_to_commit();
             if !to_commit.is_empty() {
                 for learn in to_commit {
-                    if self
-                        .learner_agent
-                        .record_learn(learn.slot, &learn.value, &self.node)
-                    {
-                        self.proposer_agent.broadcast_learn(&learn);
-                    }
+                    self.proposer_agent.broadcast_learn(&learn);
+                    self.learner_agent
+                        .record_learn(learn.slot, &learn.value, &self.node);
                 }
             }
         }

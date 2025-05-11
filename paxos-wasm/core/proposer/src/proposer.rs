@@ -38,6 +38,7 @@ pub struct MyProposerResource {
     pending_client_requests: RefCell<VecDeque<Value>>,
     prioritized_values: RefCell<VecDeque<Value>>,
     proposals: RefCell<BTreeMap<Slot, ProposalEntry>>,
+    chosen_slots: RefCell<VecDeque<Slot>>,
 }
 
 impl MyProposerResource {
@@ -159,6 +160,7 @@ impl GuestProposerResource for MyProposerResource {
             pending_client_requests: RefCell::new(VecDeque::new()),
             prioritized_values: RefCell::new(VecDeque::new()),
             proposals: RefCell::new(BTreeMap::new()),
+            chosen_slots: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -216,13 +218,13 @@ impl GuestProposerResource for MyProposerResource {
     }
 
     fn reserve_next_chosen_proposal(&self) -> Option<Proposal> {
-        let mut map = self.proposals.borrow_mut();
-        map.iter_mut()
-            .find(|(_, entry)| entry.status == ProposalStatus::Chosen)
-            .map(|(_slot, entry)| {
-                entry.status = ProposalStatus::CommitPending;
-                entry.proposal.clone()
-            })
+        let slot = self.chosen_slots.borrow_mut().pop_front()?;
+
+        if let Some(entry) = self.proposals.borrow_mut().get_mut(&slot) {
+            entry.status = ProposalStatus::CommitPending;
+            return Some(entry.proposal.clone());
+        }
+        None
     }
 
     /// Returns Some(proposal) if created; otherwise, None.
@@ -389,6 +391,7 @@ impl GuestProposerResource for MyProposerResource {
         }
 
         let val = self.update_proposal_status(slot, ProposalStatus::Chosen)?;
+        self.chosen_slots.borrow_mut().push_back(slot);
 
         logger::log_info(&format!(
             "[Core Proposer] Proposal slot {} marked Chosen with value {:?}.",

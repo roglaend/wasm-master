@@ -6,7 +6,7 @@ interface paxos-types {
         prepare-timeout: u64,           // The timeout period before trying a new prepare-phase in ms e.g., 5000 for 5 seconds.
         demo-client: bool,              // Enables a simulated demo client by creating client requests at an interval in the respective server.
         batch-size: u64,                // The number commonly used to perform certain actions N times before continuing.
-        tick-ms: u64,                   // The tickrate in ms which is the minimum wait time in-between ticks and run_paxos_loop calls.
+        tick-micros: u64,               // The tickrate in micro seconds which is the minimum wait time in-between ticks and run_paxos_loop calls.
         exec-interval-ms: u64,          // The timeout period for which the learner forcefully sends executed even though not having batch size to send.
         retry-interval-ms: u64,         // The timeout period for which the learner issues a retry-learn message to either the acceptors or proposers.
         learn-max-gap: u64,             // The maximum gap between missing learn and highest seen learn before issuing a retry.

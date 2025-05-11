@@ -7,6 +7,7 @@ use wasmtime::{Engine, Store};
 use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::bindings;
+use crate::bindings::paxos::default::logger::Level;
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
 use crate::host_logger::{self, HostLogger};
 
@@ -30,11 +31,11 @@ impl WasiView for ComponentRunStates {
 }
 
 impl ComponentRunStates {
-    pub fn new(node: Node) -> Self {
+    pub fn new(node: Node, log_level: Level) -> Self {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
-            role: node.role as u64, 
+            role: node.role as u64,
         };
         ComponentRunStates {
             wasi_ctx: WasiCtxBuilder::new()
@@ -45,7 +46,7 @@ impl ComponentRunStates {
                 .build(),
             resource_table: ResourceTable::new(),
 
-            logger: Arc::new(HostLogger::new_from_workspace(host_node)),
+            logger: Arc::new(HostLogger::new_from_workspace(host_node, log_level)),
         }
     }
 }
@@ -63,12 +64,13 @@ impl PaxosWasmtime {
         nodes: Vec<bindings::paxos::default::paxos_types::Node>,
         is_leader: bool,
         run_config: RunConfig,
+        log_level: Level,
     ) -> Result<Self, Box<dyn Error>> {
         let mut config = wasmtime::Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
 
-        let state = ComponentRunStates::new(node.clone());
+        let state = ComponentRunStates::new(node.clone(), log_level);
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 

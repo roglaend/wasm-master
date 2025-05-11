@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use wasi::io::streams::{InputStream, OutputStream};
+use wasi::io::streams::{InputStream, OutputStream, StreamError};
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
@@ -69,6 +69,7 @@ impl GuestNetworkClientResource for TcpClientResource {
         }
     }
 
+    // TODO
     fn send_message(&self, nodes: Vec<Node>, message: NetworkMessage) -> Vec<NetworkMessage> {
         let msg_bytes = serializer::serialize(&message);
         let mut replies = Vec::new();
@@ -93,7 +94,7 @@ impl GuestNetworkClientResource for TcpClientResource {
         for node in &nodes {
             let addr = &node.address;
             if let Some(conn) = conns.get_mut(addr) {
-                if let Ok(chunk) = conn.input.read(4096) {
+                if let Ok(chunk) = conn.input.read(65536) {
                     if !chunk.is_empty() {
                         let buf = bufs.get_mut(addr).unwrap();
                         buf.extend_from_slice(&chunk);
@@ -133,14 +134,42 @@ impl GuestNetworkClientResource for TcpClientResource {
 
         for node in &nodes {
             let addr = &node.address;
+
             if let Err(e) = self.ensure_conn(addr) {
                 logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
                 continue;
             }
-            let mut conns = self.conns.borrow_mut();
-            let conn = conns.get_mut(addr).unwrap();
-            if conn.output.blocking_write_and_flush(&msg_bytes).is_err() {
-                logger::log_warn(&format!("[TCP Client] write to {} failed (forget)", addr));
+
+            let mut remove = false;
+            {
+                let mut conns = self.conns.borrow_mut();
+                if let Some(conn) = conns.get_mut(addr) {
+                    match conn.output.blocking_write_and_flush(&msg_bytes) {
+                        Ok(()) => {}
+
+                        Err(StreamError::Closed) => {
+                            logger::log_error(&format!(
+                                "[TCP Client] stream closed on {}; dropping connection",
+                                addr
+                            ));
+                            remove = true;
+                        }
+
+                        Err(StreamError::LastOperationFailed(err)) => {
+                            logger::log_error(&format!(
+                                "[TCP Client] write+flush error on {}: {:?}; dropping connection",
+                                addr, err
+                            ));
+                            remove = true;
+                        }
+                    }
+                }
+            }
+
+            // Evict the broken connection so next time we reconnect
+            if remove {
+                self.conns.borrow_mut().remove(addr);
+                self.bufs.borrow_mut().remove(addr);
             }
         }
     }

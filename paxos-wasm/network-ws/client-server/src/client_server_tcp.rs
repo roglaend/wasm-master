@@ -77,7 +77,9 @@ impl GuestClientServerResource for MyClientServerTcpResource {
         *self.listener.borrow_mut() = Some(sock);
     }
 
-    fn get_requests(&self) -> Vec<Value> {
+    fn get_requests(&self, max: u64) -> Vec<Value> {
+        let max = max as usize;
+
         // Stage 1: Accept new connections + read frames
         let (out, mut to_drop) = {
             let mut conns = self.conns.borrow_mut();
@@ -109,7 +111,7 @@ impl GuestClientServerResource for MyClientServerTcpResource {
 
             // 2) Read / accumulate / frame‐decode
             for (&chan, (_sock, in_s, _out_s)) in conns.iter_mut() {
-                match in_s.read(4096) {
+                match in_s.read(65536) {
                     Ok(chunk) if !chunk.is_empty() => {
                         let buf = bufs.get_mut(&chan).unwrap();
                         buf.extend_from_slice(&chunk);
@@ -140,6 +142,11 @@ impl GuestClientServerResource for MyClientServerTcpResource {
 
                         if offset > 0 {
                             buf.drain(0..offset);
+                        }
+
+                        // if we've hit max, break out of the *for* loop
+                        if out.len() >= max {
+                            break;
                         }
                     }
                     Ok(_) => {
@@ -179,7 +186,7 @@ impl GuestClientServerResource for MyClientServerTcpResource {
     }
 
     fn get_request(&self) -> Option<Value> {
-        self.get_requests().into_iter().next()
+        self.get_requests(1).into_iter().next()
     }
 
     fn send_responses(&self, sender: Node, replies: Vec<ClientResponse>) {

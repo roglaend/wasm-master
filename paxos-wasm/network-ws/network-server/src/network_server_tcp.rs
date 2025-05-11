@@ -74,7 +74,8 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
         *self.listener.borrow_mut() = Some(sock);
     }
 
-    fn get_messages(&self) -> Vec<NetworkMessage> {
+    fn get_messages(&self, max: u64) -> Vec<NetworkMessage> {
+        let max = max as usize;
         let mut out = Vec::new();
         let mut to_drop = Vec::new();
 
@@ -99,7 +100,7 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
 
         // 2) Read from all live connections, frame-decode, deserialize
         for (&chan, (_sock, reader, _writer)) in self.conns.borrow().iter() {
-            match reader.read(4096) {
+            match reader.read(65536) {
                 Ok(chunk) if !chunk.is_empty() => {
                     let mut buffers = self.buffers.borrow_mut();
                     let buf = buffers.get_mut(&chan).unwrap();
@@ -126,6 +127,11 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
 
                     if offset > 0 {
                         buf.drain(0..offset);
+                    }
+
+                    // break the `for` if we’ve reached max
+                    if out.len() >= max {
+                        break;
                     }
                 }
                 Ok(_) => {
@@ -159,6 +165,6 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
     }
 
     fn get_message(&self) -> Option<NetworkMessage> {
-        self.get_messages().into_iter().next()
+        self.get_messages(1).into_iter().next()
     }
 }

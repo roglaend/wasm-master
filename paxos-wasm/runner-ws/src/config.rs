@@ -75,7 +75,7 @@ impl Config {
             prepare_timeout: r["prepare_timeout"].as_i64().unwrap() as u64,
             demo_client: r["demo_client"].as_bool().unwrap(),
             batch_size: r["batch_size"].as_i64().unwrap() as u64,
-            tick_ms: r["tick_ms"].as_i64().unwrap() as u64,
+            tick_micros: r["tick_micros"].as_i64().unwrap() as u64,
             exec_interval_ms: r["exec_interval_ms"].as_i64().unwrap() as u64,
             retry_interval_ms: r["retry_interval_ms"].as_i64().unwrap() as u64,
             learn_max_gap: r["learn_max_gap"].as_i64().unwrap() as u64,
