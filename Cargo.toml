@@ -45,10 +45,10 @@ members = [
 
     "paxos-wasm/network-ws",
     "paxos-wasm/network-ws/serializer",
-    "paxos-wasm/network-ws/network_server",
-    "paxos-wasm/network-ws/client_server",
+    "paxos-wasm/network-ws/network-server",
+    "paxos-wasm/network-ws/client-server",
     "paxos-wasm/network-ws/tcp-client",
-    "paxos-wasm/network-ws/udp-client",
+    # "paxos-wasm/network-ws/udp-client",
 
     "paxos-wasm/runner-ws",
 
@@ -59,7 +59,7 @@ members = [
     "paxos-wasm/modular-ws",
     "paxos-wasm/modular-ws/client",
     "paxos-wasm/modular-ws/tcp-server",
-    "paxos-wasm/modular-ws/udp-server",
+    # "paxos-wasm/modular-ws/udp-server",
 
     "paxos-wasm/modular-ws-client",
     "paxos-wasm/modular-ws-client/paxos-ws-client",

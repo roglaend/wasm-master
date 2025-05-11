@@ -21,59 +21,78 @@ use bindings::paxos::default::{
     paxos_coordinator::PaxosCoordinatorResource,
     paxos_types::{ClientResponse, Node, RunConfig},
 };
-use rand::Rng;
 
 struct DemoClientHelper {
     client_id: String,
     client_seq: Cell<u64>,
-    last_request: RefCell<Instant>,
-    next_interval: Cell<Duration>,
 }
 
 struct MetricsHelper {
     // short‐term batch stats
     stats_batch: usize,
     batch_count: Cell<usize>,
-    batch_start: RefCell<Instant>,
+    batch_start: RefCell<Option<Instant>>,
 
     // global stats (never reset until final)
     global_count: Cell<usize>,
     global_start: RefCell<Option<Instant>>,
 
     // for “only once” final print
-    last_response: RefCell<Instant>,
+    last_response: RefCell<Option<Instant>>,
     idle_logged: AtomicBool,
 }
 
 impl MetricsHelper {
     fn track(&self, num_responses: usize) {
-        // update both counters
-        let short = self.batch_count.get() + num_responses;
-        self.batch_count.set(short);
+        let now = Instant::now();
+
+        // On *first ever* batch (i.e. batch_start is None), set both timers
+        if self.global_start.borrow().is_none() {
+            *self.global_start.borrow_mut() = Some(now);
+            *self.batch_start.borrow_mut() = Some(now);
+            self.batch_count.set(0);
+            logger::log_info("[Runner] Starting global throughput timer");
+        }
+
+        // Update counts
+        let new_batch = self.batch_count.get() + num_responses;
+        self.batch_count.set(new_batch);
 
         let total = self.global_count.get() + num_responses;
         self.global_count.set(total);
 
-        // mid‐run batch logging
-        if short >= self.stats_batch {
-            let elapsed = self.batch_start.borrow().elapsed();
-            let th = short as f64 / elapsed.as_secs_f64();
+        // If we’ve hit a batch, log intermediate throughput
+        if new_batch >= self.stats_batch {
+            let start = self.batch_start.borrow().unwrap();
+            let elapsed = now.duration_since(start);
+            let th = new_batch as f64 / elapsed.as_secs_f64();
             logger::log_error(&format!(
                 "[Runner] Throughput: last {} responses in {:?} → {:.2} rsp/sec",
-                short, elapsed, th
+                new_batch, elapsed, th
             ));
-            // reset only the *batch* stats
+            // reset batch
             self.batch_count.set(0);
-            *self.batch_start.borrow_mut() = Instant::now();
+            *self.batch_start.borrow_mut() = Some(now);
         }
     }
 
-    /// Print a final, one‐time throughput using the global counters.
+    /// Print a final, one-time throughput using counts from the first response
+    /// up through the *last* response (so we don’t include idle time).
     fn flush_global(&self) {
+        // only once
+        if self.idle_logged.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
         if let Some(start) = *self.global_start.borrow() {
             let total = self.global_count.get();
             if total > 0 {
-                let elapsed = start.elapsed();
+                // Use the timestamp of the *last* response
+                let end = self
+                    .last_response
+                    .borrow()
+                    .expect("track must have set last_response");
+                let elapsed = end.duration_since(start);
                 let th = total as f64 / elapsed.as_secs_f64();
                 logger::log_error(&format!(
                     "[Runner] FINAL THROUGHPUT: {} responses over {:?} → {:.2} rsp/sec",
@@ -110,11 +129,14 @@ impl MyRunnerResource {
             return;
         }
         // peek at any incoming requests
-        let requests = self.client_svr.get_requests();
+        let requests = self.client_svr.get_requests(self.config.batch_size * 2);
         if !requests.is_empty() {
             if self.metrics.global_start.borrow().is_none() {
                 *self.metrics.global_start.borrow_mut() = Some(Instant::now());
                 logger::log_info("[Runner] Starting global throughput timer");
+            }
+            if self.metrics.batch_start.borrow().is_none() {
+                *self.metrics.batch_start.borrow_mut() = Some(Instant::now());
             }
         }
 
@@ -124,7 +146,7 @@ impl MyRunnerResource {
     }
 
     fn process_network(&self) {
-        for msg in self.network_svr.get_messages() {
+        for msg in self.network_svr.get_messages(self.config.batch_size * 2) {
             self.paxos.handle_message(&msg);
         }
     }
@@ -139,21 +161,20 @@ impl MyRunnerResource {
         if !self.paxos.is_leader() {
             return;
         }
-        let num_responses = &responses.len();
+        let now = Instant::now();
+        *self.metrics.last_response.borrow_mut() = Some(now);
+        self.metrics.idle_logged.store(false, Ordering::Relaxed);
+
         logger::log_info(&format!(
             "[Runner] sending {} client responses",
-            &num_responses
+            responses.len()
         ));
         self.client_svr.send_responses(&self.node, &responses);
 
         self.metrics.track(responses.len());
-
-        // mark that we just had activity
-        *self.metrics.last_response.borrow_mut() = Instant::now();
-        self.metrics.idle_logged.store(false, Ordering::Relaxed);
     }
 
-    fn demo_client_work(&self, tick_ms: u64) {
+    fn demo_client_work(&self) {
         let Some(ref helper) = self.demo_client else {
             return;
         };
@@ -162,7 +183,7 @@ impl MyRunnerResource {
             return;
         }
 
-        if helper.last_request.borrow().elapsed() >= helper.next_interval.get() {
+        for _ in 0..self.config.batch_size * 2 {
             let seq = helper.client_seq.get();
             helper.client_seq.set(seq + 1);
 
@@ -172,11 +193,6 @@ impl MyRunnerResource {
                 client_seq: seq,
             };
             let _ = self.paxos.submit_client_request(&req);
-            *helper.last_request.borrow_mut() = Instant::now();
-
-            // Randomize next interval
-            let ms = rand::rng().random_range(tick_ms..(2 * tick_ms));
-            helper.next_interval.set(Duration::from_millis(ms));
         }
     }
 }
@@ -208,26 +224,22 @@ impl GuestRunnerResource for MyRunnerResource {
 
         sleep(Duration::from_millis(1000)); // To allow all nodes to initialize
 
-        let now = Instant::now();
-
         let demo_client = if config.demo_client {
             Some(DemoClientHelper {
                 client_id: format!("client-{}", node.node_id),
                 client_seq: Cell::new(0),
-                last_request: RefCell::new(now),
-                next_interval: Cell::new(Duration::from_millis(5)),
             })
         } else {
             None
         };
 
         let metrics = MetricsHelper {
-            stats_batch: 100,
+            stats_batch: 500,
             batch_count: Cell::new(0),
-            batch_start: RefCell::new(now),
+            batch_start: RefCell::new(None),
             global_count: Cell::new(0),
             global_start: RefCell::new(None),
-            last_response: RefCell::new(now),
+            last_response: RefCell::new(None),
             idle_logged: AtomicBool::new(false),
         };
 
@@ -244,8 +256,7 @@ impl GuestRunnerResource for MyRunnerResource {
     }
 
     fn run(&self) {
-        let tick_ms = self.config.tick_ms;
-        let tick_duration = Duration::from_millis(tick_ms);
+        let tick_duration = Duration::from_micros(self.config.tick_micros);
         let mut next_tick = Instant::now() + tick_duration;
 
         while !self.should_stop.load(Ordering::Relaxed) {
@@ -254,7 +265,7 @@ impl GuestRunnerResource for MyRunnerResource {
 
             let now = Instant::now();
             if now >= next_tick {
-                self.demo_client_work(tick_ms);
+                self.demo_client_work();
 
                 if let Some(responses) = self.run_paxos_loop() {
                     self.dispatch_responses(responses);
@@ -263,12 +274,15 @@ impl GuestRunnerResource for MyRunnerResource {
             }
 
             // **Idle‐timeout check**: 1 s since last_response, print final throughput once
-            let idle = now.duration_since(*self.metrics.last_response.borrow());
-            if idle >= Duration::from_secs(1) && !self.metrics.idle_logged.load(Ordering::Relaxed) {
-                self.metrics.flush_global();
-                self.metrics.idle_logged.store(true, Ordering::Relaxed);
+            // only if we've ever had a response:
+            if let Some(last) = *self.metrics.last_response.borrow() {
+                let idle = now.duration_since(last);
+                if idle >= Duration::from_secs(1)
+                    && !self.metrics.idle_logged.load(Ordering::Relaxed)
+                {
+                    self.metrics.flush_global();
+                }
             }
-
             // sleep "only" until our next tick
             let sleep_for = next_tick.saturating_duration_since(Instant::now());
             if !sleep_for.is_zero() {

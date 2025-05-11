@@ -51,7 +51,7 @@ fn create_client_socket(
 fn read_with_timeout(input: &mut InputStream, timeout: Duration) -> Result<Vec<u8>, ()> {
     let start = std::time::Instant::now();
     loop {
-        match input.read(4096) {
+        match input.read(65536) {
             Ok(buf) if !buf.is_empty() => return Ok(buf),
             Ok(_) => {}
             Err(_) => return Err(()),
@@ -199,7 +199,7 @@ impl GuestPaxosClientResource for MyPaxosClientResource {
         let input = conn.input.as_mut().unwrap();
 
         // 1) Read whatever bytes are ready
-        if let Ok(chunk) = input.read(4096) {
+        if let Ok(chunk) = input.read(65536) {
             if !chunk.is_empty() {
                 buf.extend_from_slice(&chunk);
             }

@@ -1,9 +1,8 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use tracing::Level as TracingLevel;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -34,7 +33,6 @@ pub struct HostNode {
 pub struct HostLogger {
     pub node: HostNode,
     pub node_file: Mutex<std::fs::File>,
-    pub global_file: Arc<Mutex<std::fs::File>>,
     pub log_entries: Mutex<Vec<(u64, String)>>, // (offset, message)
     pub next_offset: AtomicU64,
     pub log_level: LevelFilter,
@@ -43,7 +41,7 @@ pub struct HostLogger {
 impl HostLogger {
     /// Create a new HostLogger for a given node.
     /// It creates node-specific and global log files in a workspace "logs" directory.
-    pub fn new_from_workspace(node: HostNode) -> Self {
+    pub fn new_from_workspace(node: HostNode, level: Level) -> Self {
         // Compute the workspace directory.
         let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace_dir = binding.parent().expect("Failed to get workspace directory");
@@ -52,33 +50,20 @@ impl HostLogger {
 
         // Build file paths.
         let node_file_path = logs_dir.join(format!("node{}.log", node.node_id));
-        let global_file_path = logs_dir.join("global.log");
-
         let node_file_path_str = node_file_path.to_str().expect("Invalid node file path");
 
-        let global_file = Arc::new(Mutex::new(
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(global_file_path)
-                .expect("Failed to open global log file"),
-        ));
-
-        Self::new(node, node_file_path_str, global_file)
+        Self::new(node, node_file_path_str, level)
     }
 
     /// Create a new HostLogger given a node, node file path, and a shared global file.
-    pub fn new(
-        node: HostNode,
-        node_file_path: &str,
-        global_file: Arc<Mutex<std::fs::File>>,
-    ) -> Self {
-        // Parse the RUST_LOG variable into a LevelFilter; default to Info if not set.
-        let log_level = std::env::var("RUST_LOG")
-            .ok()
-            .and_then(|lvl| lvl.parse::<LevelFilter>().ok())
-            .unwrap_or(LevelFilter::INFO);
+    pub fn new(node: HostNode, node_file_path: &str, level: Level) -> Self {
+        // Map our custom "Level" to a "LevelFilter"
+        let log_level = match level {
+            Level::Debug => LevelFilter::DEBUG,
+            Level::Info => LevelFilter::INFO,
+            Level::Warn => LevelFilter::WARN,
+            Level::Error => LevelFilter::ERROR,
+        };
 
         let node_file = OpenOptions::new()
             .write(true)
@@ -90,7 +75,6 @@ impl HostLogger {
         HostLogger {
             node,
             node_file: Mutex::new(node_file),
-            global_file,
             log_entries: Mutex::new(Vec::new()),
             next_offset: AtomicU64::new(0),
             log_level,
@@ -124,77 +108,39 @@ impl HostLogger {
         self.log(Level::Debug, msg);
     }
 
-    /// Convert a tracing Level into a numeric value.
-    /// Lower numbers represent more severe levels.
-    fn level_to_usize(level: TracingLevel) -> usize {
-        match level {
-            TracingLevel::ERROR => 1,
-            TracingLevel::WARN => 2,
-            TracingLevel::INFO => 3,
-            TracingLevel::DEBUG => 4,
-            TracingLevel::TRACE => 5,
-        }
-    }
-
-    /// Convert a LevelFilter into a numeric value.
-    /// Lower numbers represent stricter filtering.
-    fn level_filter_to_usize(filter: LevelFilter) -> usize {
-        match filter {
-            LevelFilter::OFF => 6, // essentially never log
-            LevelFilter::ERROR => 1,
-            LevelFilter::WARN => 2,
-            LevelFilter::INFO => 3,
-            LevelFilter::DEBUG => 4,
-            LevelFilter::TRACE => 5,
-        }
-    }
-
     /// Log a message at the specified level.
     fn log(&self, level: Level, msg: String) {
-        // Map our custom Level into a tracing::Level.
-        let tracing_level = match level {
-            Level::Debug => TracingLevel::DEBUG,
-            Level::Info => TracingLevel::INFO,
-            Level::Warn => TracingLevel::WARN,
-            Level::Error => TracingLevel::ERROR,
+        // map to a LevelFilter for comparison
+        let event_filter = match level {
+            Level::Error => LevelFilter::ERROR,
+            Level::Warn => LevelFilter::WARN,
+            Level::Info => LevelFilter::INFO,
+            Level::Debug => LevelFilter::DEBUG,
         };
-
-        // Only log the message if its severity meets or exceeds the threshold.
-        if Self::level_to_usize(tracing_level) > Self::level_filter_to_usize(self.log_level) {
+        if event_filter > self.log_level {
             return;
         }
 
-        // Build a formatted log string using details from the HostNode.
-        let formatted = format!(
+        let console_msg = format!(
             "[node {} | {} | {:?}] {}",
             self.node.node_id, self.node.address, self.node.role, msg
         );
-
-        // Emit the log via the tracing macros.
-        match level {
-            Level::Debug => debug!("{}", formatted),
-            Level::Info => info!("{}", formatted),
-            Level::Warn => warn!("{}", formatted),
-            Level::Error => error!("{}", formatted),
-        }
-
-        // Build the log line to be written to disk.
-        let log_line = format!(
+        let file_msg = format!(
             "[node {} | {} | {:?}][{:?}] {}\n",
             self.node.node_id, self.node.address, self.node.role, level, msg
         );
 
-        // Write to the node-specific file.
-        if let Ok(mut file) = self.node_file.lock() {
-            let _ = file.write_all(log_line.as_bytes());
+        match level {
+            Level::Debug => debug!("{}", console_msg),
+            Level::Info => info!("{}", console_msg),
+            Level::Warn => warn!("{}", console_msg),
+            Level::Error => error!("{}", console_msg),
         }
 
-        // Write to the global file.
-        if let Ok(mut file) = self.global_file.lock() {
-            let _ = file.write_all(log_line.as_bytes());
+        if let Ok(mut nf) = self.node_file.lock() {
+            let _ = nf.write_all(file_msg.as_bytes());
         }
 
-        // Append to the in-memory log.
-        let _ = self.append_log(msg);
+        let _ = self.append_log(msg); // TODO: Useful?
     }
 }

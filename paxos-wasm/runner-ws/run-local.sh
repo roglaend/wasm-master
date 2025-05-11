@@ -6,7 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/src/config.yaml"
 
 TARGET=release
-LOG_LEVEL=info
 WT=wt.exe
 MODEL=runners-ws
 
@@ -34,7 +33,6 @@ for idx in "${!IDS[@]}"; do
   title="$role $id"
 
   CMD+=" new-tab --title \"$title\" bash -c \\\"\
-    RUST_LOG=$LOG_LEVEL \
     ./target/$TARGET/$MODEL \
       --node-id $id \
       --config $CONFIG\\\" \\;"

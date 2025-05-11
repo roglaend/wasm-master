@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.remote_nodes.clone(),
         cfg.is_leader,
         cfg.run_config.clone(),
+        cfg.log_level,
     )
     .await?;
 
