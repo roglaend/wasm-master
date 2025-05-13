@@ -1,24 +1,24 @@
 [package]
+edition = "2024"
 name = "runners-ws"
 version = "0.1.0"
-edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+base64 = "0.21"
+clap = {version = "4.5", features = ["derive"]}
+dashmap = "5"
+futures = "0.3"
+once_cell = "1"
+tempfile = "3"
+tokio = {version = "1", features = ["rt-multi-thread", "macros", "full"]}
+tracing = "0.1"
+tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 wasmtime = "31"
 wasmtime-wasi = "31"
-clap = { version = "4.5", features = ["derive"] }
-futures = "0.3"
-tempfile = "3"
-dashmap = "5"
-once_cell = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 yaml-rust = "0.4"
 
-
 [build-dependencies]
-paxos-wasm-utils = { path = "../shared/utils" }
-network-ws = { path = "../network-ws" }
-agents = { path = "../agents" }
-runners = { path = "../runners" }
+agents = {path = "../agents"}
+network-ws = {path = "../network-ws"}
+paxos-wasm-utils = {path = "../shared/utils"}
+runners = {path = "../runners"}

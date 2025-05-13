@@ -3,6 +3,10 @@ mod config;
 mod host_logger;
 mod paxos_wasm;
 
+pub mod host_network_client;
+pub mod host_network_server;
+pub mod serializer;
+
 use clap::Parser;
 use config::Config;
 use paxos_wasm::PaxosWasmtime;

@@ -20,7 +20,7 @@ bindings::export!(TcpClient with_types_in bindings);
 use bindings::exports::paxos::default::network_client::{Guest, GuestNetworkClientResource};
 use bindings::paxos::default::network_types::NetworkMessage;
 use bindings::paxos::default::paxos_types::Node;
-use bindings::paxos::default::{logger, serializer};
+use bindings::paxos::default::serializer;
 
 /// Simple struct to hold our streams and keep the socket alive
 struct Connection {
@@ -77,13 +77,15 @@ impl GuestNetworkClientResource for TcpClientResource {
         for node in &nodes {
             let addr = &node.address;
             if let Err(e) = self.ensure_conn(addr) {
-                logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
+                // logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
+                eprintln!("[TCP Client] connect {} failed: {:?}", addr, e);
                 continue;
             }
             let mut conns = self.conns.borrow_mut();
             let conn = conns.get_mut(addr).unwrap();
             if conn.output.blocking_write_and_flush(&msg_bytes).is_err() {
-                logger::log_warn(&format!("[TCP Client] write to {} failed", addr));
+                // logger::log_warn(&format!("[TCP Client] write to {} failed", addr));
+                eprintln!("[TCP Client] write to {} failed", addr);
             }
         }
 
@@ -134,13 +136,15 @@ impl GuestNetworkClientResource for TcpClientResource {
         for node in &nodes {
             let addr = &node.address;
             if let Err(e) = self.ensure_conn(addr) {
-                logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
+                // logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
+                eprintln!("[TCP Client] connect {} failed: {:?}", addr, e);
                 continue;
             }
             let mut conns = self.conns.borrow_mut();
             let conn = conns.get_mut(addr).unwrap();
             if conn.output.blocking_write_and_flush(&msg_bytes).is_err() {
-                logger::log_warn(&format!("[TCP Client] write to {} failed (forget)", addr));
+                // logger::log_warn(&format!("[TCP Client] write to {} failed (forget)", addr));
+                eprintln!("[TCP Client] write to {} failed (forget)", addr);
             }
         }
     }

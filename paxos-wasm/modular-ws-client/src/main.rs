@@ -122,10 +122,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut lats = Vec::with_capacity(args.num_requests);
             let start = Instant::now();
             let deadline = start + Duration::from_secs(args.timeout_secs);
+            let max_in_flight = 100;
 
             while (seen.len() as u64) < total && Instant::now() < deadline {
                 // Send request
-                if next < total {
+                if next < total && sent.len() < max_in_flight {
                     let req = Value {
                         client_id: args.client_id.to_string(),
                         client_seq: next,

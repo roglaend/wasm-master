@@ -44,6 +44,13 @@ fn main() {
 
     // --- Build WS plugged Components ---
 
+    println!("BUILDING WASM OVERHEAD");
+    let build_list = &[];
+    let plugs = &["composed_network_server_tcp", "composed_tcp_client"];
+    let socket = "wasm-overhead-wasm";
+    let output = "composed_wasm_overhead";
+    build_and_plug(target, build_list, plugs, socket, output);
+
     let build_list_agents: &[&str] = &[];
     let plugs = &["composed_tcp_client"];
     let socket_proposer = "composed_proposer_agent";

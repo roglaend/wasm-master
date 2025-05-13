@@ -18,7 +18,7 @@ bindings::export!(MyNetworkServerTcp with_types_in bindings);
 
 use bindings::exports::paxos::default::network_server::{Guest, GuestNetworkServerResource};
 use bindings::paxos::default::network_types::NetworkMessage;
-use bindings::paxos::default::{logger, serializer};
+use bindings::paxos::default::serializer;
 
 struct MyNetworkServerTcp;
 struct MyNetworkServerTcpResource {
@@ -90,7 +90,9 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
                     }
                     Err(TcpErrorCode::WouldBlock) => break,
                     Err(e) => {
-                        logger::log_error(&format!("[Network Server] accept error: {:?}", e));
+                        // logger::log_error(&format!("[Network Server] accept error: {:?}", e));
+
+                        eprintln!("[Network Server] accept error: {:?}", e);
                         break;
                     }
                 }
@@ -132,10 +134,16 @@ impl GuestNetworkServerResource for MyNetworkServerTcpResource {
                     // Nothing to read. Can't be used to detect FIN/closed connection. Do nothing.
                 }
                 Err(e) => {
-                    logger::log_error(&format!(
+                    //     logger::log_error(&format!(
+                    //         "[Network Server] read error on chan {}: {:?}, dropping",
+                    //         chan, e
+                    //     ));
+
+                    eprintln!(
                         "[Network Server] read error on chan {}: {:?}, dropping",
                         chan, e
-                    ));
+                    );
+
                     to_drop.push(chan);
                 }
             }

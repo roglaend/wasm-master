@@ -420,7 +420,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         ));
         let network_client = Arc::new(NetworkClientResource::new());
 
-        let batch_size = 20; // TODO: make part of config/input
+        let batch_size = config.batch_size; // TODO: make part of config/input
 
         Self {
             config,
@@ -603,7 +603,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn collect_client_responses(&self) -> Vec<ClientResponse> {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.executed_batch_size {
             if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {

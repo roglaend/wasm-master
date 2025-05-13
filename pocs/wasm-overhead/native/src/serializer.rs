@@ -1,25 +1,38 @@
-pub mod bindings {
-    wit_bindgen::generate!({
-        path: "../../shared/wit",
-        world: "serializer-world",
-        additional_derives: [PartialEq, Clone],
-    });
-}
-
-bindings::export!(MySerializer with_types_in bindings);
-
-use bindings::exports::paxos::default::serializer::Guest;
-// use bindings::paxos::default::logger;
-use bindings::paxos::default::network_types::{
+use crate::bindings::paxos::default::network_types::{
     Benchmark, Heartbeat, MessagePayload, NetworkMessage,
 };
-use bindings::paxos::default::paxos_types::{
+use crate::bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, Value,
 };
 
-/// Helper function that attempts to deserialize and returns a Result.
-/// If any step fails, an error string is returned.
+pub trait Serializer {
+    fn serialize(&self, message: NetworkMessage) -> Vec<u8>;
+    fn deserialize(&self, bytes: Vec<u8>) -> Result<NetworkMessage, String>;
+}
+
+/// Native Rust implementation of the Serializer
+pub struct MySerializer;
+
+impl Serializer for MySerializer {
+    fn serialize(&self, message: NetworkMessage) -> Vec<u8> {
+        let sender_str = serialize_node(&message.sender);
+        let payload_str = serialize_message_payload(&message.payload);
+        let formatted = format!("sender={}||payload={}", sender_str, payload_str);
+        let payload_bytes = formatted.into_bytes();
+
+        let len: u32 = payload_bytes.len().try_into().expect("Message too long");
+        let mut out = Vec::with_capacity(4 + payload_bytes.len());
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&payload_bytes);
+        out
+    }
+
+    fn deserialize(&self, serialized: Vec<u8>) -> Result<NetworkMessage, String> {
+        try_deserialize(serialized)
+    }
+}
+
 fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     if serialized.len() < 4 {
         return Err("Serialized message too short to contain length prefix".to_string());
@@ -66,36 +79,6 @@ fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     Ok(NetworkMessage { sender, payload })
 }
 
-pub struct MySerializer;
-
-impl Guest for MySerializer {
-    fn serialize(message: NetworkMessage) -> Vec<u8> {
-        let sender_str = serialize_node(&message.sender);
-        let payload_str = serialize_message_payload(&message.payload);
-        let formatted = format!("sender={}||payload={}", sender_str, payload_str);
-        let payload_bytes = formatted.into_bytes();
-
-        // Compute length as a u32.
-        let len: u32 = payload_bytes.len().try_into().expect("Message too long");
-
-        // Allocate space: 4 bytes for the length prefix + the actual payload.
-        let mut out = Vec::with_capacity(4 + payload_bytes.len());
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(&payload_bytes);
-        out
-    }
-
-    fn deserialize(serialized: Vec<u8>) -> NetworkMessage {
-        match try_deserialize(serialized) {
-            Ok(msg) => msg,
-            Err(e) => {
-                panic!("[Serializer] Deserialization error: {}", e);
-            }
-        }
-    }
-}
-
-/// Serialize a Node
 fn serialize_node(n: &Node) -> String {
     let role_str = match n.role {
         PaxosRole::Proposer => "proposer",

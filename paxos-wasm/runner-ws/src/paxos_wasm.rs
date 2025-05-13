@@ -2,9 +2,14 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use wasmtime::component::{Component, Linker, ResourceAny};
+use wasmtime::component::{Component, Linker, Resource, ResourceAny};
 use wasmtime::{Engine, Store};
+use wasmtime_wasi::bindings::cli;
 use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+
+use crate::bindings::exports::paxos;
+use crate::host_network_client::NativeTcpClient;
+use crate::host_network_server::NativeTcpServer;
 
 use crate::bindings;
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
@@ -34,7 +39,7 @@ impl ComponentRunStates {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
-            role: node.role as u64, 
+            role: node.role as u64,
         };
         ComponentRunStates {
             wasi_ctx: WasiCtxBuilder::new()
@@ -48,6 +53,14 @@ impl ComponentRunStates {
             logger: Arc::new(HostLogger::new_from_workspace(host_node)),
         }
     }
+}
+
+pub struct NetworkServerResource {
+    pub server: NativeTcpServer,
+}
+
+pub struct NetworkClientResource {
+    pub client: NativeTcpClient,
 }
 
 pub struct PaxosWasmtime {
@@ -75,6 +88,8 @@ impl PaxosWasmtime {
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
 
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
+        bindings::paxos::default::network_server::add_to_linker(&mut linker, |s| s)?;
+        bindings::paxos::default::network_client::add_to_linker(&mut linker, |s| s)?;
 
         let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -119,14 +134,94 @@ impl PaxosWasmtime {
     }
 }
 
+impl bindings::paxos::default::network_server::Host for ComponentRunStates {}
+
+impl bindings::paxos::default::network_server::HostNetworkServerResource for ComponentRunStates {
+    async fn new(&mut self) -> Resource<NetworkServerResource> {
+        let server = self.resource_table.push(NetworkServerResource {
+            server: NativeTcpServer::new(),
+        });
+        server.unwrap()
+    }
+
+    async fn setup_listener(
+        &mut self,
+        resource: Resource<NetworkServerResource>,
+        bind_addr: String,
+    ) {
+        let server = self.resource_table.get_mut(&resource).unwrap();
+        server.server.setup_listener(&bind_addr);
+    }
+
+    async fn get_messages(
+        &mut self,
+        resource: Resource<NetworkServerResource>,
+    ) -> Vec<bindings::paxos::default::network_types::NetworkMessage> {
+        let server = self.resource_table.get_mut(&resource).unwrap();
+        server.server.get_messages()
+    }
+
+    async fn get_message(
+        &mut self,
+        self_: wasmtime::component::Resource<NetworkServerResource>,
+    ) -> Option<bindings::paxos::default::network_server::NetworkMessage> {
+        let server = self.resource_table.get_mut(&self_).unwrap();
+        server.server.get_message()
+    }
+
+    async fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<NetworkServerResource>,
+    ) -> wasmtime::Result<()> {
+        let _ = self.resource_table.delete(rep)?;
+        Ok(())
+    }
+}
+
+impl bindings::paxos::default::network_client::HostNetworkClientResource for ComponentRunStates {
+    async fn new(&mut self) -> Resource<NetworkClientResource> {
+        let client = self.resource_table.push(NetworkClientResource {
+            client: NativeTcpClient::new(),
+        });
+        client.unwrap()
+    }
+
+    async fn send_message(
+        &mut self,
+        resource: Resource<NetworkClientResource>,
+        node: Vec<Node>,
+        message: bindings::paxos::default::network_client::NetworkMessage,
+    ) -> Vec<bindings::paxos::default::network_types::NetworkMessage> {
+        let client = self.resource_table.get_mut(&resource).unwrap();
+        client.client.send_message(node, message)
+    }
+
+    async fn send_message_forget(
+        &mut self,
+        resource: Resource<NetworkClientResource>,
+        node: Vec<Node>,
+        message: bindings::paxos::default::network_client::NetworkMessage,
+    ) {
+        let client = self.resource_table.get_mut(&resource).unwrap();
+        client.client.send_message_forget(node, message)
+    }
+
+    async fn drop(&mut self, rep: Resource<NetworkClientResource>) -> wasmtime::Result<()> {
+        let _ = self.resource_table.delete(rep)?;
+        Ok(())
+    }
+}
+
+impl bindings::paxos::default::network_client::Host for ComponentRunStates {}
+
 impl bindings::paxos::default::logger::Host for ComponentRunStates {
     // Delegate the log calls to our stored HostLogger.
     async fn log_debug(&mut self, msg: String) {
-        self.logger.log_debug(msg);
+        // self.logger.log_debug(msg);
     }
 
     async fn log_info(&mut self, msg: String) {
-        self.logger.log_info(msg);
+        // self.logger.log_info(msg);
     }
 
     async fn log_warn(&mut self, msg: String) {

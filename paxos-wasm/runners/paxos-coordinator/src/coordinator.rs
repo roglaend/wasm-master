@@ -347,6 +347,13 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 ));
                 ignore_msg
             }
+            _ => {
+                logger::log_warn(&format!(
+                    "[Coordinator] Received unknown message type: {:?}",
+                    message.payload
+                ));
+                ignore_msg
+            }
         }
     }
 
