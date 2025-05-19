@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::fmt::format;
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -163,6 +164,9 @@ impl GuestAcceptorResource for MyAcceptorResource {
                     "[Core Acceptor] Rejected accept for slot {} with ballot {} because a conflicting proposal already exists (existing ballot: {}, value: {:?})",
                     slot, ballot, existing.ballot, existing.value
                 ));
+
+                logger::log_warn(&format!("current acceped map: {:?}", accepted_map));
+
                 return AcceptedResult::Rejected(existing.ballot);
             }
         } else {

@@ -1,8 +1,5 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -16,7 +13,7 @@ bindings::export!(MyFailureDetector with_types_in bindings);
 use crate::bindings::exports::paxos::default::failure_detector::{
     Guest, GuestFailureDetectorResource,
 };
-use bindings::paxos::default::paxos_types::Node;
+use bindings::paxos::default::paxos_types::{Node, PaxosRole};
 use bindings::paxos::default::{leader_detector, logger};
 
 pub struct MyFailureDetector;
@@ -26,30 +23,31 @@ impl Guest for MyFailureDetector {
 }
 
 pub struct MyFailureDetectorResource {
-    node_id: u64,
-    nodes: Vec<u64>,
+    node: Node,
+    nodes: HashMap<u64, Node>,
     ld: Arc<leader_detector::LeaderDetectorResource>,
     alive: Arc<Mutex<HashMap<u64, bool>>>,
     suspected: Arc<Mutex<HashMap<u64, bool>>>,
 }
 
-// TODO: Change this to take in and use the Node type more than just the node_id
 impl GuestFailureDetectorResource for MyFailureDetectorResource {
-    fn new(node_id: u64, nodes: Vec<Node>, _delta: u64) -> Self {
-        let mut node_ids: Vec<u64> = nodes.iter().map(|node| node.node_id).collect();
-        // Add yourself to the list of nodes
-        node_ids.push(node_id);
+    fn new(node: Node, mut nodes: Vec<Node>, _delta: u64) -> Self {
+        nodes.push(node.clone());
 
-        // TODO: Add the Node type as argument instead of node_id.
-        // TODO: We can then filter based on PaxosRole to only consider the relevant nodes for new leaders.
+        let node_map = nodes
+            .iter()
+            .map(|n| (n.node_id, n.clone()))
+            .collect::<HashMap<_, _>>();
+
         let ld = Arc::new(leader_detector::LeaderDetectorResource::new(
-            &node_ids, node_id,
+            &nodes.clone(),
+            node.node_id,
         ));
 
         Self {
+            node,
+            nodes: node_map,
             ld,
-            node_id,
-            nodes: node_ids,
             alive: Arc::new(Mutex::new(HashMap::new())),
             suspected: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -60,40 +58,34 @@ impl GuestFailureDetectorResource for MyFailureDetectorResource {
         let mut alive = self.alive.lock().unwrap();
         let mut suspected = self.suspected.lock().unwrap();
 
-        // Check if any alive node is also suspected.
-        // TODO : Get this back to host to increase the delta
-        let _increase_delta = alive.keys().any(|node| suspected.get(node) == Some(&true));
+        let _increase_delta = alive.keys().any(|id| suspected.get(id) == Some(&true));
 
-        logger::log_info(&format!("Current suspected nodes: {:?}", suspected.keys()));
-        logger::log_info(&format!("Current alive nodes: {:?}", alive.keys()));
+        for node_id in self.nodes.keys() {
+            let id = *node_id;
 
-        let new_lead = self.nodes.iter().fold(None, |acc, node| {
-            if !alive.contains_key(node) && !suspected.contains_key(node) {
-                // Node not known to be alive or suspected.
-                suspected.insert(*node, true);
-                let lead = self.ld.suspect(*node);
-                alive.remove(node);
-                Some(lead)
-            } else if alive.contains_key(node) && suspected.contains_key(node) {
-                // Node is alive but also marked as suspected: restore it.
-                suspected.remove(node);
-                alive.remove(node);
-                Some(self.ld.restore(*node))
+            if !alive.contains_key(&id) && !suspected.contains_key(&id) {
+                suspected.insert(id, true);
+                alive.remove(&id);
+                if let Some(leader) = self.ld.suspect(id) {
+                    return Some(leader);
+                }
+            } else if alive.contains_key(&id) && suspected.contains_key(&id) {
+                suspected.remove(&id);
+                alive.remove(&id);
+                if let Some(leader) = self.ld.restore(id) {
+                    return Some(leader);
+                }
             } else {
-                // In all other cases, remove the node from alive.
-                alive.remove(node);
-                acc
+                alive.remove(&id);
             }
-        });
-        new_lead?
+        }
+
+        None
     }
 
-    fn heartbeat(&self, node: u64) {
+    fn heartbeat(&self, node_id: u64) {
         let mut alive = self.alive.lock().unwrap();
-        alive.insert(node, true);
-
-        // TODO: Quixfix for always ensuring yourself is alive
-        //* Is there a better way than this? - Filip */
-        alive.insert(self.node_id, true);
+        alive.insert(node_id, true);
+        alive.insert(self.node.node_id, true); // Ensure self is marked alive
     }
 }

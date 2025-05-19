@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
@@ -25,6 +26,8 @@ use bindings::paxos::default::{
 struct DemoClientHelper {
     client_id: String,
     client_seq: Cell<u64>,
+    sent_times: RefCell<HashMap<u64, Instant>>,
+    latencies_ms: RefCell<Vec<f64>>,
 }
 
 struct MetricsHelper {
@@ -117,6 +120,7 @@ struct MyRunnerResource {
 
     demo_client: Option<DemoClientHelper>,
     metrics: MetricsHelper,
+    num_demo_requests: Cell<u64>,
 }
 
 impl Guest for MyRunner {
@@ -129,7 +133,7 @@ impl MyRunnerResource {
             return;
         }
         // peek at any incoming requests
-        let requests = self.client_svr.get_requests(self.config.batch_size * 2);
+        let requests = self.client_svr.get_requests(self.config.batch_size);
         if !requests.is_empty() {
             if self.metrics.global_start.borrow().is_none() {
                 *self.metrics.global_start.borrow_mut() = Some(Instant::now());
@@ -146,7 +150,7 @@ impl MyRunnerResource {
     }
 
     fn process_network(&self) {
-        for msg in self.network_svr.get_messages(self.config.batch_size * 2) {
+        for msg in self.network_svr.get_messages(self.config.batch_size) {
             self.paxos.handle_message(&msg);
         }
     }
@@ -172,6 +176,18 @@ impl MyRunnerResource {
         self.client_svr.send_responses(&self.node, &responses);
 
         self.metrics.track(responses.len());
+
+        if let Some(ref helper) = self.demo_client {
+            for response in &responses {
+                let seq = response.client_seq;
+                if let Some(start_time) = helper.sent_times.borrow_mut().remove(&seq) {
+                    let latency_ms =
+                        Instant::now().duration_since(start_time).as_secs_f64() * 1000.0;
+
+                    helper.latencies_ms.borrow_mut().push(latency_ms);
+                }
+            }
+        }
     }
 
     fn demo_client_work(&self) {
@@ -183,7 +199,19 @@ impl MyRunnerResource {
             return;
         }
 
-        for _ in 0..self.config.batch_size * 2 {
+        if self.num_demo_requests.get() > 200_000 {
+            // logger::log_info("[Runner] demo client: stopping");
+            return;
+        }
+
+        if self.metrics.global_start.borrow().is_none() {
+            *self.metrics.global_start.borrow_mut() = Some(Instant::now());
+        }
+        if self.metrics.batch_start.borrow().is_none() {
+            *self.metrics.batch_start.borrow_mut() = Some(Instant::now());
+        }
+
+        for _ in 0..self.config.batch_size {
             let seq = helper.client_seq.get();
             helper.client_seq.set(seq + 1);
 
@@ -192,6 +220,9 @@ impl MyRunnerResource {
                 client_id: helper.client_id.clone(),
                 client_seq: seq,
             };
+            let seq = helper.client_seq.get();
+            helper.sent_times.borrow_mut().insert(seq, Instant::now());
+            self.num_demo_requests.set(self.num_demo_requests.get() + 1);
             let _ = self.paxos.submit_client_request(&req);
         }
     }
@@ -228,13 +259,15 @@ impl GuestRunnerResource for MyRunnerResource {
             Some(DemoClientHelper {
                 client_id: format!("client-{}", node.node_id),
                 client_seq: Cell::new(0),
+                sent_times: RefCell::new(HashMap::new()),
+                latencies_ms: RefCell::new(Vec::new()),
             })
         } else {
             None
         };
 
         let metrics = MetricsHelper {
-            stats_batch: 500,
+            stats_batch: 1000,
             batch_count: Cell::new(0),
             batch_start: RefCell::new(None),
             global_count: Cell::new(0),
@@ -252,6 +285,7 @@ impl GuestRunnerResource for MyRunnerResource {
             should_stop: AtomicBool::new(false),
             demo_client,
             metrics,
+            num_demo_requests: Cell::new(0),
         }
     }
 
@@ -259,17 +293,46 @@ impl GuestRunnerResource for MyRunnerResource {
         let tick_duration = Duration::from_micros(self.config.tick_micros);
         let mut next_tick = Instant::now() + tick_duration;
 
+        let run_start = Instant::now();
+        let mut demo_client = self.config.demo_client;
+
+        let mut total_client_time = Duration::ZERO;
+        let mut total_network_time = Duration::ZERO;
+        let mut total_demo_time = Duration::ZERO;
+        let mut total_paxos_time = Duration::ZERO;
+        let mut total_dispatch_time = Duration::ZERO;
+        let mut total_idle_check_time = Duration::ZERO;
+        let mut total_sleep_time = Duration::ZERO;
         while !self.should_stop.load(Ordering::Relaxed) {
+            // Clients
+            let start = Instant::now();
             self.process_clients();
+            total_client_time += start.elapsed();
+
+            // Network
+            let start = Instant::now();
             self.process_network();
+            total_network_time += start.elapsed();
 
             let now = Instant::now();
             if now >= next_tick {
+                // Demo work
+                let start = Instant::now();
                 self.demo_client_work();
+                total_demo_time += start.elapsed();
 
-                if let Some(responses) = self.run_paxos_loop() {
+                // Paxos
+                let start = Instant::now();
+                let responses = self.run_paxos_loop();
+                total_paxos_time += start.elapsed();
+
+                // Dispatch
+                let start = Instant::now();
+                if let Some(responses) = responses {
                     self.dispatch_responses(responses);
                 }
+                total_dispatch_time += start.elapsed();
+
                 next_tick += tick_duration;
             }
 
@@ -279,8 +342,98 @@ impl GuestRunnerResource for MyRunnerResource {
                 let idle = now.duration_since(last);
                 if idle >= Duration::from_secs(1)
                     && !self.metrics.idle_logged.load(Ordering::Relaxed)
+                    || (run_start.elapsed() > Duration::from_secs(2) && demo_client)
                 {
                     self.metrics.flush_global();
+                    self.metrics.idle_logged.store(true, Ordering::Relaxed);
+
+                    demo_client = false;
+
+                    // Print accumulated stats
+                    let total_active_time = total_client_time
+                        + total_network_time
+                        + total_demo_time
+                        + total_paxos_time
+                        + total_dispatch_time
+                        + total_idle_check_time;
+
+                    let total_time = total_active_time + total_sleep_time;
+
+                    println!("\n[Runner][Timing Summary]");
+                    println!("-------------------------------");
+                    println!("Stage            | Time (ms)");
+                    println!("-----------------|-----------");
+                    println!(
+                        "Clients          | {:>9.3}",
+                        total_client_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Network          | {:>9.3}",
+                        total_network_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Demo Client      | {:>9.3}",
+                        total_demo_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Paxos Logic      | {:>9.3}",
+                        total_paxos_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Dispatch         | {:>9.3}",
+                        total_dispatch_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Idle Check       | {:>9.3}",
+                        total_idle_check_time.as_secs_f64() * 1000.0
+                    );
+                    println!("-----------------|-----------");
+                    println!(
+                        "Total Active     | {:>9.3}",
+                        total_active_time.as_secs_f64() * 1000.0
+                    );
+                    println!(
+                        "Sleep (Idle)     | {:>9.3}",
+                        total_sleep_time.as_secs_f64() * 1000.0
+                    );
+                    println!("-----------------|-----------");
+                    println!(
+                        "Total Loop Time  | {:>9.3}",
+                        total_time.as_secs_f64() * 1000.0
+                    );
+                    println!();
+
+                    if let Some(ref helper) = self.demo_client {
+                        let mut latencies = helper.latencies_ms.borrow().clone();
+
+                        if !latencies.is_empty() {
+                            latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+                            let avg: f64 = latencies.iter().sum::<f64>() / latencies.len() as f64;
+                            let p95 = compute_percentile(&latencies, 0.95);
+                            let p99 = compute_percentile(&latencies, 0.99);
+                            let max = *latencies.last().unwrap();
+                            let min = *latencies.first().unwrap();
+                            let median = compute_percentile(&latencies, 0.5);
+
+                            logger::log_error(&format!(
+                                "[Runner] Demo client latencies (ms): avg: {:.2}, p95: {:.2}, p99: {:.2}, min: {:.2}, max: {:.2}, median: {:.2}",
+                                avg, p95, p99, min, max, median
+                            ));
+                        }
+                    }
+                }
+
+                // Sleep tracking
+                let sleep_for = next_tick.saturating_duration_since(Instant::now());
+                if !sleep_for.is_zero() {
+                    if self.metrics.global_start.borrow().is_some() {
+                        let start = Instant::now();
+                        sleep(sleep_for);
+                        total_sleep_time += start.elapsed();
+                    } else {
+                        sleep(sleep_for); // don't count this towards sleep stats
+                    }
                 }
             }
             // sleep "only" until our next tick
@@ -289,5 +442,22 @@ impl GuestRunnerResource for MyRunnerResource {
                 sleep(sleep_for);
             }
         }
+    }
+}
+
+fn compute_percentile(sorted: &[f64], percentile: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+
+    let rank = percentile * (sorted.len() - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+
+    if lower == upper {
+        sorted[lower]
+    } else {
+        let weight = rank - lower as f64;
+        sorted[lower] * (1.0 - weight) + sorted[upper] * weight
     }
 }

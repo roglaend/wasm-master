@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/src/config.yaml"
 
 TARGET=release
+LOG_LEVEL=warning
 WT=wt.exe
 MODEL=runners-ws
 
@@ -32,10 +33,11 @@ for idx in "${!IDS[@]}"; do
   role="${ROLES[$idx]}"
   title="$role $id"
 
-  CMD+=" new-tab --title \"$title\" bash -c \\\"\
-    ./target/$TARGET/$MODEL \
-      --node-id $id \
-      --config $CONFIG\\\" \\;"
+  CMD+=" new-tab --title \"$title\" bash -c '\
+ulimit -n 10000 && \
+RUST_LOG=$LOG_LEVEL ./target/$TARGET/$MODEL \
+  --node-id $id \
+  --config \"$CONFIG\"' \\;"
 done
 
 # strip the trailing escaped semicolon

@@ -96,7 +96,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         let failure_delta = 10; // TODO: Make this dynamic
         let failure_detector = Arc::new(failure_detector::FailureDetectorResource::new(
-            node.node_id.clone(),
+            &node,
             &nodes,
             failure_delta,
         ));

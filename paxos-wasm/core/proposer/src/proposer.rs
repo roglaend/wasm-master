@@ -49,13 +49,25 @@ impl MyProposerResource {
     fn get_next_slot(&self) -> Slot {
         let next_slot = self.current_slot.get() + 1;
         self.current_slot.set(next_slot);
+        logger::log_info(&format!(
+            "[Core Proposer] Next slot to propose: {}",
+            next_slot
+        ));
         next_slot
     }
 
     fn next_value(&self) -> Option<Value> {
         if let Some(req) = self.prioritized_values.borrow_mut().pop_front() {
+            logger::log_info(&format!(
+                "[Core Proposer] Using prioritized value: {:?}",
+                req
+            ));
             Some(req)
         } else if let Some(req) = self.pending_client_requests.borrow_mut().pop_front() {
+            logger::log_info(&format!(
+                "[Core Proposer] Using pending client request: {:?}",
+                req
+            ));
             Some(req)
         } else {
             None
@@ -66,6 +78,17 @@ impl MyProposerResource {
     /// starting from `min_slot`. Fills any missing slots with a no-op proposal (None).
     fn collect_accepted_values(&self, min_slot: Slot, promises: &[Promise]) -> Vec<PValue> {
         let ballot = self.current_ballot.get();
+
+        // If last prepare came in too late and we had already moved on, this was setting the slot back to prepare slot
+        if self.current_slot.get() > min_slot {
+            logger::log_warn(&format!(
+                "[Core Proposer] Current slot {} is greater than min_slot {}. No accepted values will be collected.",
+                self.current_slot.get(),
+                min_slot
+            ));
+            return Vec::new();
+        }
+
         self.current_slot.set(min_slot.saturating_sub(1));
 
         // Map each slot to (Value for slot with highest ballot)

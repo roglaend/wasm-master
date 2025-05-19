@@ -47,6 +47,8 @@ pub struct MyProposerAgentResource {
     proposer: Arc<ProposerResource>,
     num_acceptors: usize,
 
+    all_nodes: Vec<Node>,
+
     acceptors: Vec<Node>,
     learners: Vec<Node>,
     failure_detector: Arc<FailureDetectorResource>,
@@ -59,6 +61,9 @@ pub struct MyProposerAgentResource {
     adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>,
+
+    last_heartbeat: Cell<Option<Instant>>,
+
     batch_size: u64,
 }
 
@@ -97,6 +102,26 @@ impl MyProposerAgentResource {
     fn start_prepare_round(&self) {
         self.last_prepare_start.set(Some(Instant::now()));
         self.advance_phase(None); // moves from PrepareSend to PreparePending
+    }
+
+    fn send_heartbeat(&self) -> bool {
+        if let Some(last_heartbeat) = self.last_heartbeat.get() {
+            last_heartbeat.elapsed() >= Duration::from_millis(1000) // TODO: Make this configurable
+        } else {
+            let heartbeat = Heartbeat {
+                sender: self.node.clone(),
+                timestamp: 0,
+            };
+
+            self.network_client.send_message_forget(
+                &self.all_nodes,
+                &NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Heartbeat(heartbeat),
+                },
+            );
+            true
+        }
     }
 
     fn insert_and_check_promises(
@@ -413,11 +438,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         ));
 
         let failure_delta = 10; // TODO: Make this dynamic
-        let failure_detector = Arc::new(FailureDetectorResource::new(
-            node.node_id.clone(),
-            &nodes,
-            failure_delta,
-        ));
+        let failure_detector = Arc::new(FailureDetectorResource::new(&node, &nodes, failure_delta));
         let network_client = Arc::new(NetworkClientResource::new());
 
         let batch_size = 20; // TODO: make part of config/input
@@ -440,6 +461,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
             batch_size,
+            last_heartbeat: Cell::new(None),
+            all_nodes: nodes,
         }
     }
 
@@ -774,7 +797,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
             }
             MessagePayload::Heartbeat(payload) => {
-                logger::log_debug(&format!(
+                logger::log_warn(&format!(
                     "[Proposer Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
                     payload.sender, payload.timestamp
                 ));
@@ -866,6 +889,9 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     // TODO: Reduce the repeating code from the alternative run function?
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
+        if self.send_heartbeat() {
+            logger::log_warn("Sent heartbeat");
+        }
         match self.phase.get() {
             PaxosPhase::Start => {
                 logger::log_debug("[Proposer Agent] Run loop: Start phase.");
