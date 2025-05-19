@@ -32,6 +32,7 @@ run_config:
   learners_send_executed: true
   prepare_timeout: 1000
   demo_client: false
+  demo_client_requests: 10000
   batch_size: 10
   tick_micros: 5000
   exec_interval_ms: 100

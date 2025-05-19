@@ -175,24 +175,29 @@ impl MyRunnerResource {
     }
 
     fn demo_client_work(&self) {
-        let Some(ref helper) = self.demo_client else {
-            return;
+        let num_requests: u64 = self.config.demo_client_requests;
+
+        let helper = match &self.demo_client {
+            Some(h) if self.paxos.is_leader() => h,
+            _ => return,
         };
 
-        if !self.paxos.is_leader() {
-            return;
-        }
-
-        for _ in 0..self.config.batch_size * 2 {
+        // send up to 2 x batch_size new requests, but never beyond demo_client_requests
+        let mut sent = 0;
+        let batch_quota = self.config.batch_size * 2;
+        while sent < batch_quota {
             let seq = helper.client_seq.get();
+            if seq >= num_requests {
+                break;
+            }
             helper.client_seq.set(seq + 1);
-
             let req = Value {
                 command: Some(Operation::Demo),
                 client_id: helper.client_id.clone(),
                 client_seq: seq,
             };
             let _ = self.paxos.submit_client_request(&req);
+            sent += 1;
         }
     }
 }
@@ -234,7 +239,7 @@ impl GuestRunnerResource for MyRunnerResource {
         };
 
         let metrics = MetricsHelper {
-            stats_batch: 500,
+            stats_batch: 1000,
             batch_count: Cell::new(0),
             batch_start: RefCell::new(None),
             global_count: Cell::new(0),

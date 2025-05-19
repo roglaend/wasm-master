@@ -74,6 +74,7 @@ impl Config {
             learners_send_executed: r["learners_send_executed"].as_bool().unwrap(),
             prepare_timeout: r["prepare_timeout"].as_i64().unwrap() as u64,
             demo_client: r["demo_client"].as_bool().unwrap(),
+            demo_client_requests: r["demo_client_requests"].as_i64().unwrap() as u64,
             batch_size: r["batch_size"].as_i64().unwrap() as u64,
             tick_micros: r["tick_micros"].as_i64().unwrap() as u64,
             exec_interval_ms: r["exec_interval_ms"].as_i64().unwrap() as u64,

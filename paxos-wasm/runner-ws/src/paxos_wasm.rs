@@ -102,7 +102,7 @@ impl PaxosWasmtime {
             .await?;
 
         Ok(Self {
-            _engine: engine,
+             _engine: engine,
             store: Mutex::new(store),
             bindings: final_bindings,
             resource_handle,

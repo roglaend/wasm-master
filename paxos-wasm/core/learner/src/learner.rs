@@ -28,7 +28,7 @@ impl Guest for MyLearner {
 struct MyLearnerResource {
     num_acceptors: u64,
 
-    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>,
+    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: Should be moved to learner agent to have consistent design
     learned: RefCell<BTreeMap<Slot, Value>>,
     executed: RefCell<BTreeMap<Slot, Value>>,
     adu: Cell<Slot>,

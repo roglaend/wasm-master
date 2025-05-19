@@ -863,7 +863,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         false
     }
 
-    // TODO: Reduce the repeating code from the alternative run function?
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
         match self.phase.get() {
@@ -894,8 +893,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 None
             }
 
-            // Currently process up to 10 send accept, send learn, respond to client in one tick
-            // TODO: Could actually batch here, not send out on at a time but rather a batch of 10
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Proposer Agent] Run loop: AcceptCommit phase.");
                 self.accept_commit()
