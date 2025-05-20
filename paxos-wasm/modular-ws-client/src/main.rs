@@ -37,6 +37,9 @@ struct Args {
 
     #[clap(long, default_value = "5")]
     timeout_secs: u64,
+
+    #[clap(long, default_value = "500")]
+    sleep_micros: u64,
 }
 
 fn summarize(label: &str, durations: &[Duration]) {
@@ -95,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let val = Value {
                     client_id: args.client_id.to_string(),
                     client_seq: seq as u64,
-                    command: None,
+                    command: Some(Operation::Demo),
                 };
                 let t0 = Instant::now();
                 let resp = paxos.perform_request(args.leader.clone(), val).await;
@@ -123,6 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let start = Instant::now();
             let deadline = start + Duration::from_secs(args.timeout_secs);
             let max_in_flight = 100;
+
+            let offset_sleep = Duration::from_micros(args.client_id * 100);
+            sleep(offset_sleep).await;
 
             while (seen.len() as u64) < total && Instant::now() < deadline {
                 // Send request
@@ -159,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                sleep(Duration::from_millis(1)).await;
+                sleep(Duration::from_micros(500)).await;
             }
 
             resource

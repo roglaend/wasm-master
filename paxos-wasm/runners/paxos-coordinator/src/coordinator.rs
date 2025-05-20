@@ -83,6 +83,7 @@ impl MyPaxosCoordinatorResource {
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Creates a new coordinator resource.
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
+        // TODO: Only load the agents needed based on the role? Like we did in tcp server.
         let proposer_agent = Arc::new(proposer_agent::ProposerAgentResource::new(
             &node, &nodes, is_leader, config,
         ));
@@ -269,12 +270,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             let to_commit = self.proposer_agent.learns_to_commit();
             if !to_commit.is_empty() {
                 for learn in to_commit {
-                    if self
-                        .learner_agent
-                        .record_learn(learn.slot, &learn.value, &self.node)
-                    {
-                        self.proposer_agent.broadcast_learn(&learn);
-                    }
+                    self.proposer_agent.broadcast_learn(&learn);
+                    self.learner_agent
+                        .record_learn(learn.slot, &learn.value, &self.node);
                 }
             }
         }

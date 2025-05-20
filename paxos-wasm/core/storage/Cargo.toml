@@ -1,16 +1,15 @@
 [package]
 edition = "2024"
-name = "acceptor"
+name = "storage"
 version = "0.1.0"
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/acceptor.rs"
+path = "src/storage.rs"
 
 [dependencies]
-chrono = "0.4.41"
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+wasi = "0.14.2"
 wit-bindgen = "0.41"
 
 # shared-utils = { path = "../../shared/utils" }

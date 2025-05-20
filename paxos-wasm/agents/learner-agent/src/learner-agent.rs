@@ -21,7 +21,7 @@ use bindings::exports::paxos::default::learner_agent::{
 use bindings::paxos::default::kv_store::KvStoreResource;
 use bindings::paxos::default::learner::{LearnResult, LearnerResource};
 use bindings::paxos::default::learner_types::{LearnerState, RetryLearnResult};
-use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     CmdResult, ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
@@ -94,12 +94,23 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         let self_is_coordinator = node.role == PaxosRole::Coordinator;
         let num_acceptors = acceptors.len() as u64 + self_is_coordinator as u64;
 
-        let learner = Arc::new(LearnerResource::new(num_acceptors));
+        let learner = Arc::new(LearnerResource::new(
+            num_acceptors,
+            &node.node_id.to_string(),
+            config,
+        ));
         let kv_store = Arc::new(KvStoreResource::new());
         let network_client = Arc::new(network_client::NetworkClientResource::new());
 
-        let now = Instant::now();
+        match learner.load_state() {
+            Ok(_) => logger::log_info("[Learner Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!(
+                "[Learner Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
+        let now = Instant::now();
         logger::log_info("[Learner Agent] Initialized.");
         Self {
             config,

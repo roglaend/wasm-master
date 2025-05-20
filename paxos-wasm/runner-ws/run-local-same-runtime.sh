@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/src/config.yaml"
 
 TARGET=release
+LOG_LEVEL=info
 WT=wt.exe
 MODEL=runners-ws
 
@@ -28,14 +29,18 @@ fi
 # ─── build the Windows Terminal command ─────────────────────────
 CMD="$WT"
 for idx in "${!IDS[@]}"; do
-  id="${IDS[$idx]}"
-  role="${ROLES[$idx]}"
-  title="$role $id"
+  # Check if idx is one of the specified values: 1, 4, or 7
+  if [[ "$idx" == 0 || "$idx" == 3 || "$idx" == 6 ]]; then
+    id="${IDS[$idx]}"
+    cluster_id=$(( (idx / 3) + 1 ))  # This will map idx 1, 4, 7 -> cluster 1, 2, 3
+    title="cluster $cluster_id"
 
-  CMD+=" new-tab --title \"$title\" bash -c \\\"\
-    ./target/$TARGET/$MODEL \
-      --node-id $id \
-      --config $CONFIG\\\" \\;"
+    CMD+=" new-tab --title \"$title\" bash -c \\\"\
+      RUST_LOG=$LOG_LEVEL \
+      ./target/$TARGET/$MODEL \
+        --node-id $id \
+        --config $CONFIG\\\" \\;"
+  fi
 done
 
 # strip the trailing escaped semicolon

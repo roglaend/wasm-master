@@ -25,6 +25,37 @@ nodes:
     address: "127.0.0.1:50057"
     role: "proposer" # Last node has to be either "proposer" or "coordinator"
 
+
+# # ─── cluster settings ────────────────────────────────── same runtime
+# nodes:
+#   - node_id: 1
+#     address: "127.0.0.1:50051"
+#     role: "learner"
+#   - node_id: 2
+#     address: "127.0.0.1:50052"
+#     role: "acceptor"
+#   - node_id: 3
+#     address: "127.0.0.1:50053"
+#     role: "proposer"
+#   - node_id: 4
+#     address: "127.0.0.1:50054"
+#     role: "learner"
+#   - node_id: 5
+#     address: "127.0.0.1:50055"
+#     role: "acceptor"
+#   - node_id: 6
+#     address: "127.0.0.1:50056"
+#     role: "proposer"
+#   - node_id: 7
+#     address: "127.0.0.1:50057"
+#     role: "learner"
+#   - node_id: 8
+#     address: "127.0.0.1:50058"
+#     role: "acceptor"
+#   - node_id: 9
+#     address: "127.0.0.1:50059"
+#     role: "proposer"
+
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
   is_event_driven: true
@@ -32,10 +63,12 @@ run_config:
   learners_send_executed: true
   prepare_timeout: 1000
   demo_client: true
-  batch_size: 10
-  tick_ms: 5
+  demo_client_requests: 100000
+  batch_size: 100
+  tick_micros: 100
   exec_interval_ms: 100
   retry_interval_ms: 500
   learn_max_gap: 10
   executed_batch_size: 10
   client_server_port: 60000
+  persistent_storage: false

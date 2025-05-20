@@ -2,24 +2,28 @@
 
 world proposer-world {
     import logger;
-
+    import storage;
+    
     export proposer;
 }
 
 world acceptor-world {
     import logger;
+    import storage;
 
     export acceptor;
 }
 
 world learner-world {
     import logger;
+    import storage;
 
     export learner;
 }
 
 world kv-store-world {
     import logger;
+    import storage;
 
     export kv-store;
 }
@@ -102,7 +106,7 @@ world serializer-world {
 
 world network-client-world {
     import serializer;
-    // import logger;
+    import logger;
     export network-client;
 }
 
@@ -126,7 +130,7 @@ world paxos-client-world {
 
 world network-server-world {
     import serializer;
-    // import logger;
+    import logger;
     export network-server;
 }
 
@@ -134,6 +138,10 @@ world client-server-world {
     import serializer;
     import logger;
     export client-server;
+}
+
+world storage-world {
+    export storage;
 }
 
 world wasm-overhead-world {

@@ -59,7 +59,6 @@ pub struct MyProposerAgentResource {
     adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>,
-    batch_size: u64,
 }
 
 impl MyProposerAgentResource {
@@ -403,13 +402,12 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let num_learners = learners.len() as u64 + self_is_coordinator as u64;
 
         let init_ballot = node.node_id;
-        let proposer = Arc::new(ProposerResource::new(is_leader, num_acceptors, init_ballot));
-        logger::log_info(&format!(
-            "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
-            node.node_id,
-            if is_leader { "a" } else { "not a" },
+        let proposer = Arc::new(ProposerResource::new(
+            is_leader,
             num_acceptors,
-            num_learners
+            init_ballot,
+            &node.node_id.to_string(),
+            config,
         ));
 
         let failure_delta = 10; // TODO: Make this dynamic
@@ -420,8 +418,21 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         ));
         let network_client = Arc::new(NetworkClientResource::new());
 
-        let batch_size = config.batch_size; // TODO: make part of config/input
+        match proposer.load_state() {
+            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Err(e) => logger::log_warn(&format!(
+                "[Proposer Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
+        logger::log_info(&format!(
+            "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
+            node.node_id,
+            if is_leader { "a" } else { "not a" },
+            num_acceptors,
+            num_learners
+        ));
         Self {
             config,
             phase: Cell::new(PaxosPhase::Start),
@@ -439,7 +450,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
             client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
-            batch_size,
         }
     }
 
@@ -575,7 +585,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
     fn proposals_to_accept(&self) -> Vec<Proposal> {
         let mut to_accept = Vec::new();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some(prop) = self.create_proposal() {
                 to_accept.push(prop);
             } else {
@@ -587,7 +597,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
     fn learns_to_commit(&self) -> Vec<Learn> {
         let mut learns = Vec::new();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some(p) = self.reserve_next_chosen_proposal() {
                 learns.push(Learn {
                     slot: p.slot,
@@ -614,8 +624,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     fn process_executed(&self, executed: Executed) {
-        if executed.adu > self.adu.get() {
-            self.adu.set(executed.adu);
+        if executed.adu > self.proposer.get_adu() {
+            self.proposer.set_adu(executed.adu);
         }
 
         if !self.proposer.is_leader() {
@@ -863,7 +873,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         false
     }
 
-    // TODO: Reduce the repeating code from the alternative run function?
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
         match self.phase.get() {
@@ -876,7 +885,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
-                let slot = self.adu.get() + 1;
+                let slot = self.proposer.get_adu() + 1;
                 let ballot = self.proposer.get_current_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);
@@ -894,8 +903,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 None
             }
 
-            // Currently process up to 10 send accept, send learn, respond to client in one tick
-            // TODO: Could actually batch here, not send out on at a time but rather a batch of 10
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Proposer Agent] Run loop: AcceptCommit phase.");
                 self.accept_commit()
