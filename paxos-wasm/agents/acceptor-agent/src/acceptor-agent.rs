@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-pub mod bindings {
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "acceptor-agent-world",
@@ -20,13 +20,13 @@ use bindings::paxos::default::paxos_types::{
 };
 use bindings::paxos::default::{logger, network_client};
 
-pub struct MyAcceptorAgent;
+struct MyAcceptorAgent;
 
 impl GuestAcceptorAgent for MyAcceptorAgent {
     type AcceptorAgentResource = MyAcceptorAgentResource;
 }
 
-pub struct MyAcceptorAgentResource {
+struct MyAcceptorAgentResource {
     config: RunConfig,
 
     node: Node,
@@ -41,8 +41,7 @@ impl MyAcceptorAgentResource {}
 
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let garbage_collection_window = Some(100);
-        let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
+        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), config));
 
         let learners: Vec<_> = nodes
             .iter()
@@ -56,6 +55,14 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
         let network_client = Arc::new(network_client::NetworkClientResource::new());
+
+        match acceptor.load_state() {
+            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!(
+                "[Acceptor Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {

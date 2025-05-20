@@ -83,6 +83,7 @@ impl MyPaxosCoordinatorResource {
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Creates a new coordinator resource.
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
+        // TODO: Only load the agents needed based on the role? Like we did in tcp server.
         let proposer_agent = Arc::new(proposer_agent::ProposerAgentResource::new(
             &node, &nodes, is_leader, config,
         ));

@@ -1,10 +1,13 @@
 use std::error::Error;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{
+    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
+};
 
 use crate::bindings;
 use crate::bindings::paxos::default::logger::Level;
@@ -37,13 +40,36 @@ impl ComponentRunStates {
             address: node.address.clone(),
             role: node.role as u64,
         };
+
+        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("Must have a parent")
+            .parent()
+            .expect("Workspace folder")
+            .to_owned();
+
+        let state_host_path = workspace_dir.join("paxos-wasm/logs/state");
+        fs::create_dir_all(&state_host_path)
+            .expect(&format!("Failed to create state dir {:?}", state_host_path));
+
+        let mut builder = WasiCtxBuilder::new();
+        builder.inherit_stdio();
+        builder.inherit_env();
+        builder.inherit_args();
+        builder.inherit_network();
+        builder
+            .preopened_dir(
+                workspace_dir.join("paxos-wasm/logs/state"),
+                "/state",
+                DirPerms::all(),
+                FilePerms::all(),
+            )
+            .expect("Failed to preopen dir");
+
+        let wasi_ctx = builder.build();
+
         ComponentRunStates {
-            wasi_ctx: WasiCtxBuilder::new()
-                .inherit_stdio()
-                .inherit_env()
-                .inherit_args()
-                .inherit_network()
-                .build(),
+            wasi_ctx,
             resource_table: ResourceTable::new(),
 
             logger: Arc::new(HostLogger::new_from_workspace(host_node, log_level)),
@@ -102,7 +128,7 @@ impl PaxosWasmtime {
             .await?;
 
         Ok(Self {
-             _engine: engine,
+            _engine: engine,
             store: Mutex::new(store),
             bindings: final_bindings,
             resource_handle,

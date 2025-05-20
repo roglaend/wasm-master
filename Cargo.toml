@@ -24,6 +24,7 @@ members = [
     "paxos-wasm/core/acceptor",
     "paxos-wasm/core/learner",
     "paxos-wasm/core/kv-store",
+    "paxos-wasm/core/storage",
 
     "paxos-wasm/core/leader-detector",
     "paxos-wasm/core/failure-detector",

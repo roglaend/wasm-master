@@ -12,7 +12,8 @@ interface paxos-types {
         retry-interval-ms: u64,         // The timeout period for which the learner issues a retry-learn message to either the acceptors or proposers.
         learn-max-gap: u64,             // The maximum gap between missing learn and highest seen learn before issuing a retry.
         executed-batch-size: u64,       // The maximum number of executed results to send in one Executed message. 
-        client-server-port: u16         // The port the client connects to on the leaders address.
+        client-server-port: u16,        // The port the client connects to on the leaders address.
+        persistent-storage: bool,       // Toggle the usage of persistent storage.
         // ... Add more?
     } 
 

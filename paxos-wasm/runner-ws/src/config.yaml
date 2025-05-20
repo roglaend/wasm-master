@@ -32,7 +32,7 @@ run_config:
   learners_send_executed: true
   prepare_timeout: 1000
   demo_client: true
-  demo_client_requests: 100000
+  demo_client_requests: 300
   batch_size: 20
   tick_micros: 100
   exec_interval_ms: 100
@@ -40,3 +40,4 @@ run_config:
   learn_max_gap: 10
   executed_batch_size: 10
   client_server_port: 60000
+  persistent_storage: true

@@ -1,11 +1,11 @@
 /// The core proposer contains all Paxos logic for proposals.
 interface proposer {
-    use paxos-types.{slot, ballot, value, client-request, prepare, promise, accept, proposal, accepted, learn};
+    use paxos-types.{run-config, slot, ballot, value, client-request, prepare, promise, accept, proposal, accepted, learn};
     use proposer-types.{prepare-result, accept-result, proposer-state, proposal-status};
 
     resource proposer-resource {
         /// Constructs a new proposer with an initial ballot, number of acceptors, and leadership flag.
-        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot);
+        constructor(is-leader: bool, num-acceptors: u64, init-ballot: ballot, node-id: string, config: run-config);
 
         /// Returns the current state of the proposer.
         get-state: func() -> proposer-state;
@@ -19,6 +19,10 @@ interface proposer {
         get-current-slot: func() -> slot;
 
         get-current-ballot: func() -> ballot;
+
+        get-adu: func() -> slot;
+
+        set-adu: func(adu: slot);
 
         /// Gets a proposal depending on its ProposerStatus
         get-proposal-by-status: func(slot: slot, ps: proposal-status) -> option<proposal>;
@@ -52,29 +56,32 @@ interface proposer {
 
         /// Relinquishes leadership.
         resign-leader: func() -> bool;
+
+        load-state: func() -> result<_, string>;
     }
 }
 
 interface acceptor {
-    use paxos-types.{slot, ballot, value, prepare, promise, accept, accepted, learn};
+    use paxos-types.{run-config, slot, ballot, value, prepare, promise, accept, accepted, learn};
     use acceptor-types.{promise-result, accepted-result, acceptor-state, p-value};
 
     resource acceptor-resource {
-        constructor(gc-window: option<u64>);
+        constructor(node-id: string, config: run-config);
         get-state: func() -> acceptor-state;
         prepare: func(slot: slot, ballot: ballot) -> promise-result;
         accept: func(slot: slot, ballot: ballot, value: value) -> accepted-result;
         get-accepted: func(slot: slot) -> option<p-value>;
+        load-state: func() -> result<_, string>;
     }
 }
 
 interface learner {
-    use paxos-types.{slot, value, learn};
+    use paxos-types.{run-config, slot, value, learn};
     use network-types.{node};
     use learner-types.{learned-entry, learner-state, learn-result};
 
     resource learner-resource {
-        constructor(num-acceptors: u64);
+        constructor(num-acceptors: u64, node-id: string, config: run-config);
         get-state: func() -> learner-state;
         learn: func(slot: slot, value: value) -> bool;
         handle-learn: func(learn: learn, sender: node) -> bool;
@@ -82,6 +89,7 @@ interface learner {
         get-highest-learned: func() -> slot;
         get-adu: func() -> slot;
         get-learned: func(slot: slot) -> option<learned-entry>;
+        load-state: func() -> result<_, string>;
     }
 }
 
@@ -116,4 +124,21 @@ interface leader-detector {
         restore: func(node: u64) -> option<u64>;
         nodes: func() -> list<u64>;
     }
+}
+
+interface storage {
+    // segment save of state into different files
+    save-state-segment: func(key: string, state-json: string, timestamp: string) -> result<_, string>;
+    // single line change save
+    save-change: func(key: string, change-json: string) -> result<_, string>;
+    // load above into list of segments and changes
+    load-state-and-changes: func(key: string) -> result<tuple<list<string>, list<string>>, string>;
+
+    // save full state to single file
+    save-state: func(key: string, state-json: string) -> result<_, string>;
+    // load full state from single file
+    load-state: func(key: string) -> result<string, string>;
+    
+    // not implemented
+    delete: func(key: string) -> bool;
 }

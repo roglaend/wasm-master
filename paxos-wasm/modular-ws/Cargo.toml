@@ -1,24 +1,24 @@
 [package]
+edition = "2024"
 name = "modular-ws"
 version = "0.1.0"
-edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-wasmtime = "31"
-wasmtime-wasi = "31"
 clap = { version = "4.5", features = ["derive"] }
-futures = "0.3"
-tempfile = "3"
 dashmap = "5"
+futures = "0.3"
 once_cell = "1"
+serde = "1.0.219"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wasmtime = "31"
+wasmtime-wasi = "31"
 yaml-rust = "0.4"
-
 
 [build-dependencies]
 agents = { path = "../agents", package = "agents" }
-paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }
 network-ws = { path = "../network-ws", package = "network-ws" }
+paxos-wasm-utils = { path = "../shared/utils", package = "paxos-wasm-utils" }
 runners = { path = "../runners", package = "runners" }

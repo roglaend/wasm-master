@@ -1,11 +1,22 @@
-use std::cell::{Cell, RefCell};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "acceptor-world",
-        additional_derives: [PartialEq],
+        additional_derives: [
+            PartialEq,
+            serde::Deserialize,
+            serde::Serialize,
+            Clone,
+            PartialOrd,
+            Ord,
+            Eq,
+        ],
     });
 }
 
@@ -14,7 +25,10 @@ bindings::export!(MyAcceptor with_types_in bindings);
 use bindings::exports::paxos::default::acceptor::{Guest, GuestAcceptorResource};
 use bindings::paxos::default::acceptor_types::{AcceptedResult, AcceptorState, PromiseResult};
 use bindings::paxos::default::logger;
-use bindings::paxos::default::paxos_types::{Accepted, Ballot, PValue, Promise, Slot, Value};
+use bindings::paxos::default::paxos_types::{
+    Accepted, Ballot, PValue, Promise, RunConfig, Slot, Value,
+};
+use bindings::paxos::default::storage;
 
 pub struct MyAcceptor;
 
@@ -23,17 +37,13 @@ impl Guest for MyAcceptor {
 }
 
 pub struct MyAcceptorResource {
-    // A list of all promised ballots. // TODO: Only care about latest, but still nice to keep track of.
+    config: RunConfig,
+    node_id: String,
+
     promises: RefCell<Vec<Ballot>>,
-    // Map from slot to the accepted proposal.
     accepted: RefCell<BTreeMap<Slot, PValue>>,
 
-    // The garbage collection window: number of recent slots to retain.
-    gc_window: u64,
-    // Interval of performing GC.
-    gc_interval: u64,
-    // The slot number when GC was last performed.
-    last_gc: Cell<Slot>,
+    storage: StorageHelper,
 }
 
 impl MyAcceptorResource {
@@ -52,7 +62,7 @@ impl MyAcceptorResource {
     }
 
     /// Returns the highest slot present in the accepted proposals map (or 0 if none).
-    fn _highest_accepted_slot(&self) -> Slot {
+    fn highest_accepted_slot(&self) -> Slot {
         self.accepted
             .borrow()
             .keys()
@@ -63,14 +73,18 @@ impl MyAcceptorResource {
 }
 
 impl GuestAcceptorResource for MyAcceptorResource {
-    fn new(gc_window: Option<u64>) -> Self {
+    fn new(node_id: String, config: RunConfig) -> Self {
+        let storage = StorageHelper::new(
+            &node_id,
+            500, // TODO: Get from config
+            config.persistent_storage,
+        );
         Self {
+            config,
+            node_id,
             promises: RefCell::new(Vec::new()),
             accepted: RefCell::new(BTreeMap::new()),
-
-            gc_window: gc_window.unwrap_or(100), // use provided gc_window or default to 100
-            gc_interval: 10, // default to 10 for now, maybe pass it down from main config as with gc_window
-            last_gc: Cell::new(0),
+            storage,
         }
     }
 
@@ -102,15 +116,6 @@ impl GuestAcceptorResource for MyAcceptorResource {
 
         // Collect all accepted proposals (PValue) with slot >= the input slot.
         let accepted = self.collect_accepted_from(slot);
-        // logger::log_info(&format!(
-        //     "[Core Acceptor] Collected {} accepted proposals for slot: {:?}",
-        //     accepted.len(),
-        //     accepted
-        //         .iter()
-        //         .map(|p| format!("(slot: {})", p.slot))
-        //         .collect::<Vec<_>>()
-        //         .join(", ")
-        // ));
 
         let promise = Promise {
             slot,
@@ -118,7 +123,6 @@ impl GuestAcceptorResource for MyAcceptorResource {
             accepted,
         };
 
-        // self.auto_garbage_collect(slot);
         PromiseResult::Promised(promise)
     }
 
@@ -143,6 +147,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
                     "[Core Acceptor] Re-accepted idempotently for slot {} with ballot {}",
                     slot, ballot
                 ));
+
                 return AcceptedResult::Accepted(Accepted {
                     slot,
                     ballot,
@@ -172,12 +177,19 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 ballot,
                 value: Some(value.clone()),
             };
-            accepted_map.insert(slot, p_value);
+            accepted_map.insert(slot, p_value.clone());
             logger::log_info(&format!(
                 "[Core Acceptor] Accepted proposal for slot {} with ballot {}",
                 slot, ballot
             ));
-            // self.auto_garbage_collect(slot);
+            drop(accepted_map);
+
+            self.storage
+                .save_change(&p_value)
+                .expect("Failed to save change");
+            self.storage
+                .maybe_snapshot(slot, &self.promises, &self.accepted);
+
             return AcceptedResult::Accepted(Accepted {
                 slot,
                 ballot,
@@ -199,27 +211,172 @@ impl GuestAcceptorResource for MyAcceptorResource {
             accepted: accepted_list,
         }
     }
+
+    fn load_state(&self) -> Result<(), String> {
+        let res = self
+            .storage
+            .load_and_combine_state(&self.promises, &self.accepted);
+
+        let highest_promised = self.highest_promised_ballot();
+        let highest_accepted = self.highest_accepted_slot();
+        logger::log_warn(&format!(
+            "[Core Acceptor] Highest promised ballot: {}, highest accepted slot: {}",
+            highest_promised, highest_accepted
+        ));
+
+        res
+    }
 }
 
-impl MyAcceptorResource {
-    fn auto_garbage_collect(&self, current_slot: Slot) {
-        let next_gc_slot = self.last_gc.get() + self.gc_interval;
-        if current_slot >= next_gc_slot {
-            if current_slot > self.gc_window {
-                let threshold = current_slot - self.gc_window;
-                // self.promises
-                //     .borrow_mut()
-                //     .retain(|&slot, _| slot >= threshold); // TODO: Enable if too many promises causes and issue.
-                self.accepted
-                    .borrow_mut()
-                    .retain(|&slot, _| slot >= threshold);
-                logger::log_info(&format!(
-                    "[Core Acceptor] Auto garbage collected state for slots below {}",
-                    threshold
-                ));
+/// The on‐disk shape of a snapshot.
+#[derive(Deserialize, Serialize)]
+struct PersistentState {
+    promises: Vec<Ballot>,
+    accepted: BTreeMap<Slot, PValue>,
+}
+
+/// Encapsulates *all* of the serde/json + storage calls for the Acceptor.
+struct StorageHelper {
+    key: String,
+    snapshot_interval: usize,
+    enabled: bool,
+}
+
+impl StorageHelper {
+    fn new(node_id: &str, snapshot_interval: usize, enabled: bool) -> Self {
+        Self {
+            key: format!("{}-acceptor", node_id),
+            snapshot_interval,
+            enabled,
+        }
+    }
+
+    fn merge_snapshots(
+        &self,
+        snaps: &[String],
+        promises: &RefCell<Vec<Ballot>>,
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let mut p = promises.borrow_mut();
+        let mut a = accepted.borrow_mut();
+        for json in snaps {
+            let partial: PersistentState =
+                serde_json::from_str(json).map_err(|e| format!("Bad snapshot JSON: {}", e))?;
+            p.extend(partial.promises);
+            a.extend(partial.accepted);
+        }
+        Ok(())
+    }
+
+    fn apply_changes(
+        &self,
+        changes: &[String],
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let mut a = accepted.borrow_mut();
+        for json in changes {
+            let p_value: PValue =
+                serde_json::from_str(json).map_err(|e| format!("Bad change JSON: {}", e))?;
+            a.insert(p_value.slot, p_value);
+        }
+        Ok(())
+    }
+
+    fn save_state_segment(
+        &self,
+        promises: &RefCell<Vec<Ballot>>,
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+
+        // Trim to last `snapshot_interval` entries
+        let mut a_trim = BTreeMap::new();
+        for (&slot, v) in accepted.borrow().iter().rev().take(self.snapshot_interval) {
+            a_trim.insert(slot, v.clone());
+        }
+
+        let snapshot = PersistentState {
+            promises: promises.borrow().clone(),
+            accepted: a_trim,
+        };
+        let json =
+            serde_json::to_string(&snapshot).map_err(|e| format!("serialize snapshot: {}", e))?;
+
+        storage::save_state_segment(&self.key, &json, &timestamp)?;
+
+        logger::log_warn(&format!(
+            "[Core Acceptor] Saved snapshot in {} micros",
+            now.elapsed().as_micros()
+        ));
+        Ok(())
+    }
+
+    fn save_change(&self, p_value: &PValue) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let json =
+            serde_json::to_string(p_value).map_err(|e| format!("serialize change: {}", e))?;
+        storage::save_change(&self.key, &json)?;
+        logger::log_info(&format!(
+            "[Core Acceptor] Saved change in {} micros",
+            now.elapsed().as_micros()
+        ));
+        Ok(())
+    }
+
+    fn load_and_combine_state(
+        &self,
+        promises: &RefCell<Vec<Ballot>>,
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let (snaps, changes) = storage::load_state_and_changes(&self.key)?;
+        self.merge_snapshots(&snaps, promises, accepted)?;
+        self.apply_changes(&changes, accepted)?;
+        logger::log_warn(&format!(
+            "[Core Acceptor] Loaded {} snapshots + {} changes in {}ms",
+            snaps.len(),
+            changes.len(),
+            now.elapsed().as_millis()
+        ));
+        Ok(())
+    }
+
+    /// If we’ve crossed another snapshot boundary, persist one now.
+    fn maybe_snapshot(
+        &self,
+        slot: Slot,
+        promises: &RefCell<Vec<Ballot>>,
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let iv = self.snapshot_interval as Slot;
+        if iv == 0 {
+            return;
+        }
+        // e.g. boundary at 500, 1000, 1500…
+        if slot % iv == 0 {
+            // we chose a simple “every Nth slot” rule here
+            if let Err(e) = self.save_state_segment(promises, accepted) {
+                logger::log_error(&format!("Snapshot failed: {}", e));
             }
-            // Update the last GC slot to the current slot.
-            self.last_gc.set(current_slot);
         }
     }
 }

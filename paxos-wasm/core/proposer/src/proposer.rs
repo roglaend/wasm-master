@@ -1,12 +1,21 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-pub mod bindings {
+use serde::{Deserialize, Serialize};
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "proposer-world",
         // generate_unused_types: true,
-        additional_derives: [PartialEq, Clone],
+        additional_derives: [
+            PartialEq,
+            serde::Deserialize,
+            serde::Serialize,
+            Clone,
+            PartialOrd,
+            Ord,
+            Eq,
+        ],
     });
 }
 
@@ -15,32 +24,38 @@ bindings::export!(MyProposer with_types_in bindings);
 use bindings::exports::paxos::default::proposer::{Guest, GuestProposerResource, ProposerState};
 use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{
-    Accepted, Ballot, PValue, Promise, Proposal, Slot, Value,
+    Accepted, Ballot, PValue, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{
     AcceptResult, PrepareResult, ProposalEntry, ProposalStatus,
 };
+use bindings::paxos::default::storage;
 
-pub struct MyProposer;
+struct MyProposer;
 
 impl Guest for MyProposer {
     type ProposerResource = MyProposerResource;
 }
 
-pub struct MyProposerResource {
-    is_leader: Cell<bool>,
+struct MyProposerResource {
+    node_id: String,
     num_acceptors: u64,
     ballot_delta: Ballot,
 
+    is_leader: Cell<bool>,
     current_slot: Cell<Slot>,
     current_ballot: Cell<Ballot>,
+    adu: Cell<Slot>,
 
     pending_client_requests: RefCell<VecDeque<Value>>,
     prioritized_values: RefCell<VecDeque<Value>>,
     proposals: RefCell<BTreeMap<Slot, ProposalEntry>>,
     chosen_slots: RefCell<VecDeque<Slot>>,
-}
 
+    // TODO: maybe persist the inflight proposals also. Although with acceptor send learns the in flight will be committed
+    // TODO: even though the proposer crash. This is not the case if proposer send learns
+    storage: StorageHelper,
+}
 impl MyProposerResource {
     fn quorum(&self) -> usize {
         return ((self.num_acceptors / 2) + 1) as usize;
@@ -65,6 +80,16 @@ impl MyProposerResource {
     /// Collects the highest-ballot accepted value per slot across all promises,
     /// starting from `min_slot`. Fills any missing slots with a no-op proposal (None).
     fn collect_accepted_values(&self, min_slot: Slot, promises: &[Promise]) -> Vec<PValue> {
+        // If last prepare came in too late and we had already moved on, this was setting the slot back to prepare slot
+        if self.current_slot.get() > min_slot {
+            logger::log_warn(&format!(
+                "[Core Proposer] Current slot {} is greater than min_slot {}. No accepted values will be collected.",
+                self.current_slot.get(),
+                min_slot
+            ));
+            return Vec::new();
+        }
+
         let ballot = self.current_ballot.get();
         self.current_slot.set(min_slot.saturating_sub(1));
 
@@ -141,7 +166,15 @@ impl MyProposerResource {
 // TODO: Make the proposer also increase ballot if phase 1 fails and try again
 
 impl GuestProposerResource for MyProposerResource {
-    fn new(is_leader: bool, num_acceptors: u64, init_ballot: Ballot) -> Self {
+    fn new(
+        is_leader: bool,
+        num_acceptors: u64,
+        init_ballot: Ballot,
+        node_id: String,
+        config: RunConfig,
+    ) -> Self {
+        let storage = StorageHelper::new(&node_id, config.persistent_storage);
+
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
             if is_leader { "leader" } else { "normal" },
@@ -150,17 +183,21 @@ impl GuestProposerResource for MyProposerResource {
         ));
 
         Self {
-            is_leader: Cell::new(is_leader),
+            node_id,
             num_acceptors,
             ballot_delta: num_acceptors, // TODO: This right?
 
+            is_leader: Cell::new(is_leader),
             current_slot: Cell::new(0),
             current_ballot: Cell::new(init_ballot),
+            adu: Cell::new(0),
 
             pending_client_requests: RefCell::new(VecDeque::new()),
             prioritized_values: RefCell::new(VecDeque::new()),
             proposals: RefCell::new(BTreeMap::new()),
             chosen_slots: RefCell::new(VecDeque::new()),
+
+            storage,
         }
     }
 
@@ -211,6 +248,17 @@ impl GuestProposerResource for MyProposerResource {
 
     fn get_current_ballot(&self) -> Ballot {
         self.current_ballot.get()
+    }
+
+    fn get_adu(&self) -> Slot {
+        self.adu.get()
+    }
+
+    fn set_adu(&self, adu: Slot) {
+        self.adu.set(adu);
+        self.storage
+            .save_state(self.current_ballot.get(), adu)
+            .expect("Failed to save state");
     }
 
     fn get_proposal_by_status(&self, slot: Slot, ps: ProposalStatus) -> Option<Proposal> {
@@ -410,7 +458,6 @@ impl GuestProposerResource for MyProposerResource {
         }
 
         let val = self.update_proposal_status(slot, ProposalStatus::Finalized)?;
-
         logger::log_info(&format!(
             "[Core Proposer] Proposal slot {} marked Finalized with value {:?}.",
             slot, val
@@ -425,6 +472,9 @@ impl GuestProposerResource for MyProposerResource {
             "Core Proposer] Increased current ballot to: {}",
             new_ballot
         ));
+        self.storage
+            .save_state(new_ballot, self.adu.get())
+            .expect("Failed to save state");
         new_ballot
     }
 
@@ -460,5 +510,67 @@ impl GuestProposerResource for MyProposerResource {
             logger::log_warn("[Core Proposer] Not leader; resign operation aborted.");
             false
         }
+    }
+
+    fn load_state(&self) -> Result<(), String> {
+        self.storage.load_state(&self.current_ballot, &self.adu)
+    }
+}
+
+/// This is the small on-disk shape we persist.
+#[derive(Deserialize, Serialize)]
+struct PersistentState {
+    current_ballot: Ballot,
+    adu: Slot,
+}
+
+/// Encapsulates all of our JSON + storage calls, and honors the `persistent_storage` flag.
+struct StorageHelper {
+    key: String,
+    enabled: bool,
+}
+
+impl StorageHelper {
+    fn new(node_id: &str, enabled: bool) -> Self {
+        StorageHelper {
+            key: format!("{}-proposer", node_id),
+            enabled,
+        }
+    }
+
+    fn save_state(&self, current_ballot: Ballot, adu: Slot) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let ps = PersistentState {
+            current_ballot,
+            adu,
+        };
+        let json =
+            serde_json::to_string(&ps).map_err(|e| format!("serialize proposer state: {}", e))?;
+        storage::save_state(&self.key, &json).map_err(|e| format!("save_state: {}", e))
+    }
+
+    fn load_state(&self, ballot: &Cell<Ballot>, adu: &Cell<Slot>) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let json = match storage::load_state(&self.key) {
+            Ok(s) => s,
+            Err(e) if e.contains("Failed to read") => return Ok(()), // no snapshot yet
+            Err(e) => return Err(format!("load_state: {}", e)),
+        };
+        let ps: PersistentState = serde_json::from_str(&json)
+            .map_err(|e| format!("deserialize proposer state: {}", e))?;
+
+        ballot.set(ps.current_ballot);
+        adu.set(ps.adu);
+
+        logger::log_warn(&format!(
+            "[Proposer] Loaded state: current_ballot = {}, adu = {}",
+            ps.current_ballot, ps.adu
+        ));
+
+        Ok(())
     }
 }

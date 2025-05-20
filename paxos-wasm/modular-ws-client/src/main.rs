@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let val = Value {
                     client_id: args.client_id.to_string(),
                     client_seq: seq as u64,
-                    command: None,
+                    command: Some(Operation::Demo),
                 };
                 let t0 = Instant::now();
                 let resp = paxos.perform_request(args.leader.clone(), val).await;
