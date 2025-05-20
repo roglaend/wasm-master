@@ -2,24 +2,28 @@
 
 world proposer-world {
     import logger;
-
+    import storage;
+    
     export proposer;
 }
 
 world acceptor-world {
     import logger;
+    import storage;
 
     export acceptor;
 }
 
 world learner-world {
     import logger;
+    import storage;
 
     export learner;
 }
 
 world kv-store-world {
     import logger;
+    import storage;
 
     export kv-store;
 }
@@ -41,7 +45,7 @@ world failure-detector-world {
 
 world proposer-agent-world {
     import proposer;
-    import network;
+    import network-client;
     import logger;
 
     import failure-detector;
@@ -51,7 +55,7 @@ world proposer-agent-world {
 
 world acceptor-agent-world {
     import acceptor;
-    import network;
+    import network-client;
     import logger;
 
     export acceptor-agent;
@@ -60,7 +64,7 @@ world acceptor-agent-world {
 world learner-agent-world {
     import learner;
     import kv-store;
-    import network;
+    import network-client;
     import logger;
 
     export learner-agent;
@@ -75,7 +79,7 @@ world paxos-coordinator-world {
 
     import failure-detector;
 
-    // import network;
+    // import network-client;
     import logger; 
 
     export paxos-coordinator;
@@ -99,10 +103,10 @@ world serializer-world {
     export serializer;
 }
 
-world ws-client-world {
+world network-client-world {
     import serializer;
     import logger;
-    export network;
+    export network-client;
 }
 
 world paxos-ws-world {
@@ -133,4 +137,8 @@ world client-server-world {
     import serializer;
     import logger;
     export client-server;
+}
+
+world storage-world {
+    export storage;
 }

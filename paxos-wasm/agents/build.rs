@@ -17,7 +17,8 @@ fn main() {
     build_and_plug(
         target_triple,
         &["proposer-agent"],
-        &["proposer"],
+        // &["proposer"],
+        &["proposer_storage"],
         "proposer_agent",
         "temp_composed_proposer_agent",
     );
@@ -27,7 +28,8 @@ fn main() {
     build_and_plug(
         target_triple,
         &["acceptor-agent"],
-        &["acceptor"],
+        // &["acceptor"],
+        &["acceptor_storage"],
         "acceptor_agent",
         "composed_acceptor_agent",
     );
@@ -37,7 +39,8 @@ fn main() {
     build_and_plug(
         target_triple,
         &["learner-agent"],
-        &["learner", "kv_store"],
+        // &["learner", "kv_store"],
+        &["learner_storage", "kv_store"],
         "learner_agent",
         "composed_learner_agent",
     );

@@ -1,21 +1,35 @@
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "learner-world",
-    additional_derives: [PartialEq],
+        additional_derives: [
+            PartialEq,
+            serde::Deserialize,
+            serde::Serialize,
+            Clone,
+            PartialOrd,
+            Ord,
+            Eq,
+            Hash
+        ],
     });
 }
 
 bindings::export!(MyLearner with_types_in bindings);
 
-use bindings::paxos::default::paxos_types::{Accepted, Learn, Node, Slot, Value};
+use bindings::paxos::default::learner_types::LearnResult;
+use bindings::paxos::default::paxos_types::{Learn, Node, RunConfig, Slot, Value};
+use bindings::paxos::default::storage;
 
 use bindings::exports::paxos::default::learner::{
-    Guest, GuestLearnerResource, LearnResult, LearnedEntry, LearnerState,
+    Guest, GuestLearnerResource, LearnedEntry, LearnerState,
 };
 use bindings::paxos::default::logger;
 
@@ -26,207 +40,166 @@ impl Guest for MyLearner {
 }
 
 struct MyLearnerResource {
-    learned: RefCell<BTreeMap<Slot, Value>>,
-    next_to_execute: Cell<Slot>,
-    execution_log: RefCell<BTreeMap<Slot, Value>>,
-    max_gap_size: u64,
+    config: RunConfig,
+    node_id: String,
     num_acceptors: u64,
 
-    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: new, needed?
-    flush_timeout: Duration,
-    last_flush: Cell<Instant>, // TODO: move to agent
+    slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: Should be moved to learner agent to have consistent design
+    learned: RefCell<BTreeMap<Slot, Value>>,
+    adu: Cell<Slot>,
 
-    retry_timeout: Duration, // TODO: move to agent
-    last_message_time: Cell<Instant>,
+    storage: StorageHelper,
 }
 
 impl MyLearnerResource {
     fn quorum(&self) -> usize {
         return ((self.num_acceptors / 2) + 1) as usize;
     }
+
+    /// Gather learns for `slot`, see if any value hits quorum.
+    /// If so, returns `Some(value)`; otherwise `None`.
+    fn check_quorum(&self, slot: Slot) -> Option<Value> {
+        let binding = self.slot_learns.borrow();
+        let slot_map = match binding.get(&slot) {
+            Some(m) if m.len() >= self.quorum() => m,
+            _ => return None,
+        };
+
+        // Count frequencies
+        let mut counts: HashMap<&Value, usize> = HashMap::new();
+        for learn in slot_map.values() {
+            *counts.entry(&learn.value).or_default() += 1;
+        }
+        // Find any value with >= quorum
+        counts
+            .into_iter()
+            .find(|(_, cnt)| *cnt >= self.quorum())
+            .map(|(val, _)| val.clone())
+    }
 }
 
 impl GuestLearnerResource for MyLearnerResource {
-    /// Constructor: Initialize an empty BTreeMap.
-    fn new(num_acceptors: u64) -> Self {
+    fn new(num_acceptors: u64, node_id: String, config: RunConfig) -> Self {
+        let storage = StorageHelper::new(
+            &node_id,
+            500, // TODO: Get from config
+            config.persistent_storage,
+        );
         Self {
-            learned: RefCell::new(BTreeMap::new()),
-            next_to_execute: Cell::new(1),
-            execution_log: RefCell::new(BTreeMap::new()),
-            max_gap_size: 10,
+            config,
             num_acceptors,
-
+            node_id: node_id,
             slot_learns: RefCell::new(BTreeMap::new()),
-            flush_timeout: Duration::from_millis(10),
-            last_flush: Cell::new(Instant::now()),
-
-            retry_timeout: Duration::from_millis(500),
-            last_message_time: Cell::new(Instant::now()),
+            learned: RefCell::new(BTreeMap::new()),
+            adu: Cell::new(0),
+            storage,
         }
     }
 
     fn get_state(&self) -> LearnerState {
-        let learned_list: Vec<LearnedEntry> = self
-            .execution_log
+        let list = self
+            .learned
             .borrow()
             .iter()
-            .map(|(&slot, value)| LearnedEntry {
+            .map(|(&slot, v)| LearnedEntry {
                 slot,
-                value: value.clone(),
+                value: v.clone(),
             })
             .collect();
-        LearnerState {
-            learned: learned_list,
-        }
+        LearnerState { learned: list }
     }
 
-    fn get_next_to_execute(&self) -> Slot {
-        self.next_to_execute.get()
+    fn get_adu(&self) -> Slot {
+        self.adu.get()
     }
 
-    /// Record that a value has been learned for a given slot.
-    /// If the slot already has a learned value, a warning is logged and the new value is ignored.
-    /// Can only execute consecutive slots starting from the next_to_execute slot.
-    fn learn(&self, slot: Slot, value: Value) -> LearnResult {
+    fn get_highest_learned(&self) -> Slot {
+        self.learned
+            .borrow()
+            .keys()
+            .last()
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Try to record a learned value.  
+    /// Returns `true` if we actually inserted, `false` if we already had it.
+    fn learn(&self, slot: Slot, value: Value) -> bool {
         let mut learned_map = self.learned.borrow_mut();
-        let execution_log = self.execution_log.borrow_mut();
-
-        // Insert learn if have not learned yet
-        if !learned_map.contains_key(&slot) && !execution_log.contains_key(&slot) {
-            logger::log_info(&format!(
-                "[Core Learner]: For slot {}, learned value {:?}",
+        if learned_map.contains_key(&slot) {
+            logger::log_debug(&format!(
+                "[Core Learner]: Slot {} already learned, ignoring {:?}",
                 slot, value
             ));
-            learned_map.insert(slot, value);
+            false
         } else {
-            logger::log_warn(&format!(
-                "Learner: Slot {} already has a learned value. Ignoring new value {:?}.",
-                slot, value
-            ));
-        }
-        return LearnResult::Ignore;
-    }
-
-    // TODO
-
-    // Handles incoming learns from acceptors. Checks for quorum and and stores the learned value. Returns ready to be executed slots if any.
-    fn handle_learn(&self, learn: Learn, from: Node) -> LearnResult {
-        let now = Instant::now();
-        self.last_message_time.set(now);
-        let execution_log = self.execution_log.borrow();
-        if !execution_log.contains_key(&learn.slot) {
             logger::log_info(&format!(
-                "[Core Learner]: Received learn for slot {} from node {}",
-                learn.slot, from.node_id
+                "[Core Learner] Recording learned value {:?} for slot {}",
+                value, slot
             ));
-            let slot = learn.slot;
-            self.slot_learns
-                .borrow_mut()
-                .entry(slot)
-                .or_insert_with(HashMap::new)
-                .insert(from.node_id, learn.clone());
-
-            if let Some(sender_map) = self.slot_learns.borrow().get(&slot) {
-                if sender_map.len() >= self.quorum() {
-                    let learns: Vec<&Learn> = sender_map.values().collect();
-
-                    for &candidate in &learns {
-                        let count = learns.iter().filter(|&&learn| learn == candidate).count();
-
-                        if count >= self.quorum() {
-                            logger::log_info(&format!(
-                                "[Core Learner]: Learned full Learn {:?} for slot {} with count {}",
-                                candidate, slot, count
-                            ));
-                            // Learn: candidate.value or the full candidate
-                            self.learned
-                                .borrow_mut()
-                                .insert(slot, candidate.value.clone());
-                            break;
-                        }
-                    }
-                }
-            }
+            learned_map.insert(slot, value.clone());
+            self.storage.save_change(&LearnedEntry { slot, value });
+            true
         }
-        return LearnResult::Ignore;
     }
 
-    // TODO
+    // Handles incoming learns from acceptors. Checks for quorum and and potentially stores the learned value.
+    fn handle_learn(&self, learn: Learn, sender: Node) -> bool {
+        // track the incoming Learn
+        let slot = learn.slot;
+        self.slot_learns
+            .borrow_mut()
+            .entry(slot)
+            .or_default()
+            .insert(sender.node_id, learn.clone());
 
+        logger::log_info(&format!(
+            "[Core Learner] Recorded vote for slot {}: current value {:?} (awaiting quorum).",
+            slot, learn.value
+        ));
+
+        // now see if quorum is reached
+        if let Some(quorum_value) = self.check_quorum(slot) {
+            self.learn(slot, quorum_value)
+        } else {
+            false
+        }
+    }
+
+    /// Return all newly‐executable entries in slot order, using `adu` as a cursor.
     fn to_be_executed(&self) -> LearnResult {
-        let mut learned_map = self.learned.borrow_mut();
-        let mut next_to_execute = self.get_next_to_execute();
+        let mut out = Vec::new();
+        let mut next = self.adu.get() + 1;
+        let old_adu = self.adu.get();
+        let learned_map = self.learned.borrow();
 
-        let mut contiguous_ready = 0;
-        let mut probe_slot = next_to_execute;
-
-        // First just *count* how many contiguous slots are ready
-        while learned_map.contains_key(&probe_slot) {
-            contiguous_ready += 1;
-            probe_slot += 1;
-
-            if contiguous_ready >= 10 {
-                // Tcp socket problems if message is to big. Also noticed increadbly slowdowns when sending 20+ slots
-                break;
-            }
+        // Walk forward until we hit a gap
+        while let Some(v) = learned_map.get(&next) {
+            out.push(LearnedEntry {
+                slot: next,
+                value: v.clone(),
+            });
+            next += 1;
         }
 
-        // Ensure 10 is sent at the sime time - boost throughput by 50ops/s ca. Need to itroduce some mechanism here to ensure that
-        // if we do not have 10 slots ready based on some timeout we need to send the slots we have
-        // or else the system will be stuck wating for more slots to be learned.
-        // This is fine when we are testing with with request_size % 10 = 0
-        if contiguous_ready >= 10 {
-            let mut to_be_executed = Vec::new();
-            let mut execution_log = self.execution_log.borrow_mut();
-
-            // Now actually remove and execute them
-            for _ in 0..contiguous_ready {
-                if let Some(val) = learned_map.remove(&next_to_execute) {
-                    execution_log.insert(next_to_execute, val.clone());
-                    to_be_executed.push(LearnedEntry {
-                        slot: next_to_execute,
-                        value: val,
-                    });
-                    next_to_execute += 1;
-                    self.next_to_execute.set(next_to_execute);
-                }
-            }
-
-            return LearnResult::Execute(to_be_executed);
-        } else {
-            LearnResult::Ignore
-        }
-        // Check if some learns are ready to
-    }
-
-    // Checker for gaps in the learned slots. Should be called at reasoinable a interval.
-    fn check_for_gap(&self) -> Option<Slot> {
-        let learned_map = self.learned.borrow_mut();
-        let next_to_execute = self.next_to_execute.get();
-        let max_learned_slot = learned_map.keys().max().copied().unwrap_or(0);
-
-        // If no slot beyond next_to_execute has been learned, nothing to gap.
-        if max_learned_slot <= next_to_execute {
-            return None;
+        if out.is_empty() {
+            return LearnResult::Ignore;
         }
 
-        // If the next slot is already learned, there is no gap.
-        if learned_map.contains_key(&next_to_execute) {
-            return None;
-        }
+        let new_adu = next.saturating_sub(1);
+        self.adu.set(new_adu);
 
-        // Compute the gap between the maximum learned slot and the next expected one.
-        let gap = max_learned_slot - next_to_execute;
+        let first = out.first().unwrap().slot;
+        let last = out.last().unwrap().slot;
+        let count = out.len();
 
-        let now = Instant::now();
-        // return if gap is > max_gap_size or if the time since last message is > retry_timeout
-        if gap >= self.max_gap_size
-            || (gap > 0 && now.duration_since(self.last_message_time.get()) > self.retry_timeout)
-        {
-            Some(next_to_execute)
-        } else {
-            None
-        }
+        logger::log_info(&format!(
+            "[Core Learner] executing slots {}..{} ({} entries), new adu={}",
+            first, last, count, new_adu
+        ));
+
+        self.storage.maybe_snapshot(old_adu, new_adu, &self.learned);
+        LearnResult::Execute(out)
     }
 
     /// Returns the learned entry for a specific slot, if it exists.
@@ -235,5 +208,189 @@ impl GuestLearnerResource for MyLearnerResource {
             slot,
             value: value.clone(),
         })
+    }
+
+    fn load_state(&self) -> Result<(), String> {
+        self.storage
+            .load_and_combine_state(&self.learned, &self.adu)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct PersistentState {
+    adu: Slot,
+    learned: BTreeMap<Slot, Value>,
+}
+
+struct StorageHelper {
+    key: String,
+    snapshot_interval: usize,
+    enabled: bool,
+}
+
+impl StorageHelper {
+    fn new(node_id: &String, snapshot_interval: usize, enabled: bool) -> Self {
+        Self {
+            key: format!("{}-learner", node_id),
+            snapshot_interval,
+            enabled,
+        }
+    }
+
+    fn merge_snapshots(
+        &self,
+        snapshots: &Vec<String>,
+        learned: &RefCell<BTreeMap<Slot, Value>>,
+        adu: &Cell<Slot>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let mut max_adu = 0;
+        let mut lm = learned.borrow_mut();
+        for json in snapshots {
+            let ps: PersistentState =
+                serde_json::from_str(json).map_err(|e| format!("Bad snapshot JSON: {}", e))?;
+            max_adu = max_adu.max(ps.adu);
+            lm.extend(ps.learned);
+        }
+        adu.set(max_adu);
+        Ok(())
+    }
+
+    fn apply_changes(
+        &self,
+        state_changes: &Vec<String>,
+        learned: &RefCell<BTreeMap<Slot, Value>>,
+        adu: &Cell<Slot>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let mut lm = learned.borrow_mut();
+        for json in state_changes {
+            let entry: LearnedEntry =
+                serde_json::from_str(json).map_err(|e| format!("Bad change JSON: {}", e))?;
+            lm.insert(entry.slot, entry.value);
+        }
+        let mut next = adu.get() + 1;
+        for (&slot, _) in lm.range(next..) {
+            if slot == next {
+                next += 1;
+            } else {
+                break;
+            }
+        }
+        adu.set(next.saturating_sub(1));
+        Ok(())
+    }
+
+    fn save_state_segment(&self, learned: &RefCell<BTreeMap<Slot, Value>>, adu: Slot) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = Instant::now();
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+
+        let mut trimmed = BTreeMap::new();
+        let l = learned.borrow();
+        for (&slot, val) in l.iter().rev().take(self.snapshot_interval) {
+            trimmed.insert(slot, val.clone());
+        }
+
+        let ps = PersistentState {
+            adu,
+            learned: trimmed,
+        };
+
+        match serde_json::to_string(&ps) {
+            Ok(json) => {
+                if let Err(e) = storage::save_state_segment(&self.key, &json, &timestamp) {
+                    logger::log_error(&format!("[Core Learner] save_state_segment failed: {}", e));
+                } else {
+                    logger::log_warn(&format!(
+                        "[Core Learner] Saved state to file in {} micros",
+                        now.elapsed().as_micros()
+                    ));
+                }
+            }
+            Err(e) => {
+                logger::log_error(&format!("[Core Learner] serialize snapshot failed: {}", e));
+            }
+        }
+    }
+
+    fn save_change(&self, learn: &LearnedEntry) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = Instant::now();
+        match serde_json::to_string(learn) {
+            Ok(json) => {
+                if let Err(e) = storage::save_change(&self.key, &json) {
+                    logger::log_error(&format!("[Core Learner] save_change failed: {}", e));
+                } else {
+                    logger::log_info(&format!(
+                        "[Core Learner] Saved change in {} micros",
+                        now.elapsed().as_micros()
+                    ));
+                }
+            }
+            Err(e) => {
+                logger::log_error(&format!("[Core Learner] serialize change failed: {}", e));
+            }
+        }
+    }
+
+    fn load_and_combine_state(
+        &self,
+        learned: &RefCell<BTreeMap<Slot, Value>>,
+        adu: &Cell<Slot>,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let now = Instant::now();
+        let (state_snapshots, state_changes) = storage::load_state_and_changes(&self.key)?;
+
+        self.merge_snapshots(&state_snapshots, learned, adu)?;
+        self.apply_changes(&state_changes, learned, adu)?;
+
+        logger::log_warn(&format!(
+            "[Core Learner] Loaded {} snapshots + {} changes in {}ms",
+            state_snapshots.len(),
+            state_changes.len(),
+            now.elapsed().as_millis()
+        ));
+        logger::log_warn(&format!("[Core Learner] Current adu is {}", adu.get()));
+        Ok(())
+    }
+
+    fn maybe_snapshot(
+        &self,
+        old_adu: Slot,
+        new_adu: Slot,
+        learned: &RefCell<BTreeMap<Slot, Value>>,
+    ) {
+        if !self.enabled {
+            return;
+        }
+
+        let iv = self.snapshot_interval as Slot;
+        if iv == 0 {
+            return;
+        }
+        let next_boundary = ((old_adu / iv) + 1) * iv;
+        if new_adu >= next_boundary {
+            logger::log_info(&format!(
+                "[Core Learner] ADU crossed snapshot boundary: {} → {}; persisting at {}",
+                old_adu, new_adu, next_boundary
+            ));
+            self.save_state_segment(learned, new_adu);
+        }
     }
 }

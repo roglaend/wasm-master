@@ -4,6 +4,7 @@
         "bindgen",
         "bufs",
         "chans",
+        "chrono",
         "cseq",
         "datagram",
         "datagrams",

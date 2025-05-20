@@ -17,14 +17,15 @@ bindings::export!(MyProposerAgent with_types_in bindings);
 use bindings::exports::paxos::default::proposer_agent::{
     Guest as GuestProposerAgent, GuestProposerAgentResource,
 };
+use bindings::paxos::default::network_client::NetworkClientResource;
 use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Accept, Accepted, Ballot, ClientResponse, Executed, Learn, Node, PaxosPhase, PaxosRole,
-    Prepare, Promise, Proposal, RunConfig, Slot, Value,
+    Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
+    PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{
-    failure_detector::FailureDetectorResource, logger, network, proposer::ProposerResource,
+    failure_detector::FailureDetectorResource, logger, network_client, proposer::ProposerResource,
 };
 
 enum CollectedResponses<T, R> {
@@ -49,6 +50,7 @@ pub struct MyProposerAgentResource {
     acceptors: Vec<Node>,
     learners: Vec<Node>,
     failure_detector: Arc<FailureDetectorResource>,
+    network_client: Arc<network_client::NetworkClientResource>,
 
     // A mapping from Ballot to unique promises per node_id.
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
@@ -57,7 +59,6 @@ pub struct MyProposerAgentResource {
     adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>,
-    batch_size: u64,
 }
 
 impl MyProposerAgentResource {
@@ -198,7 +199,7 @@ impl MyProposerAgentResource {
 
         if !self.config.is_event_driven {
             // In synchronous mode, send and collect responses.
-            let responses = network::send_message(&self.acceptors, &msg);
+            let responses = self.network_client.send_message(&self.acceptors, &msg);
             let mut promises = vec![];
             for resp in responses {
                 if let MessagePayload::Promise(prom_payload) = resp.payload {
@@ -214,7 +215,8 @@ impl MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Event-driven mode enabled. Sending fire-and-forget prepare messages.",
             );
-            network::send_message_forget(&self.acceptors, &msg);
+            self.network_client
+                .send_message_forget(&self.acceptors, &msg);
             CollectedResponses::EventDriven(PrepareResult::IsEventDriven)
         }
     }
@@ -243,7 +245,7 @@ impl MyProposerAgentResource {
 
         if !self.config.is_event_driven {
             // In synchronous mode, send and collect responses.
-            let responses = network::send_message(&self.acceptors, &msg);
+            let responses = self.network_client.send_message(&self.acceptors, &msg);
             let mut accepted = vec![];
             for resp in responses {
                 if let MessagePayload::Accepted(acc_payload) = resp.payload {
@@ -259,7 +261,8 @@ impl MyProposerAgentResource {
             logger::log_debug(
                 "[Proposer Agent] Event-driven mode enabled. Sending fire-and-forget accept messages.",
             );
-            network::send_message_forget(&self.acceptors, &msg);
+            self.network_client
+                .send_message_forget(&self.acceptors, &msg);
             CollectedResponses::EventDriven(AcceptResult::IsEventDriven)
         }
     }
@@ -399,13 +402,12 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let num_learners = learners.len() as u64 + self_is_coordinator as u64;
 
         let init_ballot = node.node_id;
-        let proposer = Arc::new(ProposerResource::new(is_leader, num_acceptors, init_ballot));
-        logger::log_info(&format!(
-            "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
-            node.node_id,
-            if is_leader { "a" } else { "not a" },
+        let proposer = Arc::new(ProposerResource::new(
+            is_leader,
             num_acceptors,
-            num_learners
+            init_ballot,
+            &node.node_id.to_string(),
+            config,
         ));
 
         let failure_delta = 10; // TODO: Make this dynamic
@@ -414,9 +416,23 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             &nodes,
             failure_delta,
         ));
+        let network_client = Arc::new(NetworkClientResource::new());
 
-        let batch_size = 20; // TODO: make part of config/input
+        match proposer.load_state() {
+            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Err(e) => logger::log_warn(&format!(
+                "[Proposer Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
+        logger::log_info(&format!(
+            "[Proposer Agent] Initialized with node_id={} as {} leader. ({} acceptors, {} learners)",
+            node.node_id,
+            if is_leader { "a" } else { "not a" },
+            num_acceptors,
+            num_learners
+        ));
         Self {
             config,
             phase: Cell::new(PaxosPhase::Start),
@@ -430,10 +446,10 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             in_flight_accepted: RefCell::new(BTreeMap::new()),
             last_prepare_start: Cell::new(None),
             failure_detector,
+            network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
-            batch_size,
         }
     }
 
@@ -555,7 +571,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             learn.slot, learn.value
         ));
 
-        network::send_message_forget(&self.learners, &msg);
+        self.network_client
+            .send_message_forget(&self.learners, &msg);
     }
 
     fn mark_proposal_chosen(&self, slot: Slot) -> Option<Value> {
@@ -568,7 +585,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
     fn proposals_to_accept(&self) -> Vec<Proposal> {
         let mut to_accept = Vec::new();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some(prop) = self.create_proposal() {
                 to_accept.push(prop);
             } else {
@@ -580,7 +597,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
     fn learns_to_commit(&self) -> Vec<Learn> {
         let mut learns = Vec::new();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some(p) = self.reserve_next_chosen_proposal() {
                 learns.push(Learn {
                     slot: p.slot,
@@ -596,7 +613,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn collect_client_responses(&self) -> Vec<ClientResponse> {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
-        for _ in 0..self.batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {
@@ -607,8 +624,8 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     fn process_executed(&self, executed: Executed) {
-        if executed.adu > self.adu.get() {
-            self.adu.set(executed.adu);
+        if executed.adu > self.proposer.get_adu() {
+            self.proposer.set_adu(executed.adu);
         }
 
         if !self.proposer.is_leader() {
@@ -619,27 +636,53 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         }
 
         for result in &executed.results {
-            // Try to finalize proposal once
             if let Some(value) = self.proposer.mark_proposal_finalized(result.slot) {
-                if let Some(cmd_res) = result.cmd_result.clone() {
-                    // Normal case: generate client response
-                    let resp = ClientResponse {
-                        client_id: value.client_id.clone(),
-                        client_seq: value.client_seq,
-                        success: true,
-                        command_result: Some(cmd_res),
-                    };
-                    self.client_responses
-                        .borrow_mut()
-                        .insert(result.slot, resp.clone());
+                let resp = ClientResponse {
+                    client_id: value.client_id.clone(),
+                    client_seq: value.client_seq,
+                    success: result.success, // No-op, or executed a valid operation.
+                    command_result: result.cmd_result.clone(),
+                };
+                self.client_responses
+                    .borrow_mut()
+                    .insert(result.slot, resp.clone());
 
-                    logger::log_info(&format!(
-                        "[Proposer Agent] Created ClientResponse for slot {}",
-                        result.slot
-                    ));
-                } else {
-                    // No-op case: reenqueue value
-                    self.proposer.enqueue_prioritized_request(&value);
+                match &result.cmd_result {
+                    CmdResult::NoOp => {
+                        logger::log_warn(&format!(
+                            "[Proposer Agent] Slot {} was no-op; responding with failure",
+                            result.slot
+                        ));
+                        // only retry if there was a original valid value on the slot
+                        if value.command.is_some() {
+                            self.proposer.enqueue_prioritized_request(&value);
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Re-enqueued client request for slot {}",
+                                result.slot
+                            ));
+                        }
+                    }
+                    CmdResult::CmdValue(cmd_result_value) if result.success => {
+                        // real command, and Paxos said it succeeded
+                        if cmd_result_value.is_some() {
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Slot {}: command succeeded; client response queued",
+                                result.slot
+                            ));
+                        } else {
+                            logger::log_info(&format!(
+                                "[Proposer Agent] Slot {}: command succeeded with no return value; response queued",
+                                result.slot
+                            ));
+                        }
+                    }
+                    CmdResult::CmdValue(_) => {
+                        // real command, but Paxos said it failed. //* Can't happen? */
+                        logger::log_warn(&format!(
+                            "[Proposer Agent] Slot {}: command failed; client response queued",
+                            result.slot
+                        ));
+                    }
                 }
             }
         }
@@ -830,7 +873,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         false
     }
 
-    // TODO: Reduce the repeating code from the alternative run function?
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
         match self.phase.get() {
@@ -843,7 +885,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
-                let slot = self.adu.get() + 1;
+                let slot = self.proposer.get_adu() + 1;
                 let ballot = self.proposer.get_current_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);
@@ -861,8 +903,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 None
             }
 
-            // Currently process up to 10 send accept, send learn, respond to client in one tick
-            // TODO: Could actually batch here, not send out on at a time but rather a batch of 10
             PaxosPhase::AcceptCommit => {
                 logger::log_debug("[Proposer Agent] Run loop: AcceptCommit phase.");
                 self.accept_commit()

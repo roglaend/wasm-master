@@ -1,5 +1,5 @@
 # ─── global cluster settings ───────────────────────────
-leader_id: 1
+log_level: info # "debug", "info", "warning", "error"
 
 # full list of nodes and which paxos-role they have
 nodes:
@@ -28,9 +28,15 @@ nodes:
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
   is_event_driven: true
-  acceptors_send_learns: false
+  acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 1000
   demo_client: false
-  tick_ms: 10
-  client_server_port: 50057
+  demo_client_requests: 10000
+  batch_size: 10
+  tick_micros: 5000
+  exec_interval_ms: 100
+  retry_interval_ms: 500
+  learn_max_gap: 10
+  executed_batch_size: 10
+  client_server_port: 60000

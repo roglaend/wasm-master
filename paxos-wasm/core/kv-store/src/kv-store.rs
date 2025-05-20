@@ -5,6 +5,7 @@ mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "kv-store-world",
+        additional_derives: [Clone]
     });
 }
 
@@ -24,7 +25,7 @@ impl Guest for MyKvStore {
 /// The key/value resource that maintains both current state and an operation history.
 struct MyKvStoreResource {
     store: RefCell<HashMap<KvKey, KvValue>>,
-    history: RefCell<Vec<Cmd>>,
+    history: RefCell<Vec<Cmd>>,     
 }
 
 impl MyKvStoreResource {
@@ -61,6 +62,16 @@ impl MyKvStoreResource {
         logger::log_info("[KV-Store] Cleared all keys");
         None
     }
+
+    fn execute(&self, op: Operation) -> Option<KvValue> {
+        match op {
+            Operation::Get(key) => self.apply_get(key),
+            Operation::Set(kv) => self.apply_set(kv),
+            Operation::Remove(key) => self.apply_remove(key),
+            Operation::Clear => self.apply_clear(),
+            Operation::Demo => Some("Demo".to_string()),
+        }
+    }
 }
 
 impl GuestKvStoreResource for MyKvStoreResource {
@@ -75,16 +86,10 @@ impl GuestKvStoreResource for MyKvStoreResource {
     fn apply(&self, cmd: Cmd) -> CmdResult {
         self.log_cmd(cmd.clone());
 
-        let result = match cmd {
-            Cmd::None => None,
-            Cmd::Some(Operation::Get(key)) => self.apply_get(key),
-            Cmd::Some(Operation::Set(kv)) => self.apply_set(kv),
-            Cmd::Some(Operation::Remove(key)) => self.apply_remove(key),
-            Cmd::Some(Operation::Clear) => self.apply_clear(),
-            Cmd::Some(Operation::Demo) => Some("Demo".to_string()),
-        };
-
-        CmdResult::from(result)
+        match cmd {
+            None => CmdResult::NoOp,
+            Some(op) => CmdResult::CmdValue(self.execute(op)),
+        }
     }
 
     /// Get the current state as a list of key/value pairs.

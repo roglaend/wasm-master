@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -9,6 +10,7 @@ use wasmtime_wasi::{
 };
 
 use crate::bindings;
+use crate::bindings::paxos::default::logger::Level;
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
 use crate::host_logger::{self, HostLogger};
 
@@ -32,7 +34,7 @@ impl WasiView for ComponentRunStates {
 }
 
 impl ComponentRunStates {
-    pub fn new(node: Node) -> Self {
+    pub fn new(node: Node, log_level: Level) -> Self {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
@@ -45,6 +47,10 @@ impl ComponentRunStates {
             .parent()
             .expect("Workspace folder")
             .to_owned();
+
+        let state_host_path = workspace_dir.join("paxos-wasm/logs/state");
+        fs::create_dir_all(&state_host_path)
+            .expect(&format!("Failed to create state dir {:?}", state_host_path));
 
         let mut builder = WasiCtxBuilder::new();
         builder.inherit_stdio();
@@ -65,7 +71,8 @@ impl ComponentRunStates {
         ComponentRunStates {
             wasi_ctx,
             resource_table: ResourceTable::new(),
-            logger: Arc::new(HostLogger::new_from_workspace(host_node)),
+
+            logger: Arc::new(HostLogger::new_from_workspace(host_node, log_level)),
         }
     }
 }
@@ -79,19 +86,20 @@ pub struct PaxosWasmtime {
 
 impl PaxosWasmtime {
     pub async fn new(
+        engine: &Engine,
         node: bindings::paxos::default::paxos_types::Node,
         nodes: Vec<bindings::paxos::default::paxos_types::Node>,
         is_leader: bool,
         run_config: RunConfig,
-        engine: &Engine,
+        log_level: Level,
     ) -> Result<Self, Box<dyn Error>> {
         // let mut config = wasmtime::Config::default();
         // config.async_support(true);
         // let engine = Engine::new(&config)?;
 
-        let state = ComponentRunStates::new(node.clone());
-        let mut store = Store::new(engine, state);
-        let mut linker = Linker::<ComponentRunStates>::new(engine);
+        let state = ComponentRunStates::new(node.clone(), log_level);
+        let mut store = Store::new(&engine, state);
+        let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
 

@@ -82,7 +82,7 @@ interface proposer-agent {
 interface acceptor-agent {
     use paxos-types.{node, slot, ballot, value, run-config, learn};
     use acceptor-types.{promise-result, accepted-result};
-    use network.{network-message};
+    use network-types.{network-message};
 
     resource acceptor-agent-resource {
         constructor(node: node, nodes: list<node>, config: run-config);
@@ -95,13 +95,13 @@ interface acceptor-agent {
 
         handle-message: func(message: network-message) -> network-message;
     
-        retry-learn: func(slot: slot, sender: node);
+        retry-learn: func(slot: slot);
     }
 }
 
 interface learner-agent {
     use paxos-types.{node, slot, ballot, value, run-config, executed, kv-pair};
-    use network.{network-message};
+    use network-types.{network-message};
     use learner-types.{learn-result, learned-entry, learner-state, retry-learn-result};
 
     resource learner-agent-resource {
@@ -110,11 +110,19 @@ interface learner-agent {
         /// Returns a snapshot of the full Paxos state (e.g. learned entries, kv-store state).
         get-state: func() -> tuple<learner-state, list<kv-pair>>;
 
-        get-next-to-execute : func() -> slot;
+        /// The highest learned slot.
+        get-adu: func() -> slot;
 
-        /// Learn the new value, and return a list of executed values and adu.
-        learn-and-execute: func(slot: slot, value: value, sender: node) -> executed;  
+        /// Records the learn, either with quorum check or not. Returns if learned.
+        record-learn: func(slot: slot, value: value, sender: node) -> bool;
 
+        /// Pops chosen learns to be executed, and applies them to the state machine.
+        execute-chosen-learns: func();
+
+        /// Collects a batch of executed, either all up to max-batch, or wait for a full batch.
+        collect-executed: func(max-batch: option<u64>, require-full: bool) -> executed;
+
+        /// Evaluates if need to retry a slot, due to too large gap and retry interval.
         evaluate-retry: func() -> retry-learn-result;
 
         /// Processes incoming network messages (such as commit notifications and accepted responses).

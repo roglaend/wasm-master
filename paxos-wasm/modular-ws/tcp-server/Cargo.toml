@@ -1,13 +1,13 @@
 [package]
+edition = "2024"
 name = "tcp-server"
 version = "0.1.0"
-edition = "2024"
 
 [lib]
-path = "src/tcp-server.rs"
 crate-type = ["cdylib"]
+path = "src/tcp-server.rs"
 
 [dependencies]
-wit-bindgen = "0.41"
-wasi = "0.14.2"
 rand = "0.9"
+wasi = "0.14.2"
+wit-bindgen = "0.41"

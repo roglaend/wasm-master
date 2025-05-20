@@ -1,17 +1,9 @@
 use std::{error::Error, sync::Arc, thread};
-
-use futures::future::{self, select_all};
 use tokio::runtime::Runtime;
-use tokio::signal;
-use tokio::task;
 use tracing::info;
 use wasmtime::Engine;
 
-use crate::{
-    bindings::{self, paxos::default::paxos_types::RunConfig},
-    config::Config,
-    paxos_wasm::PaxosWasmtime,
-};
+use crate::{config::Config, host_logger, paxos_wasm::PaxosWasmtime};
 
 pub async fn run_standalone(
     node_id: u64,
@@ -24,12 +16,15 @@ pub async fn run_standalone(
         cfg.node.node_id, cfg.node.address, cfg.node.role, cfg.is_leader,
     );
 
+    host_logger::init_tracing_with(cfg.log_level);
+
     let paxos = PaxosWasmtime::new(
+        engine,
         cfg.node.clone(),
         cfg.remote_nodes.clone(),
         cfg.is_leader,
         cfg.run_config.clone(),
-        engine,
+        cfg.log_level,
     )
     .await?;
 
@@ -62,13 +57,16 @@ pub async fn run_same_runtime(
                 cfg.node.node_id, cfg.node.address, cfg.node.role, cfg.is_leader,
             );
 
+            host_logger::init_tracing_with(cfg.log_level);
+
             let paxos_wasmtime = Arc::new(
                 PaxosWasmtime::new(
+                    &engine,
                     cfg.node.clone(),
                     cfg.remote_nodes.clone(),
                     cfg.is_leader,
                     cfg.run_config.clone(),
-                    &engine,
+                    cfg.log_level,
                 )
                 .await
                 .expect("Failed to initialize PaxosWasmtime"),

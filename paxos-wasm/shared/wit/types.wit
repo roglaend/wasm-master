@@ -5,8 +5,15 @@ interface paxos-types {
         learners-send-executed: bool,   // Toggle if the learners should send the executed message to all proposers or not.
         prepare-timeout: u64,           // The timeout period before trying a new prepare-phase in ms e.g., 5000 for 5 seconds.
         demo-client: bool,              // Enables a simulated demo client by creating client requests at an interval in the respective server.
-        tick-ms: u64,                   // The tickrate in ms which is the minimum wait time in-between ticks and run_paxos_loop calls.
-        client-server-port: u16         // The port the client connects to on the leaders address.
+        demo-client-requests: u64,      // The number of demo client requests to create before stopping.
+        batch-size: u64,                // The number commonly used to perform certain actions N times before continuing.
+        tick-micros: u64,               // The tickrate in micro seconds which is the minimum wait time in-between ticks and run_paxos_loop calls.
+        exec-interval-ms: u64,          // The timeout period for which the learner forcefully sends executed even though not having batch size to send.
+        retry-interval-ms: u64,         // The timeout period for which the learner issues a retry-learn message to either the acceptors or proposers.
+        learn-max-gap: u64,             // The maximum gap between missing learn and highest seen learn before issuing a retry.
+        executed-batch-size: u64,       // The maximum number of executed results to send in one Executed message. 
+        client-server-port: u16,        // The port the client connects to on the leaders address.
+        persistent-storage: bool,       // Toggle the usage of persistent storage.
         // ... Add more?
     } 
 
@@ -53,7 +60,11 @@ interface paxos-types {
     }
 
     type cmd = option<operation>;
-    type cmd-result = option<kv-value>;
+
+    variant cmd-result{
+        no-op,
+        cmd-value(option<kv-value>),
+    }
 
     /// Represents the command or operation to be executed.
     record value {

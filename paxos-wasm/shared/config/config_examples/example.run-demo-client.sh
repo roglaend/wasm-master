@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # ─── Tunables ────────────────────────────────────────────
-NUM_CLIENTS=20
-NUM_REQUESTS=10000
+NUM_CLIENTS=10
+NUM_REQUESTS=100
 MODE="persistent" # "oneshot" or "persistent"
 LEADER="127.0.0.1:60000"
-TIMEOUT_SECS=60
-SLEEP_MICROS=100
+TIMEOUT_SECS=20 # used only by client logic now
 TARGET="release" # "release or "debug"
 LOG_DIR="./paxos-wasm/logs"
 

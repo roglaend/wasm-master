@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-pub mod bindings {
+mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "acceptor-agent-world",
@@ -18,29 +18,30 @@ use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, Network
 use bindings::paxos::default::paxos_types::{
     Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
-use bindings::paxos::default::{logger, network};
+use bindings::paxos::default::{logger, network_client};
 
-pub struct MyAcceptorAgent;
+struct MyAcceptorAgent;
 
 impl GuestAcceptorAgent for MyAcceptorAgent {
     type AcceptorAgentResource = MyAcceptorAgentResource;
 }
 
-pub struct MyAcceptorAgentResource {
+struct MyAcceptorAgentResource {
     config: RunConfig,
 
     node: Node,
     learners: Vec<Node>,
-    acceptor: Arc<AcceptorResource>,
     proposers: Vec<Node>,
+
+    acceptor: Arc<AcceptorResource>,
+    network_client: Arc<network_client::NetworkClientResource>,
 }
 
 impl MyAcceptorAgentResource {}
 
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let garbage_collection_window = Some(100);
-        let acceptor = Arc::new(AcceptorResource::new(garbage_collection_window));
+        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), config));
 
         let learners: Vec<_> = nodes
             .iter()
@@ -53,14 +54,24 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             .into_iter()
             .filter(|x| x.role == PaxosRole::Proposer || x.role == PaxosRole::Coordinator)
             .collect();
+        let network_client = Arc::new(network_client::NetworkClientResource::new());
+
+        match acceptor.load_state() {
+            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Err(e) => logger::log_error(&format!(
+                "[Acceptor Agent] Failed to load state. Ignore if first startup: {}",
+                e
+            )),
+        }
 
         logger::log_info("[Acceptor Agent] Initialized core acceptor resource.");
         Self {
             config,
             node,
             learners,
-            acceptor,
             proposers,
+            acceptor,
+            network_client,
         }
     }
 
@@ -98,24 +109,26 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 sender: self.node.clone(),
                 payload: MessagePayload::Learn(learn.clone()),
             };
-            network::send_message_forget(&self.learners, &learn_msg);
+            self.network_client
+                .send_message_forget(&self.learners, &learn_msg);
             Some(learn)
         } else {
             logger::log_warn(
                 "[Acceptor Agent] Attempted to broadcast learns, but ability not enabled.",
             );
-            None
+            panic!("Lol")
         }
     }
 
-    fn retry_learn(&self, slot: Slot, sender: Node) {
+    fn retry_learn(&self, slot: Slot) {
         logger::log_info(&format!(
             "[Acceptor Agent] Retrying learn for slot {}",
             slot
         ));
 
-        // Have accepted value, just send it back to message sender
-        // Otherwise, no accepted value for this slot, missing from proposer, send noop to learner to ensure progress
+        // Have accepted value, which didn't reach learner.
+        // Or, no accepted value for this slot, missing from proposer.
+        // Either get accepted value or noop.
         let value = self
             .acceptor
             .get_accepted(slot)
@@ -132,7 +145,10 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             sender: self.node.clone(),
             payload: MessagePayload::Learn(learn.clone()),
         };
-        network::send_message_forget(&vec![sender], &learn_msg);
+
+        // Broadcasts to all learners, since if one learner need a noop, then they all should?
+        self.network_client
+            .send_message_forget(&self.learners, &learn_msg);
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -159,7 +175,8 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
 
                         //* Fire-and-forget */
                         if self.config.is_event_driven {
-                            network::send_message_forget(&vec![message.sender], &msg);
+                            self.network_client
+                                .send_message_forget(&vec![message.sender], &msg);
                         }
                         msg
                     }
@@ -195,9 +212,11 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                                     payload: MessagePayload::Learn(learn),
                                 };
 
-                                network::send_message_forget(&self.learners, &learn_msg);
+                                self.network_client
+                                    .send_message_forget(&self.learners, &learn_msg);
                             } else {
-                                network::send_message_forget(&vec![message.sender], &accepted_msg);
+                                self.network_client
+                                    .send_message_forget(&vec![message.sender], &accepted_msg);
                             }
                         }
                         accepted_msg
@@ -215,7 +234,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     slot
                 ));
 
-                self.retry_learn(slot, message.sender);
+                self.retry_learn(slot);
 
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -240,7 +259,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 };
                 //* Fire-and-forget */
                 // if self.config.is_event_driven { // TODO: Needed?
-                //     network::send_message_forget(&vec![message.sender.clone()], &response);
+                //     self.network_client.send_message_forget(&vec![message.sender.clone()], &response);
                 // }
                 response
             }

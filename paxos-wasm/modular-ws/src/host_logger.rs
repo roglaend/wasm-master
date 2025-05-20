@@ -10,8 +10,14 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::bindings::paxos::default::logger::Level;
 
-pub(crate) fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+pub(crate) fn init_tracing_with(level: Level) {
+    let level_str = match level {
+        Level::Debug => "debug",
+        Level::Info => "info",
+        Level::Warn => "warn",
+        Level::Error => "error",
+    };
+    let filter = EnvFilter::new(level_str);
     let subscriber = fmt().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set global tracing subscriber");
