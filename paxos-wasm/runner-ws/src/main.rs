@@ -5,31 +5,28 @@ mod paxos_wasm;
 mod run;
 
 use clap::Parser;
-use run::{run_same_runtime, run_standalone};
 use wasmtime::Engine;
 
 #[derive(Parser)]
 struct Args {
+    /// which cluster to run
     #[clap(long)]
-    node_id: u64,
+    cluster_id: u64,
 
+    /// path to config file
     #[clap(long, default_value = "config.yaml")]
     config: String,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let mut wasm_config = wasmtime::Config::default();
-    wasm_config.async_support(true);
-    let engine = Engine::new(&wasm_config)?;
+    // Configure Wasmtime for async host→guest calls
+    let mut cfg = wasmtime::Config::default();
+    cfg.async_support(true);
+    let engine = Engine::new(&cfg)?;
 
-    run_standalone(args.node_id, args.config, &engine).await?;
-
-    // or
-
-    // run_same_runtime(args.node_id, args.config, &engine).await?;
-
-    Ok(())
+    // single entrypoint which spins up all nodes in this cluster
+    run::run_cluster(args.cluster_id, &args.config, &engine).await
 }
