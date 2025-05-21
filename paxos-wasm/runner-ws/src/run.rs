@@ -26,14 +26,22 @@ pub async fn run_cluster(
         } else {
             "Node"
         };
-        error!("  • Node {} @{} ({})", n.node_id, n.address, role,);
+        error!(
+            "  • Node {} @{} ({:?} {})",
+            n.node_id, n.address, n.role, role,
+        );
     }
 
     // spawn one async task per node in the cluster
     let mut tasks = Vec::new();
     for node in cfg.cluster_nodes.iter().cloned() {
         let engine = engine.clone();
-        let all_nodes = cfg.all_nodes.clone();
+        let all_nodes: Vec<_> = cfg
+            .all_nodes
+            .clone()
+            .into_iter()
+            .filter(|n| n.node_id != node.node_id)
+            .collect();
         let is_leader = node.node_id == cfg.leader_id;
         let run_config = cfg.run_config.clone();
         let log_level = cfg.log_level;

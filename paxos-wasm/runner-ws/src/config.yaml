@@ -60,7 +60,7 @@ run_config:
   learners_send_executed: true
   prepare_timeout: 1000
   demo_client: true
-  demo_client_requests: 100000
+  demo_client_requests: 100
   batch_size: 100
   tick_micros: 100
   exec_interval_ms: 100
