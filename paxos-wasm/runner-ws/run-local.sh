@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── locate this script’s own directory ─────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/src/config.yaml"
 
@@ -9,37 +8,37 @@ TARGET=release
 WT=wt.exe
 MODEL=runners-ws
 
-# ─── pull node_ids and roles into parallel arrays ───────────────
-mapfile -t IDS < <(
-  grep '^[[:space:]]*-\s*node_id:' "$CONFIG" \
-    | sed -E 's/.*node_id:[[:space:]]*([0-9]+).*/\1/'
-)
-mapfile -t ROLES < <(
-  grep '^[[:space:]]*role:' "$CONFIG" \
-    | sed -E 's/.*role:[[:space:]]*"([^"]+)".*/\1/'
-)
-
-# sanity check
-if [[ ${#IDS[@]} -ne ${#ROLES[@]} ]]; then
-  echo "Error: mismatched node_id / role length" >&2
+# ─── find the line number that says "clusters:" ──────────────────
+clust_line=$(grep -n '^clusters:' "$CONFIG" | cut -d: -f1)
+if [[ -z "$clust_line" ]]; then
+  echo "No clusters found in $CONFIG" >&2
   exit 1
 fi
 
-# ─── build the Windows Terminal command ─────────────────────────
-CMD="$WT"
-for idx in "${!IDS[@]}"; do
-  id="${IDS[$idx]}"
-  role="${ROLES[$idx]}"
-  title="$role $id"
+# ─── grab everything from just *after* that line to EOF, then
+#     look for lines that start with optional space + digits + ":"  
+mapfile -t CLUSTER_IDS < <(
+  sed -n "$((clust_line+1)),\$p" "$CONFIG" \
+    | grep '^[[:space:]]*[0-9]\+:' \
+    | sed -E 's/^[[:space:]]*([0-9]+):.*/\1/'
+)
 
+if [[ ${#CLUSTER_IDS[@]} -eq 0 ]]; then
+  echo "No clusters defined under 'clusters:' in $CONFIG" >&2
+  exit 1
+fi
+
+# ─── build the WT command: one tab per cluster ─────────────────
+CMD="$WT"
+for cluster in "${CLUSTER_IDS[@]}"; do
+  title="cluster $cluster"
   CMD+=" new-tab --title \"$title\" bash -c \\\"\
     ./target/$TARGET/$MODEL \
-      --node-id $id \
+      --cluster-id $cluster \
       --config $CONFIG\\\" \\;"
 done
-
-# strip the trailing escaped semicolon
+# strip trailing "\;"
 CMD=${CMD%\\;}
 
-echo "Launching local Paxos cluster with one WT window…"
+echo "Launching local Paxos clusters in one WT window..."
 eval "$CMD"

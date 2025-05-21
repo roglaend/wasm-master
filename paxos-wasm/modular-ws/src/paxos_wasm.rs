@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, ResourceAny};
-use wasmtime::{Config, Engine, ProfilingStrategy, Store};
+use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{
     DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
 };
