@@ -18,6 +18,8 @@ use crate::bindings::exports::paxos::default::leader_detector::{
     Guest, GuestLeaderDetectorResource,
 };
 use crate::bindings::paxos::default::logger;
+use bindings::paxos::default::paxos_types::Node;
+use bindings::paxos::default::paxos_types::PaxosRole;
 pub struct MyLeaderDetector;
 
 impl Guest for MyLeaderDetector {
@@ -32,22 +34,24 @@ pub struct MyLeaderDetectorResource {
 
 // TODO: Change this to take in Node types instead of ids
 impl GuestLeaderDetectorResource for MyLeaderDetectorResource {
-    fn new(nodes: Vec<u64>, _local_node_id: u64) -> Self {
+    fn new(nodes: Vec<Node>, _local_node_id: Node) -> Self {
         let mut suspected = HashMap::with_capacity(nodes.len());
+
+        let mut relevant_nodes = Vec::new();
         for node in &nodes {
-            suspected.insert(*node, false);
+            if matches!(node.role, PaxosRole::Coordinator | PaxosRole::Proposer) {
+                suspected.insert(node.node_id, false);
+                relevant_nodes.push(node.node_id);
+            }
         }
-        logger::log_error(&format!(
-            "[Leader Detector] Initialized with nodes {:?}",
-            nodes
-        ));
         let leader = find_max_false(&suspected);
         logger::log_warn(&format!(
             "[Leader Detector] Initialized with leader {}",
             leader
         ));
+
         Self {
-            nodes,
+            nodes: relevant_nodes,
             suspected: Arc::new(Mutex::new(suspected)),
             leader: Cell::new(leader),
         }
@@ -55,7 +59,8 @@ impl GuestLeaderDetectorResource for MyLeaderDetectorResource {
 
     fn suspect(&self, node: u64) -> Option<u64> {
         if !self.nodes.contains(&node) {
-            panic!("Node {} is not in the list of nodes", node); // TODO: Handle this case
+            // Leader detector does not care about non-relevant nodes
+            return None;
         }
         let mut suspected = self.suspected.lock().unwrap();
         suspected.insert(node, true);
@@ -74,7 +79,8 @@ impl GuestLeaderDetectorResource for MyLeaderDetectorResource {
 
     fn restore(&self, node: u64) -> Option<u64> {
         if !self.nodes.contains(&node) {
-            panic!("Node {} is not in the list of nodes", node); // TODO: Handle this case
+            // Leader detector does not care about non-relevant nodes
+            return None;
         }
         let mut suspected = self.suspected.lock().unwrap();
         suspected.insert(node, false);

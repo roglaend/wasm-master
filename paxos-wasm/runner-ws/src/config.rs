@@ -6,6 +6,7 @@ use crate::bindings::paxos::default::{
     paxos_types::{Node, PaxosRole, RunConfig},
 };
 
+#[derive(Clone)]
 pub struct Config {
     /// all nodes from the config
     pub all_nodes: Vec<Node>,
@@ -106,6 +107,8 @@ impl Config {
             executed_batch_size: r["executed_batch_size"].as_i64().unwrap() as u64,
             client_server_port: r["client_server_port"].as_i64().unwrap() as u16,
             persistent_storage: r["persistent_storage"].as_bool().unwrap(),
+            heartbeats: r["heartbeats"].as_bool().unwrap(),
+            heartbeat_interval_ms: r["heartbeat_interval_ms"].as_i64().unwrap() as u64,
         };
 
         Ok(Config {

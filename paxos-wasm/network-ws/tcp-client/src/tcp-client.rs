@@ -168,7 +168,11 @@ impl GuestNetworkClientResource for TcpClientResource {
 
             // Evict the broken connection so next time we reconnect
             if remove {
-                self.conns.borrow_mut().remove(addr);
+                if let Some(conn) = self.conns.borrow_mut().remove(addr) {
+                    drop(conn.input);
+                    drop(conn.output);
+                    drop(conn.socket);
+                }
                 self.bufs.borrow_mut().remove(addr);
             }
         }

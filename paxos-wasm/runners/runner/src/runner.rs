@@ -26,6 +26,7 @@ struct DemoClientHelper {
     client_id: String,
     client_seq: Cell<u64>,
     start_at: Instant,
+    recieved: Cell<u64>,
 }
 
 impl DemoClientHelper {
@@ -34,6 +35,7 @@ impl DemoClientHelper {
             client_id,
             client_seq: Cell::new(0),
             start_at: Instant::now() + delay,
+            recieved: Cell::new(0),
         }
     }
 
@@ -43,8 +45,8 @@ impl DemoClientHelper {
             return;
         }
 
-        let mut sent = 0;
-        while sent < batch_quota {
+        // Send requests until we have recieved `batch_quota` responses
+        while self.recieved.get() < batch_quota {
             let seq = self.client_seq.get();
             if seq >= max_requests {
                 break;
@@ -56,7 +58,6 @@ impl DemoClientHelper {
                 client_seq: seq,
             };
             let _ = paxos.submit_client_request(&req);
-            sent += 1;
         }
     }
 }
@@ -151,6 +152,11 @@ struct MyRunnerResource {
 
     demo_client: Option<DemoClientHelper>,
     metrics: MetricsHelper,
+
+    last_hearbeat: Cell<Instant>,
+    last_failure_check: Cell<Instant>,
+
+    constructor_called: Cell<Instant>,
 }
 
 impl Guest for MyRunner {
@@ -199,6 +205,12 @@ impl MyRunnerResource {
         *self.metrics.last_response.borrow_mut() = Some(now);
         self.metrics.idle_logged.store(false, Ordering::Relaxed);
 
+        if let Some(helper) = &self.demo_client {
+            helper
+                .recieved
+                .set(helper.recieved.get() + responses.len() as u64);
+        }
+
         logger::log_info(&format!(
             "[Runner] sending {} client responses",
             responses.len()
@@ -207,10 +219,62 @@ impl MyRunnerResource {
 
         self.metrics.track(responses.len());
     }
+
+    fn demo_client_work(&self) {
+        let num_requests: u64 = self.config.demo_client_requests;
+
+        let helper = match &self.demo_client {
+            Some(h) if self.paxos.is_leader() => h,
+            _ => return,
+        };
+
+        // send up to 2 x batch_size new requests, but never beyond demo_client_requests
+        let mut sent = 0;
+        let batch_quota = self.config.batch_size;
+        while sent < batch_quota {
+            let seq = helper.client_seq.get();
+            if seq >= num_requests {
+                break;
+            }
+            helper.client_seq.set(seq + 1);
+            let req = Value {
+                command: Some(Operation::Demo),
+                client_id: helper.client_id.clone(),
+                client_seq: seq,
+            };
+            let _ = self.paxos.submit_client_request(&req);
+            sent += 1;
+        }
+    }
+
+    fn send_heartbeat(&self) {
+        if self.config.heartbeats {
+            let now = Instant::now();
+            if now.duration_since(self.last_hearbeat.get())
+                >= Duration::from_millis(self.config.heartbeat_interval_ms)
+            {
+                self.paxos.send_heartbeat();
+                self.last_hearbeat.set(now);
+            }
+        }
+    }
+
+    fn failure_check(&self) {
+        if self.config.heartbeats {
+            let now = Instant::now();
+            if now.duration_since(self.last_failure_check.get())
+                >= Duration::from_millis(self.config.heartbeat_interval_ms * 5)
+            {
+                self.paxos.failure_service();
+                self.last_failure_check.set(now);
+            }
+        }
+    }
 }
 
 impl GuestRunnerResource for MyRunnerResource {
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
+        let constructor_called = Instant::now();
         let paxos = Arc::new(PaxosCoordinatorResource::new(
             &node,
             &nodes,
@@ -243,7 +307,7 @@ impl GuestRunnerResource for MyRunnerResource {
             None
         };
 
-        sleep(Duration::from_secs(1));
+        // sleep(Duration::from_secs(1));
 
         let metrics = MetricsHelper {
             stats_batch: 1000,
@@ -264,14 +328,29 @@ impl GuestRunnerResource for MyRunnerResource {
             should_stop: AtomicBool::new(false),
             demo_client,
             metrics,
+            last_hearbeat: Cell::new(Instant::now()),
+            last_failure_check: Cell::new(Instant::now()),
+            constructor_called: Cell::new(constructor_called),
         }
     }
 
     fn run(&self) {
+        println!(
+            "[Runner] Time from constructor called to running mainloop: {:?}",
+            {
+                let now = Instant::now();
+                now.duration_since(self.constructor_called.get())
+            }
+        );
+
         let tick_duration = Duration::from_micros(self.config.tick_micros);
         let mut next_tick = Instant::now() + tick_duration;
 
         while !self.should_stop.load(Ordering::Relaxed) {
+            // only used if configured
+            self.send_heartbeat();
+            self.failure_check();
+
             self.process_clients();
             self.process_network();
 
@@ -299,6 +378,14 @@ impl GuestRunnerResource for MyRunnerResource {
                     && !self.metrics.idle_logged.load(Ordering::Relaxed)
                 {
                     self.metrics.flush_global();
+                } else if let Some(helper) = &self.demo_client {
+                    if helper.recieved.get() >= self.config.demo_client_requests {
+                        // demo client is done, so we can stop
+                        // used to remove the unrealistic TP from the measurements that came from no active requests just receiving
+                        // should stop stops the loop, so logs only visible in log file after finish
+                        self.should_stop.store(true, Ordering::Relaxed);
+                        self.metrics.flush_global();
+                    }
                 }
             }
             // sleep "only" until our next tick

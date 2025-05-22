@@ -256,8 +256,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             )
         }
         MessagePayload::Heartbeat(h) => {
-            let sender_str = serialize_node(&h.sender);
-            format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
+            format!("heartbeat,timestamp:{}", h.timestamp)
         }
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
@@ -555,22 +554,16 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
         }
 
         "heartbeat" => {
-            let mut sender_str = None;
             let mut timestamp = None;
             for p in &parts[1..] {
                 let mut kv = p.splitn(2, ':');
                 match (kv.next(), kv.next()) {
-                    (Some("sender"), Some(v)) => sender_str = Some(v),
                     (Some("timestamp"), Some(v)) => timestamp = v.parse().ok(),
                     _ => {}
                 }
             }
-            if let (Some(s), Some(ts)) = (sender_str, timestamp) {
-                let sender = deserialize_node(s)?;
-                Ok(MessagePayload::Heartbeat(Heartbeat {
-                    sender,
-                    timestamp: ts,
-                }))
+            if let Some(ts) = timestamp {
+                Ok(MessagePayload::Heartbeat(Heartbeat { timestamp: ts }))
             } else {
                 Err("bad heartbeat")
             }

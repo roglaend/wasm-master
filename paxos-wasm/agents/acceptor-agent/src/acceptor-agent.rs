@@ -35,6 +35,8 @@ struct MyAcceptorAgentResource {
 
     acceptor: Arc<AcceptorResource>,
     network_client: Arc<network_client::NetworkClientResource>,
+
+    all_nodes: Vec<Node>,
 }
 
 impl MyAcceptorAgentResource {}
@@ -72,6 +74,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             proposers,
             acceptor,
             network_client,
+            all_nodes: nodes,
         }
     }
 
@@ -241,28 +244,6 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-            MessagePayload::Heartbeat(payload) => {
-                logger::log_debug(&format!(
-                    "[Acceptor Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                    payload.sender, payload.timestamp
-                ));
-                // Simply echo the heartbeat payload.
-                let response_payload = Heartbeat {
-                    sender: self.node.clone(),
-                    // timestamp = ... // TODO: Have a consistent way to define these?
-                    timestamp: payload.timestamp,
-                };
-                // TODO: Have a dedicated heartbeat ack payload type?
-                let response = NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Heartbeat(response_payload),
-                };
-                //* Fire-and-forget */
-                // if self.config.is_event_driven { // TODO: Needed?
-                //     self.network_client.send_message_forget(&vec![message.sender.clone()], &response);
-                // }
-                response
-            }
 
             // TODO: React to learn-ack if the acceptor agent broadcast learns?
             other_message => {
@@ -276,5 +257,21 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 }
             }
         }
+    }
+
+    fn send_heartbeat(&self) {
+        let heartbeat = Heartbeat { timestamp: 0 };
+
+        let heartbeat_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Heartbeat(heartbeat.clone()),
+        };
+
+        logger::log_warn(&format!(
+            "[Acceptor Agent] Sending heartbeat to all nodes: {:?}",
+            self.all_nodes
+        ));
+        self.network_client
+            .send_message_forget(&self.all_nodes, &heartbeat_msg);
     }
 }

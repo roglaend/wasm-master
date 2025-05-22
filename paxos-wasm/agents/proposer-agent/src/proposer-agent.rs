@@ -49,6 +49,7 @@ pub struct MyProposerAgentResource {
 
     acceptors: Vec<Node>,
     learners: Vec<Node>,
+    all_nodes: Vec<Node>,
     failure_detector: Arc<FailureDetectorResource>,
     network_client: Arc<network_client::NetworkClientResource>,
 
@@ -109,6 +110,11 @@ impl MyProposerAgentResource {
             .entry(promise.ballot)
             .or_insert_with(HashMap::new)
             .insert(sender.node_id, promise.clone());
+
+        logger::log_info(&format!(
+            "[Proposer Agent] Received promise for ballot {}, slot {} from {}.",
+            promise.ballot, promise.slot, sender.node_id
+        ));
 
         // Check for quorum in the highest ballot group.
         let promises = self.promises.borrow();
@@ -192,7 +198,7 @@ impl MyProposerAgentResource {
             payload: MessagePayload::Prepare(prepare),
         };
 
-        logger::log_debug(&format!(
+        logger::log_info(&format!(
             "[Proposer Agent] Broadcasting PREPARE: slot={}, ballot={}.",
             slot, ballot
         ));
@@ -411,11 +417,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         ));
 
         let failure_delta = 10; // TODO: Make this dynamic
-        let failure_detector = Arc::new(FailureDetectorResource::new(
-            node.node_id.clone(),
-            &nodes,
-            failure_delta,
-        ));
+        let failure_detector = Arc::new(FailureDetectorResource::new(&node, &nodes, failure_delta));
         let network_client = Arc::new(NetworkClientResource::new());
 
         match proposer.load_state() {
@@ -450,6 +452,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
 
             client_responses: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
+            all_nodes: nodes,
         }
     }
 
@@ -626,6 +629,14 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn process_executed(&self, executed: Executed) {
         if executed.adu > self.proposer.get_adu() {
             self.proposer.set_adu(executed.adu);
+            // TODO: Put this into config
+            // should also have a better way to crash the node since adu with batch size
+            // wont necessarily be incremented by 1
+            // But do not know where its best to do this, since crashing at a specific slot when sending out
+            // would mean crash on the recovered node aswell for that slot
+            // if executed.adu == 1001 && self.proposer.is_leader() {
+            //     panic!("Testing panic recovery");
+            // }
         }
 
         if !self.proposer.is_leader() {
@@ -783,25 +794,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-            MessagePayload::Heartbeat(payload) => {
-                logger::log_debug(&format!(
-                    "[Proposer Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                    payload.sender, payload.timestamp
-                ));
-                // Simply echo the heartbeat payload.
-                let response_payload = Heartbeat {
-                    sender: self.node.clone(),
-                    // timestamp = ... // TODO: Have a consistent way to define these?
-                    timestamp: payload.timestamp,
-                };
-                self.failure_detector
-                    .heartbeat(payload.sender.clone().node_id);
-                // TODO: Have a dedicated heartbeat ack payload type?
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Heartbeat(response_payload),
-                }
-            }
             MessagePayload::RetryLearn(slot) => {
                 logger::log_warn(&format!(
                     "[Proposer Agent] Handling LEARN RETRY: slots={:?}",
@@ -886,7 +878,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
                 let slot = self.proposer.get_adu() + 1;
-                let ballot = self.proposer.get_current_ballot();
+                let ballot = self.proposer.increase_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);
                 if let PrepareResult::IsEventDriven = prepare_result {
@@ -922,5 +914,21 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 self.become_leader();
             }
         }
+    }
+
+    fn send_heartbeat(&self) {
+        let heartbeat = Heartbeat { timestamp: 0 };
+
+        let heartbeat_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Heartbeat(heartbeat.clone()),
+        };
+
+        logger::log_warn(&format!(
+            "[Proposer Agent] Sending heartbeat to all nodes: {:?}",
+            self.all_nodes
+        ));
+        self.network_client
+            .send_message_forget(&self.all_nodes, &heartbeat_msg);
     }
 }

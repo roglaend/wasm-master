@@ -110,6 +110,25 @@ impl MyPaxosCoordinatorResource {
             let _ = self.proposer().process_executed(&exec);
         }
     }
+
+    fn send_heartbeat(&self) {
+        match self.node.role {
+            PaxosRole::Proposer => {
+                self.proposer().send_heartbeat();
+            }
+            PaxosRole::Acceptor => {
+                self.acceptor().send_heartbeat();
+            }
+            PaxosRole::Learner => {
+                self.learner().send_heartbeat();
+            }
+            // WOHO QUICKFIX
+            PaxosRole::Coordinator => {
+                self.proposer().send_heartbeat();
+            }
+            _ => {}
+        }
+    }
 }
 
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
@@ -146,7 +165,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         let failure_delta = 10; // TODO: Make this dynamic
         let failure_detector = Arc::new(failure_detector::FailureDetectorResource::new(
-            node.node_id.clone(),
+            &node,
             &nodes,
             failure_delta,
         ));
@@ -413,12 +432,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 MessagePayload::Learn(_) => learner.handle_message(&message),
 
                 MessagePayload::Heartbeat(payload) => {
-                    logger::log_debug(&format!(
+                    logger::log_warn(&format!(
                         "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                        payload.sender, payload.timestamp
+                        message.sender.node_id, payload.timestamp
                     ));
-                    self.failure_detector
-                        .heartbeat(payload.sender.clone().node_id);
+                    self.failure_detector.heartbeat(message.sender.node_id);
 
                     NetworkMessage {
                         sender: self.node.clone(),
@@ -462,5 +480,9 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 self.proposer().become_leader();
             }
         }
+    }
+
+    fn send_heartbeat(&self) {
+        self.send_heartbeat();
     }
 }

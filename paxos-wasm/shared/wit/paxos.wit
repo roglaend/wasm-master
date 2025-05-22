@@ -59,6 +59,8 @@ interface paxos-coordinator {
         failure-service: func();
 
         run-paxos-loop: func() -> option<list<client-response>>;
+
+        send-heartbeat: func();
     } 
 }
 
