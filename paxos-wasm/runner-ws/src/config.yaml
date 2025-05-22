@@ -1,7 +1,7 @@
 # ─── config.yaml ────────────────────────────────────────
 
 # logging
-log_level: warning   # "debug", "info", "warning", "error"
+log_level: error    # "debug", "info", "warning", "error"
 
 # all nodes in your entire deployment:
 nodes:
@@ -34,6 +34,27 @@ nodes:
   - node_id: 9
     address: "127.0.0.1:50059"
     role: "proposer"
+  # - node_id: 1
+  #   address: "127.0.0.1:50051"
+  #   role: "learner"
+  # - node_id: 2
+  #   address: "127.0.0.1:50052"
+  #   role: "learner"
+  # - node_id: 3
+  #   address: "127.0.0.1:50053"
+  #   role: "acceptor"
+  # - node_id: 4
+  #   address: "127.0.0.1:50054"
+  #   role: "acceptor"
+  # - node_id: 5
+  #   address: "127.0.0.1:50055"
+  #   role: "acceptor"
+  # - node_id: 6
+  #   address: "127.0.0.1:50056"
+  #   role: "proposer"
+  # - node_id: 7
+  #   address: "127.0.0.1:50057"
+  #   role: "proposer"
 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
@@ -58,10 +79,10 @@ run_config:
   is_event_driven: true
   acceptors_send_learns: true
   learners_send_executed: true
-  prepare_timeout: 1000
-  demo_client: true
-  demo_client_requests: 100
-  batch_size: 100
+  prepare_timeout: 50
+  demo_client: false
+  demo_client_requests: 10000
+  batch_size: 20
   tick_micros: 100
   exec_interval_ms: 100
   retry_interval_ms: 500
@@ -69,9 +90,6 @@ run_config:
   executed_batch_size: 10
   client_server_port: 60000
   persistent_storage: false
-  crash:
-    - node: 3
-    - slot: 12939
-  graceful:
-    - node: 7
-    - slot: 223745
+  heartbeats: false
+  heartbeat_interval_ms: 200
+# TODO: add configs for crashing, and hot reloading nodes
