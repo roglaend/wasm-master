@@ -25,6 +25,40 @@ use bindings::paxos::default::{
 struct DemoClientHelper {
     client_id: String,
     client_seq: Cell<u64>,
+    start_at: Instant,
+}
+
+impl DemoClientHelper {
+    fn new(client_id: String, delay: Duration) -> Self {
+        DemoClientHelper {
+            client_id,
+            client_seq: Cell::new(0),
+            start_at: Instant::now() + delay,
+        }
+    }
+
+    /// Try to send demo requests once `start_at` has passed.
+    fn send_if_ready(&self, paxos: &PaxosCoordinatorResource, batch_quota: u64, max_requests: u64) {
+        if !paxos.is_leader() || Instant::now() < self.start_at {
+            return;
+        }
+
+        let mut sent = 0;
+        while sent < batch_quota {
+            let seq = self.client_seq.get();
+            if seq >= max_requests {
+                break;
+            }
+            self.client_seq.set(seq + 1);
+            let req = Value {
+                command: Some(Operation::Demo),
+                client_id: self.client_id.clone(),
+                client_seq: seq,
+            };
+            let _ = paxos.submit_client_request(&req);
+            sent += 1;
+        }
+    }
 }
 
 struct MetricsHelper {
@@ -129,7 +163,7 @@ impl MyRunnerResource {
             return;
         }
         // peek at any incoming requests
-        let requests = self.client_svr.get_requests(self.config.batch_size * 2);
+        let requests = self.client_svr.get_requests(self.config.batch_size);
         if !requests.is_empty() {
             if self.metrics.global_start.borrow().is_none() {
                 *self.metrics.global_start.borrow_mut() = Some(Instant::now());
@@ -146,7 +180,7 @@ impl MyRunnerResource {
     }
 
     fn process_network(&self) {
-        for msg in self.network_svr.get_messages(self.config.batch_size * 2) {
+        for msg in self.network_svr.get_messages(self.config.batch_size) {
             self.paxos.handle_message(&msg);
         }
     }
@@ -172,33 +206,6 @@ impl MyRunnerResource {
         self.client_svr.send_responses(&self.node, &responses);
 
         self.metrics.track(responses.len());
-    }
-
-    fn demo_client_work(&self) {
-        let num_requests: u64 = self.config.demo_client_requests;
-
-        let helper = match &self.demo_client {
-            Some(h) if self.paxos.is_leader() => h,
-            _ => return,
-        };
-
-        // send up to 2 x batch_size new requests, but never beyond demo_client_requests
-        let mut sent = 0;
-        let batch_quota = self.config.batch_size * 2;
-        while sent < batch_quota {
-            let seq = helper.client_seq.get();
-            if seq >= num_requests {
-                break;
-            }
-            helper.client_seq.set(seq + 1);
-            let req = Value {
-                command: Some(Operation::Demo),
-                client_id: helper.client_id.clone(),
-                client_seq: seq,
-            };
-            let _ = self.paxos.submit_client_request(&req);
-            sent += 1;
-        }
     }
 }
 
@@ -227,16 +234,16 @@ impl GuestRunnerResource for MyRunnerResource {
         let network_svr = Arc::new(NetworkServerResource::new());
         network_svr.setup_listener(&node.address);
 
-        sleep(Duration::from_millis(1000)); // To allow all nodes to initialize
-
         let demo_client = if config.demo_client {
-            Some(DemoClientHelper {
-                client_id: format!("client-{}", node.node_id),
-                client_seq: Cell::new(0),
-            })
+            Some(DemoClientHelper::new(
+                format!("client-{}", node.node_id),
+                Duration::from_secs(1),
+            ))
         } else {
             None
         };
+
+        sleep(Duration::from_secs(1));
 
         let metrics = MetricsHelper {
             stats_batch: 1000,
@@ -270,7 +277,13 @@ impl GuestRunnerResource for MyRunnerResource {
 
             let now = Instant::now();
             if now >= next_tick {
-                self.demo_client_work();
+                if let Some(helper) = &self.demo_client {
+                    helper.send_if_ready(
+                        &self.paxos,
+                        self.config.batch_size,
+                        self.config.demo_client_requests,
+                    );
+                }
 
                 if let Some(responses) = self.run_paxos_loop() {
                     self.dispatch_responses(responses);

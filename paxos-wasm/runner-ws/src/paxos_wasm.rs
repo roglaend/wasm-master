@@ -91,7 +91,6 @@ pub struct NetworkClientResource {
 }
 
 pub struct PaxosWasmtime {
-    // pub _engine: Engine,
     pub store: Mutex<Store<ComponentRunStates>>,
     pub bindings: bindings::PaxosRunnerWorld,
     pub resource_handle: ResourceAny,
@@ -106,10 +105,6 @@ impl PaxosWasmtime {
         run_config: RunConfig,
         log_level: Level,
     ) -> Result<Self, Box<dyn Error>> {
-        // let mut config = wasmtime::Config::default();
-        // config.async_support(true);
-        // let engine = Engine::new(&config)?;
-
         let state = ComponentRunStates::new(node.clone(), log_level);
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
@@ -144,7 +139,6 @@ impl PaxosWasmtime {
             .await?;
 
         Ok(Self {
-            // _engine: engine,
             store: Mutex::new(store),
             bindings: final_bindings,
             resource_handle,

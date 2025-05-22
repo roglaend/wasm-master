@@ -29,23 +29,55 @@ impl Guest for MyCoordinator {
     type PaxosCoordinatorResource = MyPaxosCoordinatorResource;
 }
 
+enum Agents {
+    Proposer(Arc<proposer_agent::ProposerAgentResource>),
+    Acceptor(Arc<acceptor_agent::AcceptorAgentResource>),
+    Learner(Arc<learner_agent::LearnerAgentResource>),
+    Coordinator {
+        proposer: Arc<proposer_agent::ProposerAgentResource>,
+        acceptor: Arc<acceptor_agent::AcceptorAgentResource>,
+        learner: Arc<learner_agent::LearnerAgentResource>,
+    },
+}
+
 pub struct MyPaxosCoordinatorResource {
     config: RunConfig,
 
     node: Node,
     nodes: Vec<Node>,
 
-    // Uses the agents
-    proposer_agent: Arc<proposer_agent::ProposerAgentResource>,
-    acceptor_agent: Arc<acceptor_agent::AcceptorAgentResource>,
-    learner_agent: Arc<learner_agent::LearnerAgentResource>,
+    agents: Agents,
 
     failure_detector: Arc<failure_detector::FailureDetectorResource>,
 }
 
 impl MyPaxosCoordinatorResource {
+    fn proposer(&self) -> &proposer_agent::ProposerAgentResource {
+        match &self.agents {
+            Agents::Proposer(p) => &*p,
+            Agents::Coordinator { proposer, .. } => &*proposer,
+            _ => panic!("Tried to use proposer on a non-proposer node"),
+        }
+    }
+
+    fn acceptor(&self) -> &acceptor_agent::AcceptorAgentResource {
+        match &self.agents {
+            Agents::Acceptor(a) => &*a,
+            Agents::Coordinator { acceptor, .. } => &*acceptor,
+            _ => panic!("Tried to use acceptor on a non-acceptor node"),
+        }
+    }
+
+    fn learner(&self) -> &learner_agent::LearnerAgentResource {
+        match &self.agents {
+            Agents::Learner(l) => &*l,
+            Agents::Coordinator { learner, .. } => &*learner,
+            _ => panic!("Tried to use learner on a non-learner node"),
+        }
+    }
+
     fn maybe_retry_learn(&self) {
-        match self.learner_agent.evaluate_retry() {
+        match self.learner().evaluate_retry() {
             RetryLearnResult::NoGap => return,
             RetryLearnResult::Skip(slot) => {
                 logger::log_debug(&format!(
@@ -60,22 +92,22 @@ impl MyPaxosCoordinatorResource {
                     slot
                 ));
                 if self.config.acceptors_send_learns {
-                    self.acceptor_agent.retry_learn(slot); // TODO
+                    self.acceptor().retry_learn(slot); // TODO
                 } else {
-                    self.proposer_agent.retry_learn(slot);
+                    self.proposer().retry_learn(slot);
                 }
             }
         }
     }
 
     fn drive_learner(&self) {
-        self.learner_agent.execute_chosen_learns();
+        self.learner().execute_chosen_learns();
 
         // TODO: Might add a max batch or require a full batch, but don't think that's valid here.
-        let exec = self.learner_agent.collect_executed(None, false);
+        let exec = self.learner().collect_executed(None, false);
 
-        if self.proposer_agent.is_leader() && !exec.results.is_empty() {
-            let _ = self.proposer_agent.process_executed(&exec);
+        if self.proposer().is_leader() && !exec.results.is_empty() {
+            let _ = self.proposer().process_executed(&exec);
         }
     }
 }
@@ -83,17 +115,34 @@ impl MyPaxosCoordinatorResource {
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// Creates a new coordinator resource.
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
-        // TODO: Only load the agents needed based on the role? Like we did in tcp server.
-        let proposer_agent = Arc::new(proposer_agent::ProposerAgentResource::new(
-            &node, &nodes, is_leader, config,
-        ));
-        let acceptor_agent = Arc::new(acceptor_agent::AcceptorAgentResource::new(
-            &node, &nodes, config,
-        ));
-
-        let learner_agent = Arc::new(learner_agent::LearnerAgentResource::new(
-            &node, &nodes, config,
-        ));
+        let agents = match node.role {
+            PaxosRole::Proposer => Agents::Proposer(Arc::new(
+                proposer_agent::ProposerAgentResource::new(&node, &nodes, is_leader, config),
+            )),
+            PaxosRole::Acceptor => Agents::Acceptor(Arc::new(
+                acceptor_agent::AcceptorAgentResource::new(&node, &nodes, config),
+            )),
+            PaxosRole::Learner => Agents::Learner(Arc::new(
+                learner_agent::LearnerAgentResource::new(&node, &nodes, config),
+            )),
+            PaxosRole::Coordinator => {
+                let proposer = Arc::new(proposer_agent::ProposerAgentResource::new(
+                    &node, &nodes, is_leader, config,
+                ));
+                let acceptor = Arc::new(acceptor_agent::AcceptorAgentResource::new(
+                    &node, &nodes, config,
+                ));
+                let learner = Arc::new(learner_agent::LearnerAgentResource::new(
+                    &node, &nodes, config,
+                ));
+                Agents::Coordinator {
+                    proposer,
+                    acceptor,
+                    learner,
+                }
+            }
+            PaxosRole::Client => unreachable!(),
+        };
 
         let failure_delta = 10; // TODO: Make this dynamic
         let failure_detector = Arc::new(failure_detector::FailureDetectorResource::new(
@@ -106,52 +155,59 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             config,
             node,
             nodes,
-            proposer_agent,
-            acceptor_agent,
-            learner_agent,
+            agents,
             failure_detector,
         }
     }
 
     fn submit_client_request(&self, req: Value) -> bool {
-        self.proposer_agent.submit_client_request(&req)
+        match &self.agents {
+            Agents::Proposer(p) | Agents::Coordinator { proposer: p, .. } => {
+                p.submit_client_request(&req)
+            }
+            _ => false,
+        }
     }
 
     fn is_leader(&self) -> bool {
-        self.proposer_agent.is_leader()
+        match &self.agents {
+            Agents::Proposer(p) | Agents::Coordinator { proposer: p, .. } => p.is_leader(),
+            _ => false,
+        }
     }
 
     // Ticker called from runner
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        match self.node.role {
-            PaxosRole::Client => {
-                panic!("[Coordinator] Client nodes should never call run_paxos_loop");
+        match &self.agents {
+            Agents::Proposer(proposer) => {
+                return proposer.run_paxos_loop();
             }
 
-            PaxosRole::Proposer => self.proposer_agent.run_paxos_loop(),
-
-            PaxosRole::Acceptor => {
-                // self.acceptor_agent.run_paxos_loop(); // TODO
-                None
+            Agents::Acceptor(_acceptor) => {
+                // acceptor.run_paxos_loop(); // TODO: ?
+                return None;
             }
 
-            PaxosRole::Learner => {
-                self.learner_agent.run_paxos_loop();
-                None
+            Agents::Learner(lea) => {
+                lea.run_paxos_loop();
+                return None;
             }
 
-            PaxosRole::Coordinator => {
+            Agents::Coordinator {
+                proposer,
+                acceptor: _,
+                learner: _,
+            } => {
                 self.maybe_retry_learn();
                 self.drive_learner();
 
-                // only the leader runs proposer phases
-                if !self.proposer_agent.is_leader() {
+                if !proposer.is_leader() {
                     return None;
                 }
 
-                match self.proposer_agent.get_paxos_phase() {
+                match proposer.get_paxos_phase() {
                     PaxosPhase::Start => {
-                        self.proposer_agent.start_leader_loop();
+                        proposer.start_leader_loop();
                         None
                     }
                     PaxosPhase::PrepareSend => {
@@ -159,7 +215,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         None
                     }
                     PaxosPhase::PreparePending => {
-                        self.proposer_agent.check_prepare_timeout();
+                        proposer.check_prepare_timeout();
                         None
                     }
                     PaxosPhase::AcceptCommit => {
@@ -176,11 +232,11 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     /// The coordinator queries its local acceptor for a promise and passes it along.
     fn prepare_phase(&self) -> PrepareResult {
         // Starts from 1, or the adu on the learner, the highest slot the learner has chosen.
-        let slot = self.learner_agent.get_adu() + 1;
-        let ballot = self.proposer_agent.get_current_ballot();
+        let slot = self.learner().get_adu() + 1;
+        let ballot = self.proposer().get_current_ballot();
 
         // Query local acceptor.
-        let local_promise_result = self.acceptor_agent.process_prepare(slot, ballot);
+        let local_promise_result = self.acceptor().process_prepare(slot, ballot);
 
         let local_promise = match local_promise_result {
             PromiseResult::Promised(promise) => promise,
@@ -195,7 +251,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         // Merge the local promise with remote responses using the proposer agent.
         let prepare_result = self
-            .proposer_agent
+            .proposer()
             .prepare_phase(slot, ballot, &vec![local_promise]);
 
         logger::log_info(&format!(
@@ -206,7 +262,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     fn accept_phase(&self) -> AcceptResult {
-        let props = self.proposer_agent.proposals_to_accept();
+        let props = self.proposer().proposals_to_accept();
 
         if props.is_empty() {
             logger::log_debug("[Coordinator] Accept phase aborted: no proposal available.");
@@ -215,27 +271,23 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         // For each proposal, do a local accept first then make proposer send accept messages to rest.
         for p in props {
-            let local_acc = self
-                .acceptor_agent
-                .process_accept(p.slot, p.ballot, &p.value);
+            let local_acc = self.acceptor().process_accept(p.slot, p.ballot, &p.value);
 
             match local_acc {
                 AcceptedResult::Accepted(acc) => {
                     // Sends Accept to all acceptors
                     let accept_result =
-                        self.proposer_agent
+                        self.proposer()
                             .accept_phase(&p.value, p.slot, p.ballot, &vec![acc]);
 
                     if self.config.acceptors_send_learns {
                         if let Some(learn) =
                             // Sends Learn to all learners
-                            self.acceptor_agent.commit_phase(p.slot, &p.value.clone())
+                            self.acceptor().commit_phase(p.slot, &p.value.clone())
                         {
-                            let _ = self.learner_agent.record_learn(
-                                learn.slot,
-                                &learn.value,
-                                &self.node,
-                            );
+                            let _ =
+                                self.learner()
+                                    .record_learn(learn.slot, &learn.value, &self.node);
                         }
                     }
 
@@ -267,17 +319,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
     fn commit_phase(&self) -> Option<Vec<ClientResponse>> {
         if !self.config.acceptors_send_learns {
-            let to_commit = self.proposer_agent.learns_to_commit();
+            let to_commit = self.proposer().learns_to_commit();
             if !to_commit.is_empty() {
                 for learn in to_commit {
-                    self.proposer_agent.broadcast_learn(&learn);
-                    self.learner_agent
+                    self.proposer().broadcast_learn(&learn);
+                    self.learner()
                         .record_learn(learn.slot, &learn.value, &self.node);
                 }
             }
         }
 
-        let responses = self.proposer_agent.collect_client_responses();
+        let responses = self.proposer().collect_client_responses();
         (!responses.is_empty()).then(|| {
             logger::log_info(&format!(
                 "[Coordinator] Sending {} client responses",
@@ -297,68 +349,115 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             sender: self.node.clone(),
             payload: MessagePayload::Ignore,
         };
-        match message.payload {
+        match &self.agents {
             //* Forward the relevant messages to the respective agents */
-            MessagePayload::Promise(_) => self.proposer_agent.handle_message(&message),
-            MessagePayload::Accepted(_) => self.proposer_agent.handle_message(&message),
-
-            MessagePayload::RetryLearn(_) => {
-                if !self.config.acceptors_send_learns {
-                    self.proposer_agent.handle_message(&message)
-                } else {
-                    self.acceptor_agent.handle_message(&message)
+            Agents::Proposer(proposer) => match message.payload {
+                MessagePayload::Promise(_) => proposer.handle_message(&message),
+                MessagePayload::Accepted(_) => proposer.handle_message(&message),
+                MessagePayload::RetryLearn(_) => {
+                    if !self.config.acceptors_send_learns {
+                        proposer.handle_message(&message)
+                    } else {
+                        ignore_msg
+                    }
                 }
-            }
-
-            MessagePayload::Executed(_) => {
-                if self.node.role != PaxosRole::Coordinator {
-                    self.proposer_agent.handle_message(&message);
+                MessagePayload::Executed(_) => proposer.handle_message(&message),
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Proposer: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
                 }
-                //* Not needed by non-leader coordinators due to them having access to "adu" through their learners */
-                ignore_msg
-            }
+            },
 
-            MessagePayload::Prepare(_) => self.acceptor_agent.handle_message(&message),
-            MessagePayload::Accept(_) => self.acceptor_agent.handle_message(&message),
-
-            MessagePayload::Learn(_) => self.learner_agent.handle_message(&message),
-
-            MessagePayload::Heartbeat(payload) => {
-                logger::log_debug(&format!(
-                    "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                    payload.sender, payload.timestamp
-                ));
-                self.failure_detector
-                    .heartbeat(payload.sender.clone().node_id);
-
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Heartbeat(payload),
+            Agents::Acceptor(acceptor) => match message.payload {
+                MessagePayload::Prepare(_) => acceptor.handle_message(&message),
+                MessagePayload::Accept(_) => acceptor.handle_message(&message),
+                MessagePayload::RetryLearn(_) => {
+                    if self.config.acceptors_send_learns {
+                        acceptor.handle_message(&message)
+                    } else {
+                        ignore_msg
+                    }
                 }
-            }
-            other_msg @ MessagePayload::ClientRequest(_)
-            | other_msg @ MessagePayload::ClientResponse(_)
-            | other_msg @ MessagePayload::Ignore => {
-                logger::log_warn(&format!(
-                    "[Coordinator] Received irrelevant message type: {:?}",
-                    other_msg
-                ));
-                ignore_msg
-            }
-            _ => {
-                logger::log_warn(&format!(
-                    "[Coordinator] Received unknown message type: {:?}",
-                    message.payload
-                ));
-                ignore_msg
-            }
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Acceptor: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
+            },
+
+            Agents::Learner(learner) => match message.payload {
+                MessagePayload::Learn(_) => learner.handle_message(&message),
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Learner: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
+            },
+
+            Agents::Coordinator {
+                proposer,
+                acceptor,
+                learner,
+            } => match message.payload {
+                MessagePayload::Promise(_) => proposer.handle_message(&message),
+                MessagePayload::Accepted(_) => proposer.handle_message(&message),
+
+                MessagePayload::RetryLearn(_) => {
+                    if !self.config.acceptors_send_learns {
+                        proposer.handle_message(&message)
+                    } else {
+                        acceptor.handle_message(&message)
+                    }
+                }
+
+                MessagePayload::Executed(_) => {
+                    if self.node.role != PaxosRole::Coordinator {
+                        proposer.handle_message(&message);
+                    }
+                    //* Not needed by non-leader coordinators due to them having access to "adu" through their learners */
+                    ignore_msg
+                }
+
+                MessagePayload::Prepare(_) => acceptor.handle_message(&message),
+                MessagePayload::Accept(_) => acceptor.handle_message(&message),
+
+                MessagePayload::Learn(_) => learner.handle_message(&message),
+
+                MessagePayload::Heartbeat(payload) => {
+                    logger::log_debug(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
+                        payload.sender, payload.timestamp
+                    ));
+                    self.failure_detector
+                        .heartbeat(payload.sender.clone().node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat(payload),
+                    }
+                }
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
+            },
         }
     }
 
     /// Expose a snapshot of the current Paxos state.
     /// This aggregates the learner state (learned entries) and the key/value store state.
     fn get_state(&self) -> PaxosState {
-        let (learner_state, kv_state) = self.learner_agent.get_state();
+        let (learner_state, kv_state) = self.learner().get_state();
         PaxosState {
             learned: learner_state.learned,
             kv_state,
@@ -376,7 +475,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         if let Some(leader) = new_lead {
             logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
             if leader == self.node.node_id {
-                self.proposer_agent.become_leader();
+                self.proposer().become_leader();
             }
         }
     }
