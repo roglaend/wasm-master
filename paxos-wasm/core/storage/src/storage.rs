@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 mod bindings {
     wit_bindgen::generate!({
@@ -68,6 +69,44 @@ fn load_all_snapshots_as_json(key: &str) -> Result<Vec<String>, String> {
     Ok(snapshots)
 }
 
+fn read_latest_snapshot(key: &str) -> Result<Vec<String>, String> {
+    let snapshot_dir = format!("state/{}/snapshots", key);
+
+    let entries = match fs::read_dir(&snapshot_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]), // No snapshots yet
+        Err(e) => return Err(format!("Failed to read snapshot dir: {}", e)),
+    };
+
+    let mut snapshot_paths: Vec<PathBuf> = Vec::new();
+
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("Failed to read snapshot entry: {}", e))?
+            .path();
+
+        if path.is_file() {
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                if filename.contains("snapshot.json") {
+                    snapshot_paths.push(path);
+                }
+            }
+        }
+    }
+
+    // Sort paths by filename lexicographically (timestamp order)
+    snapshot_paths.sort_by(|a, b| a.file_name().unwrap().cmp(b.file_name().unwrap()));
+
+    // Read only the latest snapshot if any exist
+    if let Some(latest_path) = snapshot_paths.last() {
+        let content = fs::read_to_string(latest_path)
+            .map_err(|e| format!("Failed to read file {:?}: {}", latest_path, e))?;
+        Ok(vec![content])
+    } else {
+        Ok(vec![])
+    }
+}
+
 impl Guest for MyStorage {
     fn save_state_segment(
         key: String,
@@ -115,7 +154,10 @@ impl Guest for MyStorage {
     }
 
     fn load_state_and_changes(key: String) -> Result<(Vec<String>, Vec<String>), String> {
-        let state_snapshots = load_all_snapshots_as_json(&key)?;
+        // Maybe need to thik about if this is valid, since a reloaded node will only
+        // have latest snapshot, which only containts N + changes amount of state
+        // should be totally fine
+        let state_snapshots = read_latest_snapshot(&key)?;
         let state_changes = load_changes_as_json(&key)?;
         Ok((state_snapshots, state_changes))
     }
@@ -133,7 +175,6 @@ impl Guest for MyStorage {
 
         file.write_all(state_json.as_bytes())
             .map_err(|e| format!("Failed to write to '{}': {}", path, e))?;
-
         Ok(())
     }
 
