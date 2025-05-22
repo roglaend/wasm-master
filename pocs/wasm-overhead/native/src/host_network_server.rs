@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+#![allow(warnings)]
+
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
 
 use crate::serializer::{MySerializer, Serializer};
 

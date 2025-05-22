@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(warnings)]
+
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;

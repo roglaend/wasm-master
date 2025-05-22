@@ -36,8 +36,8 @@ pub async fn run_cluster(
     let mut tasks = Vec::new();
     for node in cfg.cluster_nodes.iter().cloned() {
         let engine = engine.clone();
-        let all_nodes: Vec<_> = cfg
-            .all_nodes
+        let other_active_nodes: Vec<_> = cfg
+            .active_nodes
             .clone()
             .into_iter()
             .filter(|n| n.node_id != node.node_id)
@@ -50,7 +50,7 @@ pub async fn run_cluster(
             let paxos = PaxosWasmtime::new(
                 &engine,
                 node.clone(),
-                all_nodes,
+                other_active_nodes,
                 is_leader,
                 run_config.clone(),
                 log_level,

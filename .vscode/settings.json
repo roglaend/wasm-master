@@ -10,6 +10,7 @@
         "datagrams",
         "Deque",
         "idempotently",
+        "nonblocking",
         "oneshot",
         "pocs",
         "pollable",

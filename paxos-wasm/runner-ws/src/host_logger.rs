@@ -8,6 +8,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::bindings::paxos::default::logger::Level;
+use crate::bindings::paxos::default::paxos_types::PaxosRole;
 
 pub(crate) fn init_tracing_with(level: Level) {
     let level_str = match level {
@@ -27,14 +28,14 @@ pub(crate) fn init_tracing_with(level: Level) {
 pub struct HostNode {
     pub node_id: u64,
     pub address: String,
-    pub role: u64,
+    pub role: PaxosRole,
 }
 
 pub struct HostLogger {
     pub node: HostNode,
     pub node_file: Mutex<std::fs::File>,
-    pub log_entries: Mutex<Vec<(u64, String)>>, // (offset, message)
-    pub next_offset: AtomicU64,
+    pub _log_entries: Mutex<Vec<(u64, String)>>, // (offset, message)
+    pub _next_offset: AtomicU64,
     pub log_level: LevelFilter,
 }
 
@@ -75,16 +76,16 @@ impl HostLogger {
         HostLogger {
             node,
             node_file: Mutex::new(node_file),
-            log_entries: Mutex::new(Vec::new()),
-            next_offset: AtomicU64::new(0),
+            _log_entries: Mutex::new(Vec::new()),
+            _next_offset: AtomicU64::new(0),
             log_level,
         }
     }
 
     /// Append a log entry to the in-memory log and return its offset.
-    fn append_log(&self, msg: String) -> u64 {
-        let offset = self.next_offset.fetch_add(1, Ordering::SeqCst);
-        self.log_entries.lock().unwrap().push((offset, msg));
+    fn _append_log(&self, msg: String) -> u64 {
+        let offset = self._next_offset.fetch_add(1, Ordering::SeqCst);
+        self._log_entries.lock().unwrap().push((offset, msg));
         offset
     }
 
@@ -141,6 +142,6 @@ impl HostLogger {
             let _ = nf.write_all(file_msg.as_bytes());
         }
 
-        let _ = self.append_log(msg); // TODO: Useful?
+        // let _ = self.append_log(msg); // TODO: Useful?
     }
 }

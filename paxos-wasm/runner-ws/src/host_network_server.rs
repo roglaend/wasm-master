@@ -1,131 +1,4 @@
-// use crate::bindings::paxos::default::network_types::NetworkMessage;
-// use crate::serializer::{MySerializer, Serializer};
-// use std::sync::{Arc, Mutex};
-// use tokio::io::AsyncReadExt;
-// use tokio::net::TcpListener;
-// use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-
-// pub struct NativeTcpServer {
-//     sender: UnboundedSender<NetworkMessage>,
-//     receiver: Arc<Mutex<UnboundedReceiver<NetworkMessage>>>,
-//     serializer: MySerializer,
-// }
-
-// impl NativeTcpServer {
-//     pub fn new() -> Self {
-//         let (sender, receiver) = unbounded_channel();
-//         Self {
-//             sender,
-//             receiver: Arc::new(Mutex::new(receiver)),
-//             serializer: MySerializer,
-//         }
-//     }
-
-//     /// Launches a dedicated thread with a Tokio runtime for the listener.
-//     pub fn setup_listener(&mut self, bind_addr: &str) {
-//         let addr = bind_addr.to_string();
-//         let serializer = self.serializer.clone();
-//         let sender = self.sender.clone();
-
-//         std::thread::spawn(move || {
-//             let rt = tokio::runtime::Builder::new_multi_thread()
-//                 .worker_threads(2)
-//                 .enable_all()
-//                 .build()
-//                 .expect("Failed to build Tokio runtime");
-
-//             rt.block_on(async move {
-//                 let listener = TcpListener::bind(&addr)
-//                     .await
-//                     .expect("Failed to bind listener");
-//                 println!("[Server] Listening on {}", addr);
-
-//                 loop {
-//                     match listener.accept().await {
-//                         Ok((mut stream, _)) => {
-//                             let serializer = serializer.clone();
-//                             let sender = sender.clone();
-
-//                             tokio::spawn(async move {
-//                                 let mut buf = vec![0u8; 4096];
-//                                 let mut buffer = Vec::new();
-
-//                                 loop {
-//                                     match stream.read(&mut buf).await {
-//                                         Ok(0) => {
-//                                             println!("[Server] Connection closed");
-//                                             break;
-//                                         }
-//                                         Ok(n) => {
-//                                             buffer.extend_from_slice(&buf[..n]);
-//                                             let mut offset = 0;
-
-//                                             while buffer.len() >= offset + 4 {
-//                                                 let len = u32::from_be_bytes(
-//                                                     buffer[offset..offset + 4].try_into().unwrap(),
-//                                                 )
-//                                                     as usize;
-
-//                                                 if buffer.len() < offset + 4 + len {
-//                                                     break;
-//                                                 }
-
-//                                                 let mut frame = (len as u32).to_be_bytes().to_vec();
-//                                                 frame.extend_from_slice(
-//                                                     &buffer[offset + 4..offset + 4 + len],
-//                                                 );
-//                                                 offset += 4 + len;
-
-//                                                 match serializer.deserialize(frame) {
-//                                                     Ok(msg) => {
-//                                                         let _ = sender.send(msg);
-//                                                     }
-//                                                     Err(e) => {
-//                                                         eprintln!(
-//                                                             "[Server] Deserialize error: {:?}",
-//                                                             e
-//                                                         );
-//                                                     }
-//                                                 }
-//                                             }
-
-//                                             if offset > 0 {
-//                                                 buffer.drain(0..offset);
-//                                             }
-//                                         }
-//                                         Err(e) => {
-//                                             eprintln!("[Server] Read error: {}", e);
-//                                             break;
-//                                         }
-//                                     }
-//                                 }
-//                             });
-//                         }
-//                         Err(e) => {
-//                             eprintln!("[Server] Accept error: {}", e);
-//                         }
-//                     }
-//                 }
-//             });
-//         });
-//     }
-
-//     /// Drains all received messages from the queue.
-//     pub fn get_messages(&self) -> Vec<NetworkMessage> {
-//         let mut rx = self.receiver.lock().unwrap();
-//         let mut out = Vec::new();
-
-//         while let Ok(msg) = rx.try_recv() {
-//             out.push(msg);
-//         }
-
-//         out
-//     }
-
-//     pub fn get_message(&self) -> Option<NetworkMessage> {
-//         self.get_messages().into_iter().next()
-//     }
-// }
+use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
@@ -134,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::bindings::paxos::default::network_types::NetworkMessage;
-use crate::serializer::{MySerializer, Serializer};
+use crate::host_serializer::{HostSerializer, MyHostSerializer};
 
 pub struct NativeTcpServer {
     messages: Arc<Mutex<VecDeque<NetworkMessage>>>,
@@ -160,12 +33,11 @@ impl NativeTcpServer {
             let mut next_id = 1u64;
             let mut conns: HashMap<u64, TcpStream> = HashMap::new();
             let mut buffers: HashMap<u64, Vec<u8>> = HashMap::new();
-            let serializer = MySerializer;
 
             loop {
                 // Accept new connections
                 match listener.accept() {
-                    Ok((mut stream, _addr)) => {
+                    Ok((stream, _addr)) => {
                         stream.set_nonblocking(true).unwrap();
                         let id = next_id;
                         next_id += 1;
@@ -206,7 +78,7 @@ impl NativeTcpServer {
                                 frame.extend_from_slice(&b[offset + 4..offset + 4 + len]);
                                 offset += 4 + len;
 
-                                if let Ok(msg) = serializer.deserialize(frame) {
+                                if let Ok(msg) = MyHostSerializer::deserialize(frame) {
                                     messages.lock().unwrap().push_back(msg);
                                 } else {
                                     eprintln!("[Server] Failed to deserialize message from {}", id);
@@ -235,9 +107,10 @@ impl NativeTcpServer {
         });
     }
 
-    pub fn get_messages(&self) -> Vec<NetworkMessage> {
+    pub fn get_messages(&self, max: u64) -> Vec<NetworkMessage> {
         let mut queue = self.messages.lock().unwrap();
-        queue.drain(..).collect()
+        let take = min(max as usize, queue.len());
+        queue.drain(..take).collect()
     }
 
     pub fn get_message(&self) -> Option<NetworkMessage> {

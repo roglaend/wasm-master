@@ -1,23 +1,23 @@
 use crate::bindings::paxos::default::network_types::{
-    Benchmark, Heartbeat, MessagePayload, NetworkMessage,
+    Heartbeat, MessagePayload, NetworkMessage,
 };
 use crate::bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, Value,
 };
 
-pub trait Serializer {
-    fn serialize(&self, message: NetworkMessage) -> Vec<u8>;
-    fn deserialize(&self, bytes: Vec<u8>) -> Result<NetworkMessage, String>;
+pub trait HostSerializer {
+    fn serialize(message: NetworkMessage) -> Vec<u8>;
+    fn deserialize(bytes: Vec<u8>) -> Result<NetworkMessage, String>;
 }
 
 /// Native Rust implementation of the Serializer
 
 #[derive(Clone)]
-pub struct MySerializer;
+pub struct MyHostSerializer;
 
-impl Serializer for MySerializer {
-    fn serialize(&self, message: NetworkMessage) -> Vec<u8> {
+impl HostSerializer for MyHostSerializer {
+    fn serialize(message: NetworkMessage) -> Vec<u8> {
         let sender_str = serialize_node(&message.sender);
         let payload_str = serialize_message_payload(&message.payload);
         let formatted = format!("sender={}||payload={}", sender_str, payload_str);
@@ -30,7 +30,7 @@ impl Serializer for MySerializer {
         out
     }
 
-    fn deserialize(&self, serialized: Vec<u8>) -> Result<NetworkMessage, String> {
+    fn deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
         try_deserialize(serialized)
     }
 }

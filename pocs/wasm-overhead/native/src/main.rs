@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(warnings)]
+
 mod bindings;
 mod host_network_client;
 mod host_network_server;

@@ -6,7 +6,7 @@ mod run;
 
 pub mod host_network_client;
 pub mod host_network_server;
-pub mod serializer;
+pub mod host_serializer;
 
 use clap::Parser;
 use wasmtime::Engine;

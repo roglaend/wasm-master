@@ -140,6 +140,7 @@ impl MetricsHelper {
 struct MyRunner;
 struct MyRunnerResource {
     node: Node,
+    max_messages: u64,
     config: RunConfig,
 
     paxos: Arc<PaxosCoordinatorResource>,
@@ -163,7 +164,7 @@ impl MyRunnerResource {
             return;
         }
         // peek at any incoming requests
-        let requests = self.client_svr.get_requests(self.config.batch_size);
+        let requests = self.client_svr.get_requests(self.max_messages);
         if !requests.is_empty() {
             if self.metrics.global_start.borrow().is_none() {
                 *self.metrics.global_start.borrow_mut() = Some(Instant::now());
@@ -180,7 +181,7 @@ impl MyRunnerResource {
     }
 
     fn process_network(&self) {
-        for msg in self.network_svr.get_messages(self.config.batch_size) {
+        for msg in self.network_svr.get_messages(self.max_messages) {
             self.paxos.handle_message(&msg);
         }
     }
@@ -218,6 +219,9 @@ impl GuestRunnerResource for MyRunnerResource {
             config.clone(),
         ));
 
+        let num_nodes = nodes.len() as u64;
+        let max_messages = config.batch_size * num_nodes;
+
         let client_svr = Arc::new(ClientServerResource::new());
         {
             if is_leader {
@@ -243,8 +247,6 @@ impl GuestRunnerResource for MyRunnerResource {
             None
         };
 
-        sleep(Duration::from_secs(1));
-
         let metrics = MetricsHelper {
             stats_batch: 1000,
             batch_count: Cell::new(0),
@@ -257,6 +259,7 @@ impl GuestRunnerResource for MyRunnerResource {
 
         Self {
             node,
+            max_messages,
             config,
             paxos,
             client_svr,

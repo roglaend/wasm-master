@@ -7,5 +7,4 @@ wasmtime::component::bindgen! {{
         "paxos:default/network-server/network-server-resource": crate::paxos_wasm::NetworkServerResource,
         "paxos:default/network-client/network-client-resource": crate::paxos_wasm::NetworkClientResource,
     }
-    // TODO: Try async again later
 }}

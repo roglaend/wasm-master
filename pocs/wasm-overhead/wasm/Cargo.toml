@@ -3,18 +3,22 @@ edition = "2024"
 name = "wasm-overhead-wasm"
 version = "0.1.0"
 
+[[bin]]
+path = "src/main.rs"
+name = "wasm_overhead_wasm"
+
 [dependencies]
 futures = "0.3.31"
 futures-executor = "0.3.31"
-tokio = {version = "1.44.1", features = [
+tokio = { version = "1.44.1", features = [
   # All allowed tokio features
   "sync",
   "macros",
   "io-util",
   "rt",
   "time",
-]}
+] }
 wasi = "0.14.2"
 
-paxos-wasm-utils = {path = "../../../paxos-wasm/shared/utils"}
+paxos-wasm-utils = { path = "../../../paxos-wasm/shared/utils" }
 wit-bindgen = "0.41"

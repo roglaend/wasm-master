@@ -416,15 +416,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         acceptor.handle_message(&message)
                     }
                 }
-
-                MessagePayload::Executed(_) => {
-                    if self.node.role != PaxosRole::Coordinator {
-                        proposer.handle_message(&message);
-                    }
-                    //* Not needed by non-leader coordinators due to them having access to "adu" through their learners */
-                    ignore_msg
-                }
-
                 MessagePayload::Prepare(_) => acceptor.handle_message(&message),
                 MessagePayload::Accept(_) => acceptor.handle_message(&message),
 

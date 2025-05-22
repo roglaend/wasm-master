@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "/home/roglaend/MASTER-DISASTER/wasm-master/paxos-wasm/shared/wit",
+        path: "../../../paxos-wasm/shared/wit",
         world: "wasm-overhead-world",
     });
 }
@@ -17,6 +19,8 @@ use bindings::paxos::default::{network_client, network_server};
 use std::env;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const MAX_MESSAGES: u64 = 100;
 
 fn current_time_micros() -> u64 {
     SystemTime::now()
@@ -79,7 +83,7 @@ fn run_latency_test() {
             let start_wait = std::time::Instant::now();
             while start_wait.elapsed() < Duration::from_millis(50) {
                 if let Some(s) = server.as_mut() {
-                    let messages = s.get_messages();
+                    let messages = s.get_messages(MAX_MESSAGES);
                     for msg in messages {
                         match msg.payload {
                             MessagePayload::Benchmark(pay) => {
@@ -149,7 +153,7 @@ pub fn run_throughput_test() {
             sent += 1;
         }
 
-        let messages = server.as_mut().unwrap().get_messages();
+        let messages = server.as_mut().unwrap().get_messages(MAX_MESSAGES);
         for msg in messages {
             if let MessagePayload::Benchmark(_) = msg.payload {
                 received += 1;
@@ -163,7 +167,7 @@ pub fn run_throughput_test() {
     // Wait for all responses (or timeout)
     let drain_end = Instant::now() + Duration::from_millis(1000);
     while Instant::now() < drain_end && received < sent {
-        let messages = server.as_mut().unwrap().get_messages();
+        let messages = server.as_mut().unwrap().get_messages(MAX_MESSAGES);
         for msg in messages {
             if let MessagePayload::Benchmark(_) = msg.payload {
                 received += 1;
@@ -221,7 +225,7 @@ pub fn run_latency_rtt_isolated() {
         // Wait for the echo
         let timeout = std::time::Instant::now() + Duration::from_millis(RESPONSE_TIMEOUT_MS);
         loop {
-            let messages = server.as_mut().unwrap().get_messages();
+            let messages = server.as_mut().unwrap().get_messages(MAX_MESSAGES);
             if let Some(_) = messages
                 .into_iter()
                 .find(|m| matches!(m.payload, MessagePayload::Benchmark(_)))
@@ -251,10 +255,10 @@ pub fn run_latency_rtt_isolated() {
 }
 
 pub fn run_echo_responder() {
-    let mut server = network_server::NetworkServerResource::new();
+    let server = network_server::NetworkServerResource::new();
     server.setup_listener("127.0.0.1:9001"); // Responder listens here
 
-    let mut client = network_client::NetworkClientResource::new();
+    let client = network_client::NetworkClientResource::new();
 
     let target = Node {
         node_id: 0,
@@ -265,7 +269,7 @@ pub fn run_echo_responder() {
     println!("[Responder] Listening on 127.0.0.1:9001");
 
     loop {
-        let messages = server.get_messages();
+        let messages = server.get_messages(MAX_MESSAGES);
         for msg in messages {
             if let MessagePayload::Benchmark(benchmark_msg) = msg.payload {
                 // let _ = fib(35); // Simulate some work

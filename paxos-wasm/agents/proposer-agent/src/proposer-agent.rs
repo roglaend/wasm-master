@@ -56,7 +56,6 @@ pub struct MyProposerAgentResource {
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
     in_flight_accepted: RefCell<BTreeMap<Slot, HashMap<u64, Accepted>>>, //* Per slot accepted per sender */
     client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
-    adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>,
 }
@@ -449,7 +448,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
-            adu: Cell::new(0),
         }
     }
 
@@ -613,7 +611,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn collect_client_responses(&self) -> Vec<ClientResponse> {
         let mut out = Vec::new();
         let mut queue = self.client_responses.borrow_mut();
-        for _ in 0..self.config.executed_batch_size {
+        for _ in 0..self.config.batch_size {
             if let Some((_, resp)) = queue.pop_first() {
                 out.push(resp);
             } else {

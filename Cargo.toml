@@ -3,6 +3,7 @@ resolver = "3"
 
 default-members = [
   "paxos-rust",
+
   "paxos-wasm/core",
   "paxos-wasm/agents",
   "paxos-wasm/runners",
@@ -11,7 +12,8 @@ default-members = [
   "paxos-wasm/modular-ws",
   "paxos-wasm/modular-ws-client",
   "paxos-wasm/runner-ws",
-  "pocs/wasm-overhead/native",
+
+  "pocs",
 ]
 
 members = [
@@ -69,6 +71,7 @@ members = [
   "paxos-wasm/shared/grpc",
   "paxos-wasm/shared/proto",
 
+  "pocs",
   "pocs/tcp-server-polling-test",
   "pocs/tcp-server-polling-test/server",
   "pocs/tcp-server-polling-test/client",
