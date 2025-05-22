@@ -3,5 +3,8 @@ wasmtime::component::bindgen! {{
     world: "paxos-runner-world",
     additional_derives: [Clone],
     async: true,
-    // TODO: Try async again later
+    with: {
+        "paxos:default/network-server/network-server-resource": crate::paxos_wasm::NetworkServerResource,
+        "paxos:default/network-client/network-client-resource": crate::paxos_wasm::NetworkClientResource,
+    }
 }}

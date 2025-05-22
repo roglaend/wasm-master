@@ -2,120 +2,125 @@
 resolver = "3"
 
 default-members = [
-    "paxos-rust",
+  "paxos-rust",
 
-    "paxos-wasm/core",
-    "paxos-wasm/agents",
-    "paxos-wasm/runners",
-    # "paxos-wasm/composed-grpc",
-    # "paxos-wasm/modular-grpc",
-    "paxos-wasm/modular-ws",
-    "paxos-wasm/modular-ws-client",
-    "paxos-wasm/runner-ws",
+  "paxos-wasm/core",
+  "paxos-wasm/agents",
+  "paxos-wasm/runners",
+  # "paxos-wasm/composed-grpc",  
+  # "paxos-wasm/modular-grpc",
+  "paxos-wasm/modular-ws",
+  "paxos-wasm/modular-ws-client",
+  "paxos-wasm/runner-ws",
+
+  "pocs",
 ]
 
 members = [
-    "paxos-rust",
+  "paxos-rust",
 
-    # "paxos-wasm",
+  # "paxos-wasm",
 
-    "paxos-wasm/core",
-    "paxos-wasm/core/proposer",
-    "paxos-wasm/core/acceptor",
-    "paxos-wasm/core/learner",
-    "paxos-wasm/core/kv-store",
-    "paxos-wasm/core/storage",
+  "paxos-wasm/core",
+  "paxos-wasm/core/proposer",
+  "paxos-wasm/core/acceptor",
+  "paxos-wasm/core/learner",
+  "paxos-wasm/core/kv-store",
+  "paxos-wasm/core/storage",
 
-    "paxos-wasm/core/leader-detector",
-    "paxos-wasm/core/failure-detector",
+  "paxos-wasm/core/leader-detector",
+  "paxos-wasm/core/failure-detector",
 
-    "paxos-wasm/agents",
-    "paxos-wasm/agents/proposer-agent",
-    "paxos-wasm/agents/acceptor-agent",
-    "paxos-wasm/agents/learner-agent",
-    "paxos-wasm/agents/kv-store-agent",
+  "paxos-wasm/agents",
+  "paxos-wasm/agents/proposer-agent",
+  "paxos-wasm/agents/acceptor-agent",
+  "paxos-wasm/agents/learner-agent",
+  "paxos-wasm/agents/kv-store-agent",
 
-    "paxos-wasm/runners",
-    "paxos-wasm/runners/paxos-coordinator",
-    "paxos-wasm/runners/runner",
+  "paxos-wasm/runners",
+  "paxos-wasm/runners/paxos-coordinator",
+  "paxos-wasm/runners/runner",
 
-    "paxos-wasm/composed-grpc",
-    "paxos-wasm/composed-grpc/client",
-    "paxos-wasm/composed-grpc/client-cli",
-    "paxos-wasm/composed-grpc/command",
+  "paxos-wasm/composed-grpc",
+  "paxos-wasm/composed-grpc/client",
+  "paxos-wasm/composed-grpc/client-cli",
+  "paxos-wasm/composed-grpc/command",
 
-    "paxos-wasm/network-ws",
-    "paxos-wasm/network-ws/serializer",
-    "paxos-wasm/network-ws/network-server",
-    "paxos-wasm/network-ws/client-server",
-    "paxos-wasm/network-ws/tcp-client",
-    # "paxos-wasm/network-ws/udp-client",
+  "paxos-wasm/network-ws",
+  "paxos-wasm/network-ws/serializer",
+  "paxos-wasm/network-ws/network-server",
+  "paxos-wasm/network-ws/client-server",
+  "paxos-wasm/network-ws/tcp-client",
+  # "paxos-wasm/network-ws/udp-client",
 
-    "paxos-wasm/runner-ws",
+  "paxos-wasm/runner-ws",
 
-    # TODO: Enable when fixed
-    # "paxos-wasm/modular-grpc",
-    # "paxos-wasm/modular-grpc/client",
+  # TODO: Enable when fixed
+  # "paxos-wasm/modular-grpc",
+  # "paxos-wasm/modular-grpc/client",
 
-    "paxos-wasm/modular-ws",
-    "paxos-wasm/modular-ws/client",
-    "paxos-wasm/modular-ws/tcp-server",
-    # "paxos-wasm/modular-ws/udp-server",
+  "paxos-wasm/modular-ws",
+  "paxos-wasm/modular-ws/client",
+  "paxos-wasm/modular-ws/tcp-server",
+  # "paxos-wasm/modular-ws/udp-server",
 
-    "paxos-wasm/modular-ws-client",
-    "paxos-wasm/modular-ws-client/paxos-ws-client",
+  "paxos-wasm/modular-ws-client",
+  "paxos-wasm/modular-ws-client/paxos-ws-client",
 
-    "paxos-wasm/shared/utils",
-    "paxos-wasm/shared/grpc",
-    "paxos-wasm/shared/proto",
+  "paxos-wasm/shared/utils",
+  "paxos-wasm/shared/grpc",
+  "paxos-wasm/shared/proto",
 
-    "pocs/tcp-server-polling-test",
-    "pocs/tcp-server-polling-test/server",
-    "pocs/tcp-server-polling-test/client",
-    "pocs/tcp-server-polling-test/handler",
-
-
-    # ---------------------------------- #
-
-
-    # "pocs/network-component/tcp-client",
-    # "pocs/network-component/tcp-server",
+  "pocs",
+  "pocs/tcp-server-polling-test",
+  "pocs/tcp-server-polling-test/server",
+  "pocs/tcp-server-polling-test/client",
+  "pocs/tcp-server-polling-test/handler",
+  "pocs/wasm-overhead/native",
+  "pocs/wasm-overhead/wasm",
 
 
-    # ---------------------------------- #
+  # ---------------------------------- #
 
 
-    # "archive/shared/utils",
-    # "archive/paxos-v0.0.1/proposer",
-    # "archive/paxos-v0.0.1/acceptor",
-    # "archive/paxos-v0.0.1/command",
+  # "pocs/network-component/tcp-client",
+  # "pocs/network-component/tcp-server",
 
-    # "archive/paxos-v0.0.2/proposer", Doesn't compile
-    # "archive/paxos-v0.0.2/acceptor",
-    # "archive/paxos-v0.0.2/command",
-    # "archive/paxos-v0.0.2/grpc",
 
-    # "archive/paxos-v0.0.3/proposer",
-    # "archive/paxos-v0.0.3/acceptor",
-    # "archive/paxos-v0.0.3/grpc",
+  # ---------------------------------- #
 
-    # "archive/simple-paxos-wasm",
-    # "archive/simple-paxos-wasm/proposer",
-    # "archive/simple-paxos-wasm/acceptor",
-    # "archive/simple-paxos-wasm/learner",
 
-    # "archive/wrpc_v1",
-    # "archive/wrpc_v1/proposer-wrpc",
-    # "archive/wrpc_v1/acceptor-wrpc",
-    # "archive/wrpc_v1/learner-wrpc",
-    # "archive/wrpc_v1/command-wrpc",
+  # "archive/shared/utils",
+  # "archive/paxos-v0.0.1/proposer",
+  # "archive/paxos-v0.0.1/acceptor",
+  # "archive/paxos-v0.0.1/command",
 
-    # "archive/wrpc_v2",
-    # "archive/wrpc_v2/command-wrpc",
-    # "archive/wrpc_v2/proposer-wrpc", Doesn't compile
-    # "archive/wrpc_v2/acceptor-wrpc",
-    # "archive/wrpc_v2/learner-wrpc",
-    # "archive/wrpc_v2/paxos-wrpc",
+  # "archive/paxos-v0.0.2/proposer", Doesn't compile
+  # "archive/paxos-v0.0.2/acceptor",
+  # "archive/paxos-v0.0.2/command",
+  # "archive/paxos-v0.0.2/grpc",
 
-    # "wasm-examples.../"
+  # "archive/paxos-v0.0.3/proposer",
+  # "archive/paxos-v0.0.3/acceptor",
+  # "archive/paxos-v0.0.3/grpc",
+
+  # "archive/simple-paxos-wasm",
+  # "archive/simple-paxos-wasm/proposer",
+  # "archive/simple-paxos-wasm/acceptor",
+  # "archive/simple-paxos-wasm/learner",
+
+  # "archive/wrpc_v1",
+  # "archive/wrpc_v1/proposer-wrpc",
+  # "archive/wrpc_v1/acceptor-wrpc",
+  # "archive/wrpc_v1/learner-wrpc",
+  # "archive/wrpc_v1/command-wrpc",
+
+  # "archive/wrpc_v2",
+  # "archive/wrpc_v2/command-wrpc",
+  # "archive/wrpc_v2/proposer-wrpc", Doesn't compile
+  # "archive/wrpc_v2/acceptor-wrpc",
+  # "archive/wrpc_v2/learner-wrpc",
+  # "archive/wrpc_v2/paxos-wrpc",
+
+  # "wasm-examples.../"
 ]

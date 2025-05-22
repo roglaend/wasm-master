@@ -1,0 +1,12 @@
+[package]
+name = "pocs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+
+[dependencies]
+
+[build-dependencies]
+paxos-wasm-utils = { path = "../paxos-wasm/shared/utils" }
+network-ws = { path = "../paxos-wasm/network-ws" }

@@ -56,7 +56,6 @@ pub struct MyProposerAgentResource {
     promises: RefCell<BTreeMap<Ballot, HashMap<u64, Promise>>>,
     in_flight_accepted: RefCell<BTreeMap<Slot, HashMap<u64, Accepted>>>, //* Per slot accepted per sender */
     client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
-    adu: Cell<u64>,
 
     last_prepare_start: Cell<Option<Instant>>,
 }
@@ -449,7 +448,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
-            adu: Cell::new(0),
         }
     }
 
