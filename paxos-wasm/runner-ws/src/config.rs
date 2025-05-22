@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 use yaml_rust::YamlLoader;
 
 use crate::bindings::paxos::default::{
@@ -8,13 +12,13 @@ use crate::bindings::paxos::default::{
 
 #[derive(Clone)]
 pub struct Config {
-    /// all nodes from the config
-    pub all_nodes: Vec<Node>,
+    /// every node that appears in *any* cluster
+    pub active_nodes: Vec<Node>,
 
     /// the subset that belongs to this cluster
     pub cluster_nodes: Vec<Node>,
 
-    /// highest node_id across all nodes
+    /// highest node_id across all *active* nodes
     pub leader_id: u64,
 
     pub run_config: RunConfig,
@@ -59,13 +63,7 @@ impl Config {
             })
             .collect();
 
-        let leader_id = all_nodes
-            .iter()
-            .map(|n| n.node_id)
-            .max()
-            .expect("must have at least one node");
-
-        // parse clusters → map<u64, list<u64>>
+        // parse clusters → map<cluster_id, Vec<node_id>>
         let mut clusters = HashMap::new();
         for (k, y) in doc["clusters"].as_hash().unwrap().iter() {
             let cluster_id = k.as_i64().unwrap() as u64;
@@ -78,16 +76,35 @@ impl Config {
             clusters.insert(cluster_id, node_ids);
         }
 
-        // look up this cluster
-        let node_ids = clusters
+        // Build the set of *all* active node IDs (anyone in any cluster)
+        let mut active_id_set = HashSet::new();
+        for ids in clusters.values() {
+            active_id_set.extend(ids.iter().copied());
+        }
+        // Now filter your full node list by that set
+        let active_nodes: Vec<_> = all_nodes
+            .iter()
+            .filter(|n| active_id_set.contains(&n.node_id))
+            .cloned()
+            .collect();
+
+        // Pick the leader among *active_nodes*
+        let leader_id = active_nodes
+            .iter()
+            .map(|n| n.node_id)
+            .max()
+            .expect("must have at least one active node");
+
+        // Now lookup *this* cluster’s node IDs
+        let this_cluster_ids = clusters
             .get(&cluster_id)
             .ok_or_else(|| anyhow::anyhow!("no cluster {} in config", cluster_id))?;
 
-        // filter the global node list
-        let cluster_nodes: Vec<_> = all_nodes
-            .clone()
-            .into_iter()
-            .filter(|n| node_ids.contains(&n.node_id))
+        // And filter active_nodes again for just *this* cluster
+        let cluster_nodes: Vec<_> = active_nodes
+            .iter()
+            .filter(|n| this_cluster_ids.contains(&n.node_id))
+            .cloned()
             .collect();
 
         // parse run_config block
@@ -112,7 +129,7 @@ impl Config {
         };
 
         Ok(Config {
-            all_nodes,
+            active_nodes,
             cluster_nodes,
             leader_id,
             run_config,

@@ -1,0 +1,12 @@
+[package]
+edition = "2024"
+name = "wasm-overhead-native"
+version = "0.1.0"
+
+[dependencies]
+anyhow = "1.0.97"
+
+tokio = {version = "1.44.1", features = ["macros", "rt"]}
+
+wasmtime = "31"
+wasmtime-wasi = "31"

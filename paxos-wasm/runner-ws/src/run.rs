@@ -63,18 +63,14 @@ pub async fn run_cluster(
         let run_config = cfg.run_config.clone();
         let log_level = cfg.log_level;
 
-        // All nodes except self
-        let all_nodes: Vec<_> = cfg
-            .all_nodes
+        let other_active_nodes: Vec<_> = cfg
+            .active_nodes
             .clone()
             .into_iter()
             .filter(|n| n.node_id != node.node_id)
             .collect();
 
         tasks.push(tokio::spawn(async move {
-            use std::time::Duration;
-            use tokio::{sync::mpsc, time::sleep};
-
             // Channel to transfer prebuilt Paxos instances
             let (tx, mut rx) = mpsc::channel::<PaxosWasmtime>(1);
 
@@ -126,7 +122,7 @@ pub async fn run_cluster(
 
                 let run_result = tokio::spawn({
                     let node = node.clone();
-                    let all_nodes = all_nodes.clone();
+                    let all_nodes = other_active_nodes.clone();
                     let run_config = run_config.clone();
                     println!("[Host] Node {}: Starting paxos instance.", node.node_id);
                     elapsed_since_start();

@@ -265,7 +265,13 @@ interface network-types {
         // learn-ack(learn),                // A learn ack. // TODO: Use or not to use, with custom payload? 
         heartbeat(heartbeat),               // Heartbeat.
         executed(executed),                 // Contains list of executed values and adu.
-        retry-learn(slot),                  // Retry learn for missing slot
+        retry-learn(slot),              // Retry learn for missing slot
+        benchmark(benchmark),           // Benchmark message
+    }
+
+    record benchmark {
+        send-timestamp: u64,
+        payload: string,
     }
 
     // Timestamp is not used either, we really only need a ping message payload

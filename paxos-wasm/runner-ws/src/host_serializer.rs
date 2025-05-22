@@ -1,25 +1,40 @@
-pub mod bindings {
-    wit_bindgen::generate!({
-        path: "../../shared/wit",
-        world: "serializer-world",
-        additional_derives: [PartialEq, Clone],
-    });
-}
-
-bindings::export!(MySerializer with_types_in bindings);
-
-use bindings::exports::paxos::default::serializer::Guest;
-// use bindings::paxos::default::logger;
-use bindings::paxos::default::network_types::{
-    Benchmark, Heartbeat, MessagePayload, NetworkMessage,
+use crate::bindings::paxos::default::network_types::{
+    Heartbeat, MessagePayload, NetworkMessage,
 };
-use bindings::paxos::default::paxos_types::{
+use crate::bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, Value,
 };
 
-/// Helper function that attempts to deserialize and returns a Result.
-/// If any step fails, an error string is returned.
+pub trait HostSerializer {
+    fn serialize(message: NetworkMessage) -> Vec<u8>;
+    fn deserialize(bytes: Vec<u8>) -> Result<NetworkMessage, String>;
+}
+
+/// Native Rust implementation of the Serializer
+
+#[derive(Clone)]
+pub struct MyHostSerializer;
+
+impl HostSerializer for MyHostSerializer {
+    fn serialize(message: NetworkMessage) -> Vec<u8> {
+        let sender_str = serialize_node(&message.sender);
+        let payload_str = serialize_message_payload(&message.payload);
+        let formatted = format!("sender={}||payload={}", sender_str, payload_str);
+        let payload_bytes = formatted.into_bytes();
+
+        let len: u32 = payload_bytes.len().try_into().expect("Message too long");
+        let mut out = Vec::with_capacity(4 + payload_bytes.len());
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&payload_bytes);
+        out
+    }
+
+    fn deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
+        try_deserialize(serialized)
+    }
+}
+
 fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     if serialized.len() < 4 {
         return Err("Serialized message too short to contain length prefix".to_string());
@@ -66,36 +81,6 @@ fn try_deserialize(serialized: Vec<u8>) -> Result<NetworkMessage, String> {
     Ok(NetworkMessage { sender, payload })
 }
 
-pub struct MySerializer;
-
-impl Guest for MySerializer {
-    fn serialize(message: NetworkMessage) -> Vec<u8> {
-        let sender_str = serialize_node(&message.sender);
-        let payload_str = serialize_message_payload(&message.payload);
-        let formatted = format!("sender={}||payload={}", sender_str, payload_str);
-        let payload_bytes = formatted.into_bytes();
-
-        // Compute length as a u32.
-        let len: u32 = payload_bytes.len().try_into().expect("Message too long");
-
-        // Allocate space: 4 bytes for the length prefix + the actual payload.
-        let mut out = Vec::with_capacity(4 + payload_bytes.len());
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(&payload_bytes);
-        out
-    }
-
-    fn deserialize(serialized: Vec<u8>) -> NetworkMessage {
-        match try_deserialize(serialized) {
-            Ok(msg) => msg,
-            Err(e) => {
-                panic!("[Serializer] Deserialization error: {}", e);
-            }
-        }
-    }
-}
-
-/// Serialize a Node
 fn serialize_node(n: &Node) -> String {
     let role_str = match n.role {
         PaxosRole::Proposer => "proposer",
@@ -258,7 +243,8 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             )
         }
         MessagePayload::Heartbeat(h) => {
-            format!("heartbeat,timestamp:{}", h.timestamp)
+            let sender_str = serialize_node(&h.sender);
+            format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
         }
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
@@ -562,16 +548,22 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
         }
 
         "heartbeat" => {
+            let mut sender_str = None;
             let mut timestamp = None;
             for p in &parts[1..] {
                 let mut kv = p.splitn(2, ':');
                 match (kv.next(), kv.next()) {
+                    (Some("sender"), Some(v)) => sender_str = Some(v),
                     (Some("timestamp"), Some(v)) => timestamp = v.parse().ok(),
                     _ => {}
                 }
             }
-            if let Some(ts) = timestamp {
-                Ok(MessagePayload::Heartbeat(Heartbeat { timestamp: ts }))
+            if let (Some(s), Some(ts)) = (sender_str, timestamp) {
+                let sender = deserialize_node(s)?;
+                Ok(MessagePayload::Heartbeat(Heartbeat {
+                    sender,
+                    timestamp: ts,
+                }))
             } else {
                 Err("bad heartbeat")
             }
@@ -689,10 +681,12 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             }
 
             if let (Some(ts), Some(p)) = (send_timestamp, payload_str) {
-                Ok(MessagePayload::Benchmark(Benchmark {
-                    send_timestamp: ts,
-                    payload: p,
-                }))
+                Ok(MessagePayload::Benchmark(
+                    crate::bindings::paxos::default::network_types::Benchmark {
+                        send_timestamp: ts,
+                        payload: p,
+                    },
+                ))
             } else {
                 Err("bad benchmark message")
             }

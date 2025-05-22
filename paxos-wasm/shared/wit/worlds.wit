@@ -88,6 +88,7 @@ world paxos-coordinator-world {
 world paxos-runner-world {
     import client-server;
     import network-server;
+    import network-client;
     import paxos-coordinator;
     
     import logger;
@@ -98,7 +99,7 @@ world paxos-runner-world {
 // Network
 
 world serializer-world {
-    // import logger;
+    import logger;
     
     export serializer;
 }
@@ -123,7 +124,7 @@ world paxos-ws-world {
 
 world paxos-client-world {
     import serializer;
-    // import logger;
+    import logger;
     export paxos-client;
 }
 
@@ -141,4 +142,9 @@ world client-server-world {
 
 world storage-world {
     export storage;
+}
+
+world wasm-overhead-world {
+    import network-client;
+    import network-server;
 }

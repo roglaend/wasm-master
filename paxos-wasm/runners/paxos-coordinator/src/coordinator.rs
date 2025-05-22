@@ -198,12 +198,12 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     // Ticker called from runner
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
         match &self.agents {
-            Agents::Proposer(prop) => {
-                return prop.run_paxos_loop();
+            Agents::Proposer(proposer) => {
+                return proposer.run_paxos_loop();
             }
 
-            Agents::Acceptor(acc) => {
-                // acc.run_paxos_loop(); // TODO: ?
+            Agents::Acceptor(_acceptor) => {
+                // acceptor.run_paxos_loop(); // TODO: ?
                 return None;
             }
 
@@ -214,8 +214,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
             Agents::Coordinator {
                 proposer,
-                acceptor,
-                learner,
+                acceptor: _,
+                learner: _,
             } => {
                 self.maybe_retry_learn();
                 self.drive_learner();
@@ -381,7 +381,13 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     }
                 }
                 MessagePayload::Executed(_) => proposer.handle_message(&message),
-                _ => ignore_msg,
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Proposer: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
             },
 
             Agents::Acceptor(acceptor) => match message.payload {
@@ -394,12 +400,24 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         ignore_msg
                     }
                 }
-                _ => ignore_msg,
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Acceptor: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
             },
 
             Agents::Learner(learner) => match message.payload {
                 MessagePayload::Learn(_) => learner.handle_message(&message),
-                _ => ignore_msg,
+                _ => {
+                    logger::log_warn(&format!(
+                        "[Coordinator] Received irrelevant message type for Learner: {:?}",
+                        message.payload
+                    ));
+                    ignore_msg
+                }
             },
 
             Agents::Coordinator {
@@ -417,15 +435,6 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         acceptor.handle_message(&message)
                     }
                 }
-
-                MessagePayload::Executed(_) => {
-                    if self.node.role != PaxosRole::Coordinator {
-                        proposer.handle_message(&message);
-                    }
-                    //* Not needed by non-leader coordinators due to them having access to "adu" through their learners */
-                    ignore_msg
-                }
-
                 MessagePayload::Prepare(_) => acceptor.handle_message(&message),
                 MessagePayload::Accept(_) => acceptor.handle_message(&message),
 
@@ -443,12 +452,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         payload: MessagePayload::Heartbeat(payload),
                     }
                 }
-                other_msg @ MessagePayload::ClientRequest(_)
-                | other_msg @ MessagePayload::ClientResponse(_)
-                | other_msg @ MessagePayload::Ignore => {
+                _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type: {:?}",
-                        other_msg
+                        message.payload
                     ));
                     ignore_msg
                 }
