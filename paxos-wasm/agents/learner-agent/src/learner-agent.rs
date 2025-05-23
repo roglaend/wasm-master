@@ -23,7 +23,8 @@ use bindings::paxos::default::learner::{LearnResult, LearnerResource};
 use bindings::paxos::default::learner_types::{LearnerState, RetryLearnResult};
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    CmdResult, ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RunConfig, Slot, Value,
+    CmdResult, ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RetryLearns, RunConfig,
+    Slot, Value,
 };
 use bindings::paxos::default::{logger, network_client};
 
@@ -73,6 +74,40 @@ impl MyLearnerAgentResource {
             None
         } else {
             Some(msg)
+        }
+    }
+
+    fn handle_evaluate_retry(&self) {
+        match self.evaluate_retry() {
+            RetryLearnResult::NoGap => {
+                // nothing to do
+            }
+            RetryLearnResult::Skip(slot) => {
+                logger::log_debug(&format!(
+                    "[Learner Agent] Skipping retry of learns with current adu {}",
+                    slot
+                ));
+            }
+            RetryLearnResult::Retry(slots) => {
+                let retry_learns = RetryLearns {
+                    slots: slots.clone(),
+                };
+                let retry_msg = NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::RetryLearns(retry_learns),
+                };
+                logger::log_warn(&format!(
+                    "[Learner Agent] Broadcasting RETRY LEARN for {} slots",
+                    slots.len()
+                ));
+                if self.config.acceptors_send_learns {
+                    self.network_client
+                        .send_message_forget(&self.acceptors, &retry_msg);
+                } else {
+                    self.network_client
+                        .send_message_forget(&self.proposers, &retry_msg);
+                }
+            }
         }
     }
 }
@@ -220,76 +255,59 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         }
     }
 
-    /// Decide whether we need to retry learning `next`:
-    /// - NoGap: neither the gap nor timeout threshold is met
-    /// - Skip(next): threshold met but last retry for `next` was too recent
-    /// - Retry(next): threshold met and it’s been long enough since last retry
     fn evaluate_retry(&self) -> RetryLearnResult {
         let now = Instant::now();
-        let elapsed = now.duration_since(*self.last_learn_time.borrow());
-        let timeout = Duration::from_millis(self.config.retry_interval_ms);
-
-        if elapsed < timeout {
-            return RetryLearnResult::NoGap;
-        }
+        let global_elapsed = now.duration_since(*self.last_learn_time.borrow());
+        let global_timeout = Duration::from_millis(self.config.retry_interval_ms);
 
         let highest = self.learner.get_highest_learned();
         let adu = self.learner.get_adu();
         let gap = highest.saturating_sub(adu);
-        let next = adu.saturating_add(1);
 
-        if gap < self.config.learn_max_gap {
+        // If the gap is “small” and we haven’t even hit the global timeout yet, do nothing.
+        if gap < self.config.learn_max_gap && global_elapsed < global_timeout {
             return RetryLearnResult::NoGap;
         }
 
-        // We should attempt a retry, but check whether we retried the same slot too recently
+        // Otherwise, scan missing slots [adu+1 ..= highest], but stop after batch_size.
+        let mut to_retry = Vec::new();
         let mut retries = self.retries.borrow_mut();
-        let just_retried = retries
-            .get(&next)
-            .map(|&last| now.duration_since(last) < timeout)
-            .unwrap_or(false);
+        let batch_cap = self.config.message_batch_size as usize;
 
-        if just_retried {
-            RetryLearnResult::Skip(next)
+        for slot in (adu + 1)..=highest {
+            if to_retry.len() >= batch_cap {
+                break;
+            }
+            let slot_elapsed = retries
+                .get(&slot)
+                .map(|t| now.duration_since(*t))
+                // if never retried, give it an “expired” timestamp so it’s eligible immediately
+                .unwrap_or(global_timeout + Duration::from_millis(1));
+
+            if slot_elapsed >= global_timeout {
+                to_retry.push(slot);
+                retries.insert(slot, now);
+            }
+        }
+
+        if to_retry.is_empty() {
+            // no slot both missing and cooled down
+            RetryLearnResult::Skip(adu)
         } else {
-            // threshold met, record and tell caller to retry
-            retries.insert(next, now);
+            // we’re actually going to ask for these retries
             self.last_learn_time.replace(now);
             logger::log_warn(&format!(
-                "[Learner Agent] Retry triggered for slot {}",
-                next
+                "[Learner Agent] Retrying {} slots (max: {})",
+                to_retry.len(),
+                self.config.message_batch_size
             ));
-            RetryLearnResult::Retry(next)
+            RetryLearnResult::Retry(to_retry)
         }
     }
 
     fn run_paxos_loop(&self) {
         // retry gaps/timeouts
-        match self.evaluate_retry() {
-            RetryLearnResult::NoGap => {
-                // nothing to do
-            }
-            RetryLearnResult::Skip(slot) => {
-                logger::log_debug(&format!("[Learner Agent] Skipping retry for slot {}", slot));
-            }
-            RetryLearnResult::Retry(slot) => {
-                let retry_msg = NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::RetryLearn(slot),
-                };
-                logger::log_warn(&format!(
-                    "[Learner Agent] Broadcasting RETRY LEARN for slot {}",
-                    slot
-                ));
-                if self.config.acceptors_send_learns {
-                    self.network_client
-                        .send_message_forget(&self.acceptors, &retry_msg);
-                } else {
-                    self.network_client
-                        .send_message_forget(&self.proposers, &retry_msg);
-                }
-            }
-        }
+        self.handle_evaluate_retry();
 
         // maybe execute & collect, but only every exec_interval_ms
         let now = Instant::now();
@@ -311,7 +329,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         self.execute_chosen_learns();
 
         if self.config.learners_send_executed {
-            let exec = self.collect_executed(Some(self.config.executed_batch_size), false);
+            let exec = self.collect_executed(Some(self.config.message_batch_size), false);
 
             if !exec.results.is_empty() {
                 _ = self.dispatch_executed(exec);
@@ -338,7 +356,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     // if configured, only dispatch a full executed batch
                     if self.config.learners_send_executed {
                         let exec =
-                            self.collect_executed(Some(self.config.executed_batch_size), true);
+                            self.collect_executed(Some(self.config.message_batch_size), true);
                         if let Some(reply) = self.dispatch_executed(exec) {
                             return reply;
                         }

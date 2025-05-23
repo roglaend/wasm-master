@@ -133,9 +133,12 @@ interface storage {
     resource storage-resource {
         /// Creates a new handle for "state/<key>/…"
         constructor(key: string);
+
+        // Force flush any changes in the changelog writer buffer to disk.
+        flush-changes: func() -> result<_, string>;
       
         /// Atomically overwrite the latest snapshot, then truncate the changelog.
-        save-state-segment: func(state: bytes) -> result<_, string>;
+        save-state-segment: func(state: bytes, timestamp: string) -> result<_, string>;
 
         /// Append one change‐record to the changelog.
         save-change: func(change: bytes) -> result<_, string>;

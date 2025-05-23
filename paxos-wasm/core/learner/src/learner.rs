@@ -80,11 +80,7 @@ impl MyLearnerResource {
 impl GuestLearnerResource for MyLearnerResource {
     fn new(num_acceptors: u64, node_id: String, config: RunConfig) -> Self {
         let storage_key = &format!("node{}-learner", node_id);
-        let storage = StorageHelper::new(
-            storage_key,
-            500, // TODO: Get from config
-            config.persistent_storage,
-        );
+        let storage = StorageHelper::new(storage_key, config, config.persistent_storage);
         Self {
             config,
             num_acceptors,
@@ -169,7 +165,6 @@ impl GuestLearnerResource for MyLearnerResource {
     fn to_be_executed(&self) -> LearnResult {
         let mut out = Vec::new();
         let mut next = self.adu.get() + 1;
-        let old_adu = self.adu.get();
         let learned_map = self.learned.borrow();
 
         // Walk forward until we hit a gap
@@ -197,12 +192,7 @@ impl GuestLearnerResource for MyLearnerResource {
             first, last, count, new_adu
         ));
 
-        // If we crossed a snapshot boundary, persist:
-        if (old_adu / (self.storage.snapshot_interval + 1) as u64)
-            != (new_adu / (self.storage.snapshot_interval + 1) as u64)
-        {
-            self.storage.save_state_segment(&self.learned, new_adu);
-        }
+        self.storage.maybe_snapshot(new_adu, &self.learned);
         LearnResult::Execute(out)
     }
 
@@ -216,7 +206,7 @@ impl GuestLearnerResource for MyLearnerResource {
 
     fn load_state(&self) -> Result<(), String> {
         self.storage
-            .load_and_combine_state(&self.learned, &self.adu)
+            .load_and_replay_state(&self.learned, &self.adu)
     }
 }
 
@@ -230,39 +220,114 @@ struct PersistentState {
 /// Wraps the WASI storage_resource and bincode serialization for the learner.
 struct StorageHelper {
     store: StorageResource,
-    snapshot_interval: usize,
     enabled: bool,
     bincode_config: Configuration,
+
+    flush_change_count: usize,
+    flush_change_interval_ms: u64,
+    snapshot_slot_interval: u64,
+    snapshot_time_interval_ms: u64,
+
+    pending_changes: RefCell<usize>,
+    last_flush: RefCell<Instant>,
+    last_snapshot_slot: Cell<Slot>,
+    last_snapshot_time: RefCell<Instant>,
 }
 
 impl StorageHelper {
-    fn new(key: &str, snapshot_interval: usize, enabled: bool) -> Self {
-        let store = StorageResource::new(key);
+    fn new(key: &str, run_config: RunConfig, enabled: bool) -> Self {
+        let now = Instant::now();
         StorageHelper {
-            store,
-            snapshot_interval,
+            store: StorageResource::new(key),
             enabled,
             bincode_config: bincode::config::standard(),
+
+            flush_change_count: run_config.storage_flush_change_count as usize,
+            flush_change_interval_ms: run_config.storage_flush_change_interval_ms,
+            snapshot_slot_interval: run_config.storage_snapshot_slot_interval,
+            snapshot_time_interval_ms: run_config.storage_snapshot_time_interval_ms,
+
+            pending_changes: RefCell::new(0),
+            last_flush: RefCell::new(now),
+            last_snapshot_slot: Cell::new(0),
+            last_snapshot_time: RefCell::new(now),
         }
     }
 
+    /// actually flush the BufWriter once, amortizing many writes
+    fn flush_changes(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.store.flush_changes().expect("flush_changes");
+        *self.pending_changes.borrow_mut() = 0;
+        *self.last_flush.borrow_mut() = Instant::now();
+        logger::log_info("[Core Learner] flushed changelog");
+    }
+
+    /// called on _every_ change
     fn save_change(&self, entry: &LearnedEntry) {
         if !self.enabled {
             return;
         }
         let blob = bincode::serde::encode_to_vec(entry, self.bincode_config).unwrap();
         self.store.save_change(&blob).unwrap();
+
+        // bump our counter
+        let mut cnt = self.pending_changes.borrow_mut();
+        *cnt += 1;
+
+        // maybe flush now?
+        let now = Instant::now();
+        if *cnt >= self.flush_change_count
+            || now.duration_since(*self.last_flush.borrow()).as_millis()
+                >= self.flush_change_interval_ms as u128
+        {
+            drop(cnt);
+            self.flush_changes();
+        }
+    }
+
+    /// called by learner when ADU advances
+    fn maybe_snapshot(&self, new_adu: Slot, learned: &RefCell<BTreeMap<Slot, Value>>) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = Instant::now();
+        let last_slot = self.last_snapshot_slot.get();
+        let slot_ok = new_adu.saturating_sub(last_slot) >= self.snapshot_slot_interval;
+        let time_ok = now
+            .duration_since(*self.last_snapshot_time.borrow())
+            .as_millis()
+            >= self.snapshot_time_interval_ms as u128;
+
+        if slot_ok || time_ok {
+            // first, push any buffered changes down
+            self.flush_changes();
+
+            self.save_state_segment(learned, new_adu);
+
+            // record
+            self.last_snapshot_slot.set(new_adu);
+            *self.last_snapshot_time.borrow_mut() = now;
+        }
     }
 
     fn save_state_segment(&self, learned: &RefCell<BTreeMap<Slot, Value>>, adu: Slot) {
-        if !self.enabled || self.snapshot_interval == 0 {
+        if !self.enabled || self.snapshot_slot_interval == 0 {
             return;
         }
         let now = Instant::now();
 
         // Take the last N entries
         let mut trimmed = BTreeMap::new();
-        for (&slot, val) in learned.borrow().iter().rev().take(self.snapshot_interval) {
+        for (&slot, val) in learned
+            .borrow()
+            .iter()
+            .rev()
+            .take(self.snapshot_slot_interval as usize)
+        {
             trimmed.insert(slot, val.clone());
         }
 
@@ -280,7 +345,7 @@ impl StorageHelper {
         ));
     }
 
-    fn load_and_combine_state(
+    fn load_and_replay_state(
         &self,
         learned: &RefCell<BTreeMap<Slot, Value>>,
         adu: &Cell<Slot>,
@@ -288,45 +353,61 @@ impl StorageHelper {
         if !self.enabled {
             return Ok(());
         }
+
+        // Fetch persisted bytes
         let (snapshots, changes) = self.store.load_state_and_changes()?;
 
-        // Replay snapshots
-        let mut max_adu = 0;
+        // Restore from the last snapshot only
+        let mut snapshot_adu = 0;
         {
-            let mut lm = learned.borrow_mut();
-            for blob in snapshots {
+            let mut map = learned.borrow_mut();
+            if let Some(last_blob) = snapshots.last() {
                 let (ps, _): (PersistentState, usize) =
-                    bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                    bincode::serde::decode_from_slice(last_blob, self.bincode_config)
                         .map_err(|e| e.to_string())?;
-                max_adu = max_adu.max(ps.adu);
-                lm.extend(ps.learned);
+                map.clear();
+                map.extend(ps.learned.clone());
+                snapshot_adu = ps.adu;
+                adu.set(ps.adu);
             }
         }
-        adu.set(max_adu);
 
-        // Replay changelog
+        // Replay every change in the changelog
         {
-            let mut lm = learned.borrow_mut();
+            let mut map = learned.borrow_mut();
             for blob in changes {
                 let (entry, _): (LearnedEntry, usize) =
                     bincode::serde::decode_from_slice(&blob, self.bincode_config)
                         .map_err(|e| e.to_string())?;
-                lm.insert(entry.slot, entry.value);
+                map.insert(entry.slot, entry.value);
             }
         }
 
-        // Advance ADU over any new contiguous slots
+        // Advance adu over any contiguous tail from the changelog
         let mut next = adu.get() + 1;
         for (&slot, _) in learned.borrow().range(next..) {
-            if slot == next { next += 1 } else { break }
+            if slot == next {
+                next += 1;
+            } else {
+                break;
+            }
         }
         adu.set(next.saturating_sub(1));
+
+        // Reset our “last snapshot” watermark so we don’t immediately re-snapshot
+        self.last_snapshot_slot.set(snapshot_adu);
+        *self.last_snapshot_time.borrow_mut() = Instant::now();
+
+        // Reset our flush counter so we’ll batch new writes cleanly
+        *self.pending_changes.borrow_mut() = 0;
+        *self.last_flush.borrow_mut() = Instant::now();
 
         logger::log_warn(&format!(
             "[Core Learner] Restored adu={} with {} entries",
             adu.get(),
             learned.borrow().len()
         ));
+
         Ok(())
     }
 }

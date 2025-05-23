@@ -163,8 +163,6 @@ impl MyProposerResource {
     }
 }
 
-// TODO: Make the proposer also increase ballot if phase 1 fails and try again
-
 impl GuestProposerResource for MyProposerResource {
     fn new(
         is_leader: bool,
@@ -549,9 +547,11 @@ impl StorageHelper {
             current_ballot,
             adu,
         };
-        let blob =
-            bincode::serde::encode_to_vec(&ps, self.bincode_config).map_err(|e| e.to_string())?;
-        self.store.save_state(&blob).map_err(|e| e.to_string())
+        let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config)
+            .map_err(|e| format!("bincode encode: {}", e))?;
+        self.store
+            .save_state(&blob)
+            .map_err(|e| format!("storage_resource.save_state: {}", e))
     }
 
     /// Read back only the latest snapshot.
@@ -559,18 +559,21 @@ impl StorageHelper {
         if !self.enabled {
             return Ok(());
         }
-        // Attempt to load; if it’s missing, we start fresh.
+        // Attempt to load; if there’s no snapshot file, start fresh.
         let blob = match self.store.load_state() {
-            Ok(b) => b,
+            Ok(data) => data,
+            // treat "file not found" as "no state yet"
             Err(e) if e.contains("read") => return Ok(()),
-            Err(e) => return Err(e),
+            Err(e) => return Err(format!("storage_resource.load_state: {}", e)),
         };
-        // decode_from_slice returns (T, usize)
-        let (ps, _): (PersistentState, usize) =
+        // decode_from_slice gives us back (T, usize)
+        let (ps, _bytes_read): (PersistentState, usize) =
             bincode::serde::decode_from_slice(&blob, self.bincode_config)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("bincode decode: {}", e))?;
+
         ballot.set(ps.current_ballot);
         adu.set(ps.adu);
+
         logger::log_warn(&format!(
             "[Proposer] Loaded state: current_ballot = {}, adu = {}",
             ps.current_ballot, ps.adu

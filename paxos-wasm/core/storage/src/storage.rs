@@ -66,6 +66,14 @@ impl GuestStorageResource for MyStorageResource {
         }
     }
 
+    /// Force‐flush any buffered changes
+    fn flush_changes(&self) -> Result<(), String> {
+        let mut w = self.writer.borrow_mut();
+        w.flush().map_err(|e| e.to_string())?;
+        logger::log_info("[Storage] flush_changes(): writer flushed");
+        Ok(())
+    }
+
     /// Atomically overwrite snapshot + truncate changelog (staged, no fsync)
     fn save_state_segment(&self, state: Vec<u8>, timestamp: String) -> Result<(), String> {
         let snapshots_dir = format!("{}/{}/snapshots", self.base_dir, self.key);
@@ -109,17 +117,11 @@ impl GuestStorageResource for MyStorageResource {
     /// Append one change-record
     fn save_change(&self, change: Vec<u8>) -> Result<(), String> {
         let len = change.len();
-        {
-            let mut w = self.writer.borrow_mut();
-            w.write_u32::<BigEndian>(len as u32)
-                .and_then(|_| w.write_all(&change))
-                .map_err(|e| e.to_string())?;
-            w.flush().map_err(|e| e.to_string())?;
-        }
-        logger::log_info(&format!(
-            "[Storage] save_change: appended {} bytes to changelog",
-            len
-        ));
+        let mut w = self.writer.borrow_mut();
+        w.write_u32::<BigEndian>(len as u32)
+            .and_then(|_| w.write_all(&change))
+            .map_err(|e| e.to_string())?;
+        logger::log_info(&format!("[Storage] save_change: buffered {} bytes", len));
         Ok(())
     }
 

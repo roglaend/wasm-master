@@ -58,20 +58,28 @@ run_config:
   is_event_driven: true
   acceptors_send_learns: true
   learners_send_executed: true
-  prepare_timeout: 100
+  prepare_timeout: 500
   demo_client: true
-  demo_client_requests: 102395
-  batch_size: 100
+  demo_client_requests: 123450
+  batch_size: 20
   tick_micros: 100
   exec_interval_ms: 100
-  retry_interval_ms: 5000
-  learn_max_gap: 10
-  executed_batch_size: 10
+  retry_interval_ms: 100
+  learn_max_gap: 50
+  message_batch_size: 20
   client_server_port: 60000
   persistent_storage: true
-  crash:
-    - node: 3
-    - slot: 12939
-  graceful:
-    - node: 7
-    - slot: 223745
+  
+  # ─── storage tuning ───────────────────────────────
+  # Buffer up to 100 “change” records before flushing to disk.
+  #   - You’ll only lose at most ~100 writes on a crash.
+  storage_flush_change_count: 100
+
+  # Force a flush at least every 200 ms in low-volume periods.
+  storage_flush_change_interval_ms: 200
+
+  # Take a full snapshot every 5 000 slots.
+  storage_snapshot_slot_interval: 5000
+
+  # Force a snapshot at least every 2 000 ms if slot-threshold not yet hit.
+  storage_snapshot_time_interval_ms: 2000

@@ -120,9 +120,19 @@ impl Config {
             exec_interval_ms: r["exec_interval_ms"].as_i64().unwrap() as u64,
             retry_interval_ms: r["retry_interval_ms"].as_i64().unwrap() as u64,
             learn_max_gap: r["learn_max_gap"].as_i64().unwrap() as u64,
-            executed_batch_size: r["executed_batch_size"].as_i64().unwrap() as u64,
+            message_batch_size: r["message_batch_size"].as_i64().unwrap() as u64,
             client_server_port: r["client_server_port"].as_i64().unwrap() as u16,
             persistent_storage: r["persistent_storage"].as_bool().unwrap(),
+
+            storage_flush_change_count: r["storage_flush_change_count"].as_i64().unwrap() as u64,
+            storage_flush_change_interval_ms: r["storage_flush_change_interval_ms"]
+                .as_i64()
+                .unwrap() as u64,
+            storage_snapshot_slot_interval: r["storage_snapshot_slot_interval"].as_i64().unwrap()
+                as u64,
+            storage_snapshot_time_interval_ms: r["storage_snapshot_time_interval_ms"]
+                .as_i64()
+                .unwrap() as u64,
         };
 
         Ok(Config {
