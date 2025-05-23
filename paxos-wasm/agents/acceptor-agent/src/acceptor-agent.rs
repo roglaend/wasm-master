@@ -260,14 +260,14 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     }
 
     fn send_heartbeat(&self) {
-        let heartbeat = Heartbeat { timestamp: 0 };
+        let heartbeat = Heartbeat {};
 
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),
             payload: MessagePayload::Heartbeat(heartbeat.clone()),
         };
 
-        logger::log_warn(&format!(
+        logger::log_info(&format!(
             "[Acceptor Agent] Sending heartbeat to all nodes: {:?}",
             self.all_nodes
         ));

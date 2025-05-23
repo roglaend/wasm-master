@@ -14,8 +14,8 @@ interface paxos-types {
         executed-batch-size: u64,       // The maximum number of executed results to send in one Executed message. 
         client-server-port: u16,        // The port the client connects to on the leaders address.
         persistent-storage: bool,       // Toggle the usage of persistent storage.
-        heartbeats: bool,                // Toggle the usage of heartbeats.
-        heartbeat-interval-ms: u64,        // The interval in ms between heartbeats.
+        heartbeats: bool,               // Toggle the usage of heartbeats.
+        heartbeat-interval-ms: u64,     // The interval in ms between heartbeats.
 
 
         // ... Add more?
@@ -276,7 +276,6 @@ interface network-types {
 
     // Timestamp is not used either, we really only need a ping message payload
     record heartbeat {
-        timestamp: u64,
     }
 
     record network-message {

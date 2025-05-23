@@ -32,7 +32,6 @@ pub struct MyLeaderDetectorResource {
     leader: Cell<u64>,
 }
 
-// TODO: Change this to take in Node types instead of ids
 impl GuestLeaderDetectorResource for MyLeaderDetectorResource {
     fn new(nodes: Vec<Node>, _local_node_id: Node) -> Self {
         let mut suspected = HashMap::with_capacity(nodes.len());

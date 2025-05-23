@@ -221,33 +221,6 @@ impl MyRunnerResource {
         self.metrics.track(responses.len());
     }
 
-    fn demo_client_work(&self) {
-        let num_requests: u64 = self.config.demo_client_requests;
-
-        let helper = match &self.demo_client {
-            Some(h) if self.paxos.is_leader() => h,
-            _ => return,
-        };
-
-        // send up to 2 x batch_size new requests, but never beyond demo_client_requests
-        let mut sent = 0;
-        let batch_quota = self.config.batch_size;
-        while sent < batch_quota {
-            let seq = helper.client_seq.get();
-            if seq >= num_requests {
-                break;
-            }
-            helper.client_seq.set(seq + 1);
-            let req = Value {
-                command: Some(Operation::Demo),
-                client_id: helper.client_id.clone(),
-                client_seq: seq,
-            };
-            let _ = self.paxos.submit_client_request(&req);
-            sent += 1;
-        }
-    }
-
     fn send_heartbeat(&self) {
         if self.config.heartbeats {
             let now = Instant::now();
@@ -305,7 +278,7 @@ impl GuestRunnerResource for MyRunnerResource {
         let demo_client = if config.demo_client {
             Some(DemoClientHelper::new(
                 format!("client-{}", node.node_id),
-                Duration::from_secs(1),
+                Duration::from_secs(3),
             ))
         } else {
             None

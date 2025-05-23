@@ -154,10 +154,10 @@ impl GuestClientServerResource for MyClientServerTcpResource {
                     }
                     Err(e) => {
                         // Anoying log when 500 clients are finished
-                        // logger::log_error(&format!(
-                        //     "[Client Server] read error on chan {}: {:?}, dropping",
-                        //     chan, e
-                        // ));
+                        logger::log_error(&format!(
+                            "[Client Server] read error on chan {}: {:?}, dropping",
+                            chan, e
+                        ));
                         to_drop.push(chan);
                     }
                 }

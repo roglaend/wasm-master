@@ -364,7 +364,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
     }
 
     fn send_heartbeat(&self) {
-        let heartbeat = Heartbeat { timestamp: 0 };
+        let heartbeat = Heartbeat {};
 
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),

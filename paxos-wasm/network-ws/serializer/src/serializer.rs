@@ -258,7 +258,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             )
         }
         MessagePayload::Heartbeat(h) => {
-            format!("heartbeat,timestamp:{}", h.timestamp)
+            format!("heartbeat")
         }
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
@@ -561,21 +561,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             }
         }
 
-        "heartbeat" => {
-            let mut timestamp = None;
-            for p in &parts[1..] {
-                let mut kv = p.splitn(2, ':');
-                match (kv.next(), kv.next()) {
-                    (Some("timestamp"), Some(v)) => timestamp = v.parse().ok(),
-                    _ => {}
-                }
-            }
-            if let Some(ts) = timestamp {
-                Ok(MessagePayload::Heartbeat(Heartbeat { timestamp: ts }))
-            } else {
-                Err("bad heartbeat")
-            }
-        }
+        "heartbeat" => Ok(MessagePayload::Heartbeat(Heartbeat {})),
 
         "retry-learn" => {
             if parts.len() == 2 {
