@@ -57,7 +57,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         let network_client = Arc::new(network_client::NetworkClientResource::new());
 
         match acceptor.load_state() {
-            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Ok(_) => logger::log_warn("[Acceptor Agent] Loaded state successfully."),
             Err(e) => logger::log_error(&format!(
                 "[Acceptor Agent] Failed to load state. Ignore if first startup: {}",
                 e

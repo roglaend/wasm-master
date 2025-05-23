@@ -127,18 +127,30 @@ interface leader-detector {
 }
 
 interface storage {
-    // segment save of state into different files
-    save-state-segment: func(key: string, state-json: string, timestamp: string) -> result<_, string>;
-    // single line change save
-    save-change: func(key: string, change-json: string) -> result<_, string>;
-    // load above into list of segments and changes
-    load-state-and-changes: func(key: string) -> result<tuple<list<string>, list<string>>, string>;
+    type bytes = list<u8>;
+    type state-and-changes = tuple<list<bytes>, list<bytes>>;
 
-    // save full state to single file
-    save-state: func(key: string, state-json: string) -> result<_, string>;
-    // load full state from single file
-    load-state: func(key: string) -> result<string, string>;
-    
-    // not implemented
-    delete: func(key: string) -> bool;
+    resource storage-resource {
+        /// Creates a new handle for "state/<key>/…"
+        constructor(key: string);
+      
+        /// Atomically overwrite the latest snapshot, then truncate the changelog.
+        save-state-segment: func(state: bytes) -> result<_, string>;
+
+        /// Append one change‐record to the changelog.
+        save-change: func(change: bytes) -> result<_, string>;
+
+        /// Read back “snapshot.bin” plus all the changelog entries.
+        load-state-and-changes: func() -> result<state-and-changes, string>;
+
+        /// Overwrite the latest snapshot without touching the changelog.
+        save-state: func(state: bytes) -> result<_, string>;
+
+        /// Read back only the latest snapshot.
+        load-state: func() -> result<bytes, string>;
+
+        /// Delete everything under "state/<key>/".
+        delete: func() -> bool;
+    }
+
 }

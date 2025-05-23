@@ -1,6 +1,6 @@
+use bincode::config::Configuration;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
@@ -26,7 +26,7 @@ bindings::export!(MyLearner with_types_in bindings);
 
 use bindings::paxos::default::learner_types::LearnResult;
 use bindings::paxos::default::paxos_types::{Learn, Node, RunConfig, Slot, Value};
-use bindings::paxos::default::storage;
+use bindings::paxos::default::storage::StorageResource;
 
 use bindings::exports::paxos::default::learner::{
     Guest, GuestLearnerResource, LearnedEntry, LearnerState,
@@ -41,7 +41,6 @@ impl Guest for MyLearner {
 
 struct MyLearnerResource {
     config: RunConfig,
-    node_id: String,
     num_acceptors: u64,
 
     slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: Should be moved to learner agent to have consistent design
@@ -80,15 +79,15 @@ impl MyLearnerResource {
 
 impl GuestLearnerResource for MyLearnerResource {
     fn new(num_acceptors: u64, node_id: String, config: RunConfig) -> Self {
+        let storage_key = &format!("node{}-learner", node_id);
         let storage = StorageHelper::new(
-            &node_id,
+            storage_key,
             500, // TODO: Get from config
             config.persistent_storage,
         );
         Self {
             config,
             num_acceptors,
-            node_id: node_id,
             slot_learns: RefCell::new(BTreeMap::new()),
             learned: RefCell::new(BTreeMap::new()),
             adu: Cell::new(0),
@@ -198,7 +197,12 @@ impl GuestLearnerResource for MyLearnerResource {
             first, last, count, new_adu
         ));
 
-        self.storage.maybe_snapshot(old_adu, new_adu, &self.learned);
+        // If we crossed a snapshot boundary, persist:
+        if (old_adu / (self.storage.snapshot_interval + 1) as u64)
+            != (new_adu / (self.storage.snapshot_interval + 1) as u64)
+        {
+            self.storage.save_state_segment(&self.learned, new_adu);
+        }
         LearnResult::Execute(out)
     }
 
@@ -216,87 +220,49 @@ impl GuestLearnerResource for MyLearnerResource {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+/// On‐disk snapshot structure
+#[derive(Serialize, Deserialize)]
 struct PersistentState {
     adu: Slot,
     learned: BTreeMap<Slot, Value>,
 }
 
+/// Wraps the WASI storage_resource and bincode serialization for the learner.
 struct StorageHelper {
-    key: String,
+    store: StorageResource,
     snapshot_interval: usize,
     enabled: bool,
+    bincode_config: Configuration,
 }
 
 impl StorageHelper {
-    fn new(node_id: &String, snapshot_interval: usize, enabled: bool) -> Self {
-        Self {
-            key: format!("{}-learner", node_id),
+    fn new(key: &str, snapshot_interval: usize, enabled: bool) -> Self {
+        let store = StorageResource::new(key);
+        StorageHelper {
+            store,
             snapshot_interval,
             enabled,
+            bincode_config: bincode::config::standard(),
         }
     }
 
-    fn merge_snapshots(
-        &self,
-        snapshots: &Vec<String>,
-        learned: &RefCell<BTreeMap<Slot, Value>>,
-        adu: &Cell<Slot>,
-    ) -> Result<(), String> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let mut max_adu = 0;
-        let mut lm = learned.borrow_mut();
-        for json in snapshots {
-            let ps: PersistentState =
-                serde_json::from_str(json).map_err(|e| format!("Bad snapshot JSON: {}", e))?;
-            max_adu = max_adu.max(ps.adu);
-            lm.extend(ps.learned);
-        }
-        adu.set(max_adu);
-        Ok(())
-    }
-
-    fn apply_changes(
-        &self,
-        state_changes: &Vec<String>,
-        learned: &RefCell<BTreeMap<Slot, Value>>,
-        adu: &Cell<Slot>,
-    ) -> Result<(), String> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        let mut lm = learned.borrow_mut();
-        for json in state_changes {
-            let entry: LearnedEntry =
-                serde_json::from_str(json).map_err(|e| format!("Bad change JSON: {}", e))?;
-            lm.insert(entry.slot, entry.value);
-        }
-        let mut next = adu.get() + 1;
-        for (&slot, _) in lm.range(next..) {
-            if slot == next {
-                next += 1;
-            } else {
-                break;
-            }
-        }
-        adu.set(next.saturating_sub(1));
-        Ok(())
-    }
-
-    fn save_state_segment(&self, learned: &RefCell<BTreeMap<Slot, Value>>, adu: Slot) {
+    fn save_change(&self, entry: &LearnedEntry) {
         if !self.enabled {
             return;
         }
+        let blob = bincode::serde::encode_to_vec(entry, self.bincode_config).unwrap();
+        self.store.save_change(&blob).unwrap();
+    }
 
+    fn save_state_segment(&self, learned: &RefCell<BTreeMap<Slot, Value>>, adu: Slot) {
+        if !self.enabled || self.snapshot_interval == 0 {
+            return;
+        }
         let now = Instant::now();
-        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
 
+        // Take the last N entries
         let mut trimmed = BTreeMap::new();
-        let l = learned.borrow();
-        for (&slot, val) in l.iter().rev().take(self.snapshot_interval) {
+        for (&slot, val) in learned.borrow().iter().rev().take(self.snapshot_interval) {
             trimmed.insert(slot, val.clone());
         }
 
@@ -304,45 +270,14 @@ impl StorageHelper {
             adu,
             learned: trimmed,
         };
+        let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config).unwrap();
+        let ts = Utc::now().to_rfc3339();
 
-        match serde_json::to_string(&ps) {
-            Ok(json) => {
-                if let Err(e) = storage::save_state_segment(&self.key, &json, &timestamp) {
-                    logger::log_error(&format!("[Core Learner] save_state_segment failed: {}", e));
-                } else {
-                    logger::log_warn(&format!(
-                        "[Core Learner] Saved state to file in {} micros",
-                        now.elapsed().as_micros()
-                    ));
-                }
-            }
-            Err(e) => {
-                logger::log_error(&format!("[Core Learner] serialize snapshot failed: {}", e));
-            }
-        }
-    }
-
-    fn save_change(&self, learn: &LearnedEntry) {
-        if !self.enabled {
-            return;
-        }
-
-        let now = Instant::now();
-        match serde_json::to_string(learn) {
-            Ok(json) => {
-                if let Err(e) = storage::save_change(&self.key, &json) {
-                    logger::log_error(&format!("[Core Learner] save_change failed: {}", e));
-                } else {
-                    logger::log_info(&format!(
-                        "[Core Learner] Saved change in {} micros",
-                        now.elapsed().as_micros()
-                    ));
-                }
-            }
-            Err(e) => {
-                logger::log_error(&format!("[Core Learner] serialize change failed: {}", e));
-            }
-        }
+        self.store.save_state_segment(&blob, &ts).unwrap();
+        logger::log_warn(&format!(
+            "[Core Learner] Snapshot in {}μs",
+            now.elapsed().as_micros()
+        ));
     }
 
     fn load_and_combine_state(
@@ -353,44 +288,45 @@ impl StorageHelper {
         if !self.enabled {
             return Ok(());
         }
+        let (snapshots, changes) = self.store.load_state_and_changes()?;
 
-        let now = Instant::now();
-        let (state_snapshots, state_changes) = storage::load_state_and_changes(&self.key)?;
+        // Replay snapshots
+        let mut max_adu = 0;
+        {
+            let mut lm = learned.borrow_mut();
+            for blob in snapshots {
+                let (ps, _): (PersistentState, usize) =
+                    bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                        .map_err(|e| e.to_string())?;
+                max_adu = max_adu.max(ps.adu);
+                lm.extend(ps.learned);
+            }
+        }
+        adu.set(max_adu);
 
-        self.merge_snapshots(&state_snapshots, learned, adu)?;
-        self.apply_changes(&state_changes, learned, adu)?;
+        // Replay changelog
+        {
+            let mut lm = learned.borrow_mut();
+            for blob in changes {
+                let (entry, _): (LearnedEntry, usize) =
+                    bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                        .map_err(|e| e.to_string())?;
+                lm.insert(entry.slot, entry.value);
+            }
+        }
+
+        // Advance ADU over any new contiguous slots
+        let mut next = adu.get() + 1;
+        for (&slot, _) in learned.borrow().range(next..) {
+            if slot == next { next += 1 } else { break }
+        }
+        adu.set(next.saturating_sub(1));
 
         logger::log_warn(&format!(
-            "[Core Learner] Loaded {} snapshots + {} changes in {}ms",
-            state_snapshots.len(),
-            state_changes.len(),
-            now.elapsed().as_millis()
+            "[Core Learner] Restored adu={} with {} entries",
+            adu.get(),
+            learned.borrow().len()
         ));
-        logger::log_warn(&format!("[Core Learner] Current adu is {}", adu.get()));
         Ok(())
-    }
-
-    fn maybe_snapshot(
-        &self,
-        old_adu: Slot,
-        new_adu: Slot,
-        learned: &RefCell<BTreeMap<Slot, Value>>,
-    ) {
-        if !self.enabled {
-            return;
-        }
-
-        let iv = self.snapshot_interval as Slot;
-        if iv == 0 {
-            return;
-        }
-        let next_boundary = ((old_adu / iv) + 1) * iv;
-        if new_adu >= next_boundary {
-            logger::log_info(&format!(
-                "[Core Learner] ADU crossed snapshot boundary: {} → {}; persisting at {}",
-                old_adu, new_adu, next_boundary
-            ));
-            self.save_state_segment(learned, new_adu);
-        }
     }
 }

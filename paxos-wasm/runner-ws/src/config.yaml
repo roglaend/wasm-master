@@ -37,21 +37,21 @@ nodes:
 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
-  1: [1,2,3]
+  # 1: [1,2,3]
 
-  2: [4,5,6]
+  # 2: [4,5,6]
 
-  3: [7,8,9]
+  # 3: [7,8,9]
 
-  # 1: [1]
-  # 2: [2]
-  # 3: [3]
-  # 4: [4]
-  # 5: [5]
-  # 6: [6]
-  # 7: [7]
-  # 8: [8]
-  # 9: [9]
+  1: [1]
+  2: [2]
+  3: [3]
+  4: [4]
+  5: [5]
+  6: [6]
+  7: [7]
+  8: [8]
+  9: [9]
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
@@ -60,15 +60,15 @@ run_config:
   learners_send_executed: true
   prepare_timeout: 100
   demo_client: true
-  demo_client_requests: 1000000
+  demo_client_requests: 102395
   batch_size: 100
   tick_micros: 100
   exec_interval_ms: 100
-  retry_interval_ms: 500
+  retry_interval_ms: 5000
   learn_max_gap: 10
   executed_batch_size: 10
   client_server_port: 60000
-  persistent_storage: false
+  persistent_storage: true
   crash:
     - node: 3
     - slot: 12939

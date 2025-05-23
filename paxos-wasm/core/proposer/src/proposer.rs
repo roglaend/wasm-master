@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use bincode::config::Configuration;
 use serde::{Deserialize, Serialize};
 mod bindings {
     wit_bindgen::generate!({
@@ -29,7 +30,7 @@ use bindings::paxos::default::paxos_types::{
 use bindings::paxos::default::proposer_types::{
     AcceptResult, PrepareResult, ProposalEntry, ProposalStatus,
 };
-use bindings::paxos::default::storage;
+use bindings::paxos::default::storage::StorageResource;
 
 struct MyProposer;
 
@@ -38,7 +39,6 @@ impl Guest for MyProposer {
 }
 
 struct MyProposerResource {
-    node_id: String,
     num_acceptors: u64,
     ballot_delta: Ballot,
 
@@ -173,7 +173,8 @@ impl GuestProposerResource for MyProposerResource {
         node_id: String,
         config: RunConfig,
     ) -> Self {
-        let storage = StorageHelper::new(&node_id, config.persistent_storage);
+        let storage_key = &format!("node{}-proposer", node_id);
+        let storage = StorageHelper::new(&storage_key, config.persistent_storage);
 
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
@@ -183,7 +184,6 @@ impl GuestProposerResource for MyProposerResource {
         ));
 
         Self {
-            node_id,
             num_acceptors,
             ballot_delta: num_acceptors, // TODO: This right?
 
@@ -517,27 +517,30 @@ impl GuestProposerResource for MyProposerResource {
     }
 }
 
-/// This is the small on-disk shape we persist.
+/// The small on‐disk shape we persist.
 #[derive(Deserialize, Serialize)]
 struct PersistentState {
     current_ballot: Ballot,
     adu: Slot,
 }
 
-/// Encapsulates all of our JSON + storage calls, and honors the `persistent_storage` flag.
+/// Encapsulates all of our bincode + storage_resource calls.
 struct StorageHelper {
-    key: String,
+    store: StorageResource,
     enabled: bool,
+    bincode_config: Configuration,
 }
 
 impl StorageHelper {
-    fn new(node_id: &str, enabled: bool) -> Self {
+    fn new(key: &str, enabled: bool) -> Self {
         StorageHelper {
-            key: format!("{}-proposer", node_id),
+            store: StorageResource::new(key),
             enabled,
+            bincode_config: bincode::config::standard(),
         }
     }
 
+    /// Overwrite the latest snapshot with our small `PersistentState`.
     fn save_state(&self, current_ballot: Ballot, adu: Slot) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
@@ -546,31 +549,32 @@ impl StorageHelper {
             current_ballot,
             adu,
         };
-        let json =
-            serde_json::to_string(&ps).map_err(|e| format!("serialize proposer state: {}", e))?;
-        storage::save_state(&self.key, &json).map_err(|e| format!("save_state: {}", e))
+        let blob =
+            bincode::serde::encode_to_vec(&ps, self.bincode_config).map_err(|e| e.to_string())?;
+        self.store.save_state(&blob).map_err(|e| e.to_string())
     }
 
+    /// Read back only the latest snapshot.
     fn load_state(&self, ballot: &Cell<Ballot>, adu: &Cell<Slot>) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let json = match storage::load_state(&self.key) {
-            Ok(s) => s,
-            Err(e) if e.contains("Failed to read") => return Ok(()), // no snapshot yet
-            Err(e) => return Err(format!("load_state: {}", e)),
+        // Attempt to load; if it’s missing, we start fresh.
+        let blob = match self.store.load_state() {
+            Ok(b) => b,
+            Err(e) if e.contains("read") => return Ok(()),
+            Err(e) => return Err(e),
         };
-        let ps: PersistentState = serde_json::from_str(&json)
-            .map_err(|e| format!("deserialize proposer state: {}", e))?;
-
+        // decode_from_slice returns (T, usize)
+        let (ps, _): (PersistentState, usize) =
+            bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                .map_err(|e| e.to_string())?;
         ballot.set(ps.current_ballot);
         adu.set(ps.adu);
-
         logger::log_warn(&format!(
             "[Proposer] Loaded state: current_ballot = {}, adu = {}",
             ps.current_ballot, ps.adu
         ));
-
         Ok(())
     }
 }

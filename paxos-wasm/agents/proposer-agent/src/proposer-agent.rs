@@ -418,7 +418,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let network_client = Arc::new(NetworkClientResource::new());
 
         match proposer.load_state() {
-            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Ok(_) => logger::log_warn("[Proposer Agent] Loaded state successfully."),
             Err(e) => logger::log_warn(&format!(
                 "[Proposer Agent] Failed to load state. Ignore if first startup: {}",
                 e

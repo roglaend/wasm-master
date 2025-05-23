@@ -103,7 +103,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         let network_client = Arc::new(network_client::NetworkClientResource::new());
 
         match learner.load_state() {
-            Ok(_) => logger::log_info("[Learner Agent] Loaded state successfully."),
+            Ok(_) => logger::log_warn("[Learner Agent] Loaded state successfully."),
             Err(e) => logger::log_error(&format!(
                 "[Learner Agent] Failed to load state. Ignore if first startup: {}",
                 e
