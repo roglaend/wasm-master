@@ -10,9 +10,7 @@ bindings::export!(MySerializer with_types_in bindings);
 
 use bindings::exports::paxos::default::serializer::Guest;
 // use bindings::paxos::default::logger;
-use bindings::paxos::default::network_types::{
-    Benchmark, Heartbeat, MessagePayload, NetworkMessage,
-};
+use bindings::paxos::default::network_types::{Benchmark, MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, Value,
@@ -257,9 +255,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 l.slot, v.client_id, v.client_seq, op
             )
         }
-        MessagePayload::Heartbeat(h) => {
-            format!("heartbeat")
-        }
+        MessagePayload::Heartbeat => "heartbeat".into(),
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
             let entries = exec
@@ -561,7 +557,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             }
         }
 
-        "heartbeat" => Ok(MessagePayload::Heartbeat(Heartbeat {})),
+        "heartbeat" => Ok(MessagePayload::Heartbeat),
 
         "retry-learn" => {
             if parts.len() == 2 {

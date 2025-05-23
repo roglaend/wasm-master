@@ -263,7 +263,7 @@ interface network-types {
         accepted(accepted),                 // An accepted response.
         learn(learn),                       // A learn request.
         // learn-ack(learn),                // A learn ack. // TODO: Use or not to use, with custom payload? 
-        heartbeat(heartbeat),               // Heartbeat.
+        heartbeat,               // Heartbeat.
         executed(executed),                 // Contains list of executed values and adu.
         retry-learn(slot),              // Retry learn for missing slot
         benchmark(benchmark),           // Benchmark message
@@ -275,8 +275,6 @@ interface network-types {
     }
 
     // Timestamp is not used either, we really only need a ping message payload
-    record heartbeat {
-    }
 
     record network-message {
         sender: node,

@@ -21,7 +21,7 @@ use bindings::exports::paxos::default::learner_agent::{
 use bindings::paxos::default::kv_store::KvStoreResource;
 use bindings::paxos::default::learner::{LearnResult, LearnerResource};
 use bindings::paxos::default::learner_types::{LearnerState, RetryLearnResult};
-use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     CmdResult, ExecuteResult, Executed, KvPair, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
@@ -364,11 +364,9 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
     }
 
     fn send_heartbeat(&self) {
-        let heartbeat = Heartbeat {};
-
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),
-            payload: MessagePayload::Heartbeat(heartbeat.clone()),
+            payload: MessagePayload::Heartbeat,
         };
 
         logger::log_warn(&format!(

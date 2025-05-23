@@ -14,7 +14,7 @@ use bindings::exports::paxos::default::acceptor_agent::{
 };
 use bindings::paxos::default::acceptor::AcceptorResource;
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
-use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
 };
@@ -260,11 +260,9 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     }
 
     fn send_heartbeat(&self) {
-        let heartbeat = Heartbeat {};
-
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),
-            payload: MessagePayload::Heartbeat(heartbeat.clone()),
+            payload: MessagePayload::Heartbeat,
         };
 
         logger::log_info(&format!(

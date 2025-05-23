@@ -442,8 +442,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
                 MessagePayload::Heartbeat(payload) => {
                     logger::log_warn(&format!(
-                        "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                        message.sender.node_id, payload.timestamp
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
                     ));
                     self.failure_detector.heartbeat(message.sender.node_id);
 

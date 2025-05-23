@@ -1,4 +1,4 @@
-use crate::bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use crate::bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use crate::bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, Value,
@@ -240,9 +240,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 l.slot, v.client_id, v.client_seq, op
             )
         }
-        MessagePayload::Heartbeat(h) => {
-            format!("heartbeat")
-        }
+        MessagePayload::Heartbeat => "heartbeat".into(),
         MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
         MessagePayload::Executed(exec) => {
             let entries = exec
@@ -544,7 +542,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             }
         }
 
-        "heartbeat" => Ok(MessagePayload::Heartbeat(Heartbeat {})),
+        "heartbeat" => Ok(MessagePayload::Heartbeat),
 
         "retry-learn" => {
             if parts.len() == 2 {

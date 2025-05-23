@@ -18,7 +18,7 @@ use bindings::exports::paxos::default::proposer_agent::{
     Guest as GuestProposerAgent, GuestProposerAgentResource,
 };
 use bindings::paxos::default::network_client::NetworkClientResource;
-use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
     PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
@@ -915,11 +915,9 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     }
 
     fn send_heartbeat(&self) {
-        let heartbeat = Heartbeat {};
-
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),
-            payload: MessagePayload::Heartbeat(heartbeat.clone()),
+            payload: MessagePayload::Heartbeat,
         };
 
         logger::log_warn(&format!(
