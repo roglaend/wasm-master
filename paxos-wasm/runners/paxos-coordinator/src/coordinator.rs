@@ -112,21 +112,16 @@ impl MyPaxosCoordinatorResource {
     }
 
     fn send_heartbeat(&self) {
-        match self.node.role {
-            PaxosRole::Proposer => {
-                self.proposer().send_heartbeat();
+        match &self.agents {
+            Agents::Proposer(proposer) | Agents::Coordinator { proposer, .. } => {
+                proposer.send_heartbeat();
             }
-            PaxosRole::Acceptor => {
-                self.acceptor().send_heartbeat();
+            Agents::Acceptor(acceptor) => {
+                acceptor.send_heartbeat();
             }
-            PaxosRole::Learner => {
-                self.learner().send_heartbeat();
+            Agents::Learner(learner) => {
+                learner.send_heartbeat();
             }
-            // WOHO QUICKFIX
-            PaxosRole::Coordinator => {
-                self.proposer().send_heartbeat();
-            }
-            _ => {}
         }
     }
 }

@@ -247,7 +247,7 @@ impl MyRunnerResource {
             }
             if let Some(new_lead) = new_lead {
                 match self.node.role {
-                    PaxosRole::Proposer => {
+                    PaxosRole::Proposer | PaxosRole::Coordinator => {
                         if new_lead == self.node.node_id {
                             let host = self
                                 .node
@@ -265,22 +265,6 @@ impl MyRunnerResource {
                     }
                     PaxosRole::Acceptor => {}
                     PaxosRole::Learner => {}
-                    PaxosRole::Coordinator => {
-                        if new_lead == self.node.node_id {
-                            let host = self
-                                .node
-                                .address
-                                .split(':')
-                                .next()
-                                .expect("invalid node.address, expected ip:port");
-                            let addr = format!("{}:{}", host, self.config.client_server_port);
-                            logger::log_error(&format!(
-                                "[Runner] New leader detected, setting up client server on {}",
-                                &addr,
-                            ));
-                            self.client_svr.setup_listener(&addr);
-                        }
-                    }
                     _ => {
                         panic!("Unknown role");
                     }

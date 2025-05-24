@@ -75,8 +75,6 @@ interface proposer-agent {
 
         run-paxos-loop: func() -> option<list<client-response>>;
 
-        failure-service: func();
-
         send-heartbeat: func();
     }
 }

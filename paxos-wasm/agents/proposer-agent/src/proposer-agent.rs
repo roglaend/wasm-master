@@ -24,9 +24,7 @@ use bindings::paxos::default::paxos_types::{
     PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
-use bindings::paxos::default::{
-    failure_detector::FailureDetectorResource, logger, network_client, proposer::ProposerResource,
-};
+use bindings::paxos::default::{logger, network_client, proposer::ProposerResource};
 
 enum CollectedResponses<T, R> {
     Synchronous(Vec<T>),
@@ -50,7 +48,6 @@ pub struct MyProposerAgentResource {
     acceptors: Vec<Node>,
     learners: Vec<Node>,
     all_nodes: Vec<Node>,
-    failure_detector: Arc<FailureDetectorResource>,
     network_client: Arc<network_client::NetworkClientResource>,
 
     // A mapping from Ballot to unique promises per node_id.
@@ -415,8 +412,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             config,
         ));
 
-        let failure_delta = 10; // TODO: Make this dynamic
-        let failure_detector = Arc::new(FailureDetectorResource::new(&node, &nodes, failure_delta));
         let network_client = Arc::new(NetworkClientResource::new());
 
         match proposer.load_state() {
@@ -446,7 +441,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             promises: RefCell::new(BTreeMap::new()),
             in_flight_accepted: RefCell::new(BTreeMap::new()),
             last_prepare_start: Cell::new(None),
-            failure_detector,
             network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
@@ -900,17 +894,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             }
             PaxosPhase::Stop => None,  // TODO
             PaxosPhase::Crash => None, // TODO
-        }
-    }
-
-    // TODO : not used properly by any of the agents
-    fn failure_service(&self) {
-        let new_lead = self.failure_detector.checker();
-        if let Some(leader) = new_lead {
-            logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
-            if leader == self.node.node_id {
-                self.become_leader();
-            }
         }
     }
 
