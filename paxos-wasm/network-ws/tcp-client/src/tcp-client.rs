@@ -22,6 +22,8 @@ use bindings::paxos::default::network_types::NetworkMessage;
 use bindings::paxos::default::paxos_types::Node;
 use bindings::paxos::default::{logger, serializer};
 
+const MAX_WASI_CHUNK: usize = 4096;
+
 /// Simple struct to hold our streams and keep the socket alive
 struct Connection {
     socket: TcpSocket,
@@ -49,6 +51,20 @@ impl TcpClientResource {
                 },
             );
             self.bufs.borrow_mut().insert(addr.to_string(), Vec::new());
+        }
+        Ok(())
+    }
+
+    /// Helper: write the entire buffer in ≤4 KiB chunks
+    fn write_all_in_chunks(
+        &self,
+        out: &mut OutputStream,
+        mut buf: &[u8],
+    ) -> Result<(), StreamError> {
+        while !buf.is_empty() {
+            let chunk = &buf[..buf.len().min(MAX_WASI_CHUNK)];
+            out.blocking_write_and_flush(chunk)?;
+            buf = &buf[chunk.len()..];
         }
         Ok(())
     }
@@ -144,25 +160,27 @@ impl GuestNetworkClientResource for TcpClientResource {
             {
                 let mut conns = self.conns.borrow_mut();
                 if let Some(conn) = conns.get_mut(addr) {
-                    match conn.output.blocking_write_and_flush(&msg_bytes) {
-                        Ok(()) => {}
+                    let write_result =
+                        self.write_all_in_chunks(&mut conn.output, &msg_bytes)
+                            .map_err(|e| match e {
+                                StreamError::Closed => {
+                                    logger::log_error(&format!(
+                                        "[TCP Client] stream closed on {}; dropping connection",
+                                        addr
+                                    ));
+                                    remove = true;
+                                }
+                                StreamError::LastOperationFailed(err) => {
+                                    logger::log_error(&format!(
+                                        "[TCP Client] write+flush error on {}: {:?}; dropping connection",
+                                        addr, err
+                                    ));
+                                    remove = true;
+                                }
+                            });
 
-                        Err(StreamError::Closed) => {
-                            logger::log_error(&format!(
-                                "[TCP Client] stream closed on {}; dropping connection",
-                                addr
-                            ));
-                            remove = true;
-                        }
-
-                        Err(StreamError::LastOperationFailed(err)) => {
-                            logger::log_error(&format!(
-                                "[TCP Client] write+flush error on {}: {:?}; dropping connection",
-                                addr, err
-                            ));
-                            remove = true;
-                        }
-                    }
+                    // If chunked‐write returned Err, the closure above has already set `remove`
+                    let _ = write_result;
                 }
             }
 

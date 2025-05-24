@@ -18,7 +18,9 @@ use bindings::exports::paxos::default::paxos_coordinator::{
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
 use bindings::paxos::default::learner_types::RetryLearnResult;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
-use bindings::paxos::default::paxos_types::{ClientResponse, Node, PaxosPhase, PaxosRole, Value};
+use bindings::paxos::default::paxos_types::{
+    ClientResponse, Node, PaxosPhase, PaxosRole, RetryLearns, Value,
+};
 use bindings::paxos::default::{
     acceptor_agent, failure_detector, learner_agent, logger, proposer_agent,
 };
@@ -81,20 +83,23 @@ impl MyPaxosCoordinatorResource {
             RetryLearnResult::NoGap => return,
             RetryLearnResult::Skip(slot) => {
                 logger::log_debug(&format!(
-                    "[Coordinator] Learner skipping retry for slot {}",
+                    "[Learner Agent] Skipping retry of learns with current adu {}",
                     slot
                 ));
                 return;
             }
-            RetryLearnResult::Retry(slot) => {
+            RetryLearnResult::Retry(slots) => {
                 logger::log_warn(&format!(
-                    "[Coordinator] Learner detected gap, retrying learn for slot {}",
-                    slot
+                    "[Coordinator] Learner detected gap, retrying learns for {} slots",
+                    slots.len()
                 ));
+                let retry_learns = RetryLearns {
+                    slots: slots.clone(),
+                };
                 if self.config.acceptors_send_learns {
-                    self.acceptor().retry_learn(slot); // TODO
+                    self.acceptor().retry_learns(&retry_learns, &self.node); // TODO: ?
                 } else {
-                    self.proposer().retry_learn(slot);
+                    self.proposer().retry_learns(&retry_learns);
                 }
             }
         }
@@ -354,7 +359,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             Agents::Proposer(proposer) => match message.payload {
                 MessagePayload::Promise(_) => proposer.handle_message(&message),
                 MessagePayload::Accepted(_) => proposer.handle_message(&message),
-                MessagePayload::RetryLearn(_) => {
+                MessagePayload::RetryLearns(_) => {
                     if !self.config.acceptors_send_learns {
                         proposer.handle_message(&message)
                     } else {
@@ -374,7 +379,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             Agents::Acceptor(acceptor) => match message.payload {
                 MessagePayload::Prepare(_) => acceptor.handle_message(&message),
                 MessagePayload::Accept(_) => acceptor.handle_message(&message),
-                MessagePayload::RetryLearn(_) => {
+                MessagePayload::RetryLearns(_) => {
                     if self.config.acceptors_send_learns {
                         acceptor.handle_message(&message)
                     } else {
@@ -409,7 +414,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 MessagePayload::Promise(_) => proposer.handle_message(&message),
                 MessagePayload::Accepted(_) => proposer.handle_message(&message),
 
-                MessagePayload::RetryLearn(_) => {
+                MessagePayload::RetryLearns(_) => {
                     if !self.config.acceptors_send_learns {
                         proposer.handle_message(&message)
                     } else {

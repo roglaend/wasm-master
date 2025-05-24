@@ -141,6 +141,7 @@ world client-server-world {
 }
 
 world storage-world {
+    import logger;
     export storage;
 }
 

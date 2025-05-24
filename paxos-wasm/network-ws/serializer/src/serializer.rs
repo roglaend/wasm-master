@@ -15,7 +15,7 @@ use bindings::paxos::default::network_types::{
 };
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
-    Operation, PValue, PaxosRole, Prepare, Promise, Value,
+    Operation, PValue, PaxosRole, Prepare, Promise, RetryLearns, Value,
 };
 
 /// Helper function that attempts to deserialize and returns a Result.
@@ -261,7 +261,15 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
             let sender_str = serialize_node(&h.sender);
             format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
         }
-        MessagePayload::RetryLearn(slot) => format!("retry-learn,{}", slot),
+        MessagePayload::RetryLearns(retries) => {
+            let slots = retries
+                .slots
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("|");
+            format!("retry-learn,slots:{}", slots)
+        }
         MessagePayload::Executed(exec) => {
             let entries = exec
                 .results
@@ -585,11 +593,15 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
         }
 
         "retry-learn" => {
-            if parts.len() == 2 {
-                parts[1]
-                    .parse()
-                    .map(MessagePayload::RetryLearn)
-                    .map_err(|_| "bad retry")
+            // expect exactly one more part: "slots:3|4|5"
+            if parts.len() == 2 && parts[1].starts_with("slots:") {
+                let list = &parts[1]["slots:".len()..];
+                let mut slots = Vec::new();
+                for tok in list.split('|') {
+                    let slot = tok.parse::<u64>().map_err(|_| "bad slot")?;
+                    slots.push(slot);
+                }
+                Ok(MessagePayload::RetryLearns(RetryLearns { slots }))
             } else {
                 Err("bad retry-learn")
             }

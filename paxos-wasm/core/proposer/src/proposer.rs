@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
+use bincode::config::Configuration;
 use serde::{Deserialize, Serialize};
 mod bindings {
     wit_bindgen::generate!({
@@ -29,7 +31,7 @@ use bindings::paxos::default::paxos_types::{
 use bindings::paxos::default::proposer_types::{
     AcceptResult, PrepareResult, ProposalEntry, ProposalStatus,
 };
-use bindings::paxos::default::storage;
+use bindings::paxos::default::storage::StorageResource;
 
 struct MyProposer;
 
@@ -38,7 +40,6 @@ impl Guest for MyProposer {
 }
 
 struct MyProposerResource {
-    node_id: String,
     num_acceptors: u64,
     ballot_delta: Ballot,
 
@@ -163,8 +164,6 @@ impl MyProposerResource {
     }
 }
 
-// TODO: Make the proposer also increase ballot if phase 1 fails and try again
-
 impl GuestProposerResource for MyProposerResource {
     fn new(
         is_leader: bool,
@@ -173,7 +172,8 @@ impl GuestProposerResource for MyProposerResource {
         node_id: String,
         config: RunConfig,
     ) -> Self {
-        let storage = StorageHelper::new(&node_id, config.persistent_storage);
+        let storage_key = &format!("node{}-proposer", node_id);
+        let storage = StorageHelper::new(&storage_key, config, config.persistent_storage);
 
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
@@ -183,7 +183,6 @@ impl GuestProposerResource for MyProposerResource {
         ));
 
         Self {
-            node_id,
             num_acceptors,
             ballot_delta: num_acceptors, // TODO: This right?
 
@@ -517,60 +516,105 @@ impl GuestProposerResource for MyProposerResource {
     }
 }
 
-/// This is the small on-disk shape we persist.
 #[derive(Deserialize, Serialize)]
-struct PersistentState {
+struct PersistentCurrentState {
     current_ballot: Ballot,
     adu: Slot,
 }
 
-/// Encapsulates all of our JSON + storage calls, and honors the `persistent_storage` flag.
 struct StorageHelper {
-    key: String,
+    store: StorageResource,
     enabled: bool,
+    bincode_config: Configuration,
+
+    flush_state_count: usize,
+    flush_state_interval: Duration,
+
+    pending: RefCell<usize>,
+    last_flush: RefCell<Instant>,
 }
 
 impl StorageHelper {
-    fn new(node_id: &str, enabled: bool) -> Self {
+    fn new(key: &str, run_config: RunConfig, enabled: bool) -> Self {
+        let now = Instant::now();
         StorageHelper {
-            key: format!("{}-proposer", node_id),
+            store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
+            bincode_config: bincode::config::standard(),
+
+            flush_state_count: run_config.storage_flush_change_count as usize,
+            flush_state_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            pending: RefCell::new(0),
+            last_flush: RefCell::new(now),
         }
     }
 
+    /// Called by the proposer every time we want to overwrite current-state.
+    /// Buffers up to `flush_state_count` calls or `flush_state_interval` duration.
     fn save_state(&self, current_ballot: Ballot, adu: Slot) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let ps = PersistentState {
+
+        let ps = PersistentCurrentState {
             current_ballot,
             adu,
         };
-        let json =
-            serde_json::to_string(&ps).map_err(|e| format!("serialize proposer state: {}", e))?;
-        storage::save_state(&self.key, &json).map_err(|e| format!("save_state: {}", e))
+        let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config)
+            .map_err(|e| format!("bincode encode: {}", e))?;
+
+        // Overwrite current state
+        self.store
+            .save_state(&blob)
+            .map_err(|e| format!("storage.save_state: {}", e))?;
+
+        // Bump counter & maybe flush
+        {
+            let mut cnt = self.pending.borrow_mut();
+            *cnt += 1;
+
+            let now = Instant::now();
+            let elapsed = now.duration_since(*self.last_flush.borrow());
+            if *cnt >= self.flush_state_count || elapsed >= self.flush_state_interval {
+                *cnt = 0;
+                self.flush_state()?;
+            }
+        }
+
+        Ok(())
     }
 
+    /// Performs the real fsync of current-state.bin
+    fn flush_state(&self) -> Result<(), String> {
+        *self.last_flush.borrow_mut() = Instant::now();
+        // fsync the file
+        self.store
+            .flush_state()
+            .map_err(|e| format!("storage.flush_state: {}", e))?;
+        logger::log_info("[Core Learner] flush_state: fsynced current-state");
+        Ok(())
+    }
+
+    /// On startup: load & decode exactly once
     fn load_state(&self, ballot: &Cell<Ballot>, adu: &Cell<Slot>) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let json = match storage::load_state(&self.key) {
-            Ok(s) => s,
-            Err(e) if e.contains("Failed to read") => return Ok(()), // no snapshot yet
-            Err(e) => return Err(format!("load_state: {}", e)),
+        let blob = match self.store.load_state() {
+            Ok(data) => data,
+            Err(e) if e.contains("no such file") => return Ok(()),
+            Err(e) => return Err(format!("storage.load_state: {}", e)),
         };
-        let ps: PersistentState = serde_json::from_str(&json)
-            .map_err(|e| format!("deserialize proposer state: {}", e))?;
+        let (ps, _): (PersistentCurrentState, usize) =
+            bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                .map_err(|e| format!("bincode decode: {}", e))?;
 
         ballot.set(ps.current_ballot);
         adu.set(ps.adu);
-
         logger::log_warn(&format!(
-            "[Proposer] Loaded state: current_ballot = {}, adu = {}",
+            "[Core Proposer] Loaded state: ballot={} adu={}",
             ps.current_ballot, ps.adu
         ));
-
         Ok(())
     }
 }
