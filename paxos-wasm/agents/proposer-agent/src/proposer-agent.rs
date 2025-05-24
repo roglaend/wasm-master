@@ -18,15 +18,13 @@ use bindings::exports::paxos::default::proposer_agent::{
     Guest as GuestProposerAgent, GuestProposerAgentResource,
 };
 use bindings::paxos::default::network_client::NetworkClientResource;
-use bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
     PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
-use bindings::paxos::default::{
-    failure_detector::FailureDetectorResource, logger, network_client, proposer::ProposerResource,
-};
+use bindings::paxos::default::{logger, network_client, proposer::ProposerResource};
 
 enum CollectedResponses<T, R> {
     Synchronous(Vec<T>),
@@ -49,7 +47,7 @@ pub struct MyProposerAgentResource {
 
     acceptors: Vec<Node>,
     learners: Vec<Node>,
-    failure_detector: Arc<FailureDetectorResource>,
+    all_nodes: Vec<Node>,
     network_client: Arc<network_client::NetworkClientResource>,
 
     // A mapping from Ballot to unique promises per node_id.
@@ -108,6 +106,11 @@ impl MyProposerAgentResource {
             .entry(promise.ballot)
             .or_insert_with(HashMap::new)
             .insert(sender.node_id, promise.clone());
+
+        logger::log_info(&format!(
+            "[Proposer Agent] Received promise for ballot {}, slot {} from {}.",
+            promise.ballot, promise.slot, sender.node_id
+        ));
 
         // Check for quorum in the highest ballot group.
         let promises = self.promises.borrow();
@@ -191,7 +194,7 @@ impl MyProposerAgentResource {
             payload: MessagePayload::Prepare(prepare),
         };
 
-        logger::log_debug(&format!(
+        logger::log_info(&format!(
             "[Proposer Agent] Broadcasting PREPARE: slot={}, ballot={}.",
             slot, ballot
         ));
@@ -409,12 +412,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             config,
         ));
 
-        let failure_delta = 10; // TODO: Make this dynamic
-        let failure_detector = Arc::new(FailureDetectorResource::new(
-            node.node_id.clone(),
-            &nodes,
-            failure_delta,
-        ));
         let network_client = Arc::new(NetworkClientResource::new());
 
         match proposer.load_state() {
@@ -444,10 +441,10 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             promises: RefCell::new(BTreeMap::new()),
             in_flight_accepted: RefCell::new(BTreeMap::new()),
             last_prepare_start: Cell::new(None),
-            failure_detector,
             network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
+            all_nodes: nodes,
         }
     }
 
@@ -624,6 +621,14 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn process_executed(&self, executed: Executed) {
         if executed.adu > self.proposer.get_adu() {
             self.proposer.set_adu(executed.adu);
+            // TODO: Put this into config
+            // should also have a better way to crash the node since adu with batch size
+            // wont necessarily be incremented by 1
+            // But do not know where its best to do this, since crashing at a specific slot when sending out
+            // would mean crash on the recovered node aswell for that slot
+            // if executed.adu == 1001 && self.proposer.is_leader() {
+            //     panic!("Testing panic recovery");
+            // }
         }
 
         if !self.proposer.is_leader() {
@@ -781,25 +786,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-            MessagePayload::Heartbeat(payload) => {
-                logger::log_debug(&format!(
-                    "[Proposer Agent] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                    payload.sender, payload.timestamp
-                ));
-                // Simply echo the heartbeat payload.
-                let response_payload = Heartbeat {
-                    sender: self.node.clone(),
-                    // timestamp = ... // TODO: Have a consistent way to define these?
-                    timestamp: payload.timestamp,
-                };
-                self.failure_detector
-                    .heartbeat(payload.sender.clone().node_id);
-                // TODO: Have a dedicated heartbeat ack payload type?
-                NetworkMessage {
-                    sender: self.node.clone(),
-                    payload: MessagePayload::Heartbeat(response_payload),
-                }
-            }
             MessagePayload::RetryLearn(slot) => {
                 logger::log_warn(&format!(
                     "[Proposer Agent] Handling LEARN RETRY: slots={:?}",
@@ -884,7 +870,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             PaxosPhase::PrepareSend => {
                 logger::log_debug("[Proposer Agent] Run loop: PrepareSend phase.");
                 let slot = self.proposer.get_adu() + 1;
-                let ballot = self.proposer.get_current_ballot();
+                let ballot = self.proposer.increase_ballot();
 
                 let prepare_result = self.prepare_phase(slot, ballot, vec![]);
                 if let PrepareResult::IsEventDriven = prepare_result {
@@ -911,14 +897,17 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         }
     }
 
-    // TODO : not used properly by any of the agents
-    fn failure_service(&self) {
-        let new_lead = self.failure_detector.checker();
-        if let Some(leader) = new_lead {
-            logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
-            if leader == self.node.node_id {
-                self.become_leader();
-            }
-        }
+    fn send_heartbeat(&self) {
+        let heartbeat_msg = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Heartbeat,
+        };
+
+        logger::log_info(&format!(
+            "[Proposer Agent] Sending heartbeat to all nodes: {:?}",
+            self.all_nodes
+        ));
+        self.network_client
+            .send_message_forget(&self.all_nodes, &heartbeat_msg);
     }
 }

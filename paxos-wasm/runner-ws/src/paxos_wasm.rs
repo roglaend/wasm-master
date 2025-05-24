@@ -93,18 +93,14 @@ pub struct NetworkClientResource {
 pub struct PaxosWasmtime {
     pub store: Mutex<Store<ComponentRunStates>>,
     pub bindings: bindings::PaxosRunnerWorld,
-    pub resource_handle: ResourceAny,
 }
 
 impl PaxosWasmtime {
     pub async fn new(
         engine: &Engine,
         node: bindings::paxos::default::paxos_types::Node,
-        nodes: Vec<bindings::paxos::default::paxos_types::Node>,
-        is_leader: bool,
-        run_config: RunConfig,
         log_level: Level,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let state = ComponentRunStates::new(node.clone(), log_level);
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
@@ -131,29 +127,31 @@ impl PaxosWasmtime {
             bindings::PaxosRunnerWorld::instantiate_async(&mut store, &composed_component, &linker)
                 .await?;
 
-        let guest = final_bindings.paxos_default_runner();
-        let resource = guest.runner_resource();
-
-        let resource_handle = resource
-            .call_constructor(&mut store, &node, &nodes, is_leader, run_config)
-            .await?;
-
         Ok(Self {
             store: Mutex::new(store),
             bindings: final_bindings,
-            resource_handle,
         })
     }
 
-    //Helper methods to access WASM guest.
-    pub fn guest<'a>(&'a self) -> &'a bindings::exports::paxos::default::runner::Guest {
-        self.bindings.paxos_default_runner()
-    }
+    pub async fn run(
+        &mut self,
+        node: bindings::paxos::default::paxos_types::Node,
+        nodes: Vec<bindings::paxos::default::paxos_types::Node>,
+        is_leader: bool,
+        run_config: RunConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut store = self.store.lock().await;
+        let guest = self.bindings.paxos_default_runner();
+        let resource = guest.runner_resource();
 
-    pub fn resource<'a>(
-        &'a self,
-    ) -> bindings::exports::paxos::default::runner::GuestRunnerResource<'a> {
-        self.guest().runner_resource()
+        let resource_handle = resource
+            .call_constructor(&mut *store, &node, &nodes, is_leader, run_config)
+            .await?;
+
+        // Call run
+        resource.call_run(&mut *store, resource_handle).await?;
+
+        Ok(())
     }
 }
 

@@ -108,7 +108,7 @@ interface failure-detector {
     use paxos-types.{node};
 
     resource failure-detector-resource {
-        constructor(node-id: u64, nodes: list<node>, delta: u64);
+        constructor(node: node, nodes: list<node>, delta: u64);
         checker: func() -> option<u64>;
         heartbeat: func(node: u64);
     }   
@@ -117,9 +117,10 @@ interface failure-detector {
 // TODO: Change these to use the node type instead of just node_ids?
 
 interface leader-detector {
+    use paxos-types.{node};
 
     resource leader-detector-resource {
-        constructor(nodes: list<u64>, local-node-id: u64);
+        constructor(nodes: list<node>, node: node);
         suspect: func(node: u64) -> option<u64>;
         restore: func(node: u64) -> option<u64>;
         nodes: func() -> list<u64>;

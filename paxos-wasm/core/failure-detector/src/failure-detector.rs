@@ -35,20 +35,18 @@ pub struct MyFailureDetectorResource {
 
 // TODO: Change this to take in and use the Node type more than just the node_id
 impl GuestFailureDetectorResource for MyFailureDetectorResource {
-    fn new(node_id: u64, nodes: Vec<Node>, _delta: u64) -> Self {
+    fn new(node: Node, mut nodes: Vec<Node>, _delta: u64) -> Self {
         let mut node_ids: Vec<u64> = nodes.iter().map(|node| node.node_id).collect();
         // Add yourself to the list of nodes
-        node_ids.push(node_id);
+        node_ids.push(node.node_id);
 
-        // TODO: Add the Node type as argument instead of node_id.
-        // TODO: We can then filter based on PaxosRole to only consider the relevant nodes for new leaders.
-        let ld = Arc::new(leader_detector::LeaderDetectorResource::new(
-            &node_ids, node_id,
-        ));
+        nodes.push(node.clone());
+
+        let ld = Arc::new(leader_detector::LeaderDetectorResource::new(&nodes, &node));
 
         Self {
             ld,
-            node_id,
+            node_id: node.node_id,
             nodes: node_ids,
             alive: Arc::new(Mutex::new(HashMap::new())),
             suspected: Arc::new(Mutex::new(HashMap::new())),
@@ -64,9 +62,11 @@ impl GuestFailureDetectorResource for MyFailureDetectorResource {
         // TODO : Get this back to host to increase the delta
         let _increase_delta = alive.keys().any(|node| suspected.get(node) == Some(&true));
 
-        logger::log_info(&format!("Current suspected nodes: {:?}", suspected.keys()));
+        logger::log_error(&format!("Current suspected nodes: {:?}", suspected.keys()));
         logger::log_info(&format!("Current alive nodes: {:?}", alive.keys()));
 
+        // The failure detector has status for all nodes, and calls the leader detecotor
+        // to check if any of the suspected nodes turns into a new leader
         let new_lead = self.nodes.iter().fold(None, |acc, node| {
             if !alive.contains_key(node) && !suspected.contains_key(node) {
                 // Node not known to be alive or suspected.

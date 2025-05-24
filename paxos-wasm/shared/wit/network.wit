@@ -41,7 +41,7 @@ interface paxos-client {
         constructor();
 
         send-request: func(leader-address: string, value: value) -> bool;
-        try-receive: func(leader-address: string) -> list<client-response>;
+        try-receive: func(leader-address: string) -> tuple<list<client-response>, bool>;
         shutdown-send: func(leader-address: string);
         shutdown-receive: func(leader-address: string);
         close: func(leader-address: string);

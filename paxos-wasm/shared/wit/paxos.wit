@@ -56,9 +56,11 @@ interface paxos-coordinator {
 
         is-leader: func() -> bool;
 
-        failure-service: func();
+        failure-service: func() -> option<u64>;
 
         run-paxos-loop: func() -> option<list<client-response>>;
+
+        send-heartbeat: func();
     } 
 }
 

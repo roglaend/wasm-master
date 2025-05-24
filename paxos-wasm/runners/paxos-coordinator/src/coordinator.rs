@@ -110,6 +110,20 @@ impl MyPaxosCoordinatorResource {
             let _ = self.proposer().process_executed(&exec);
         }
     }
+
+    fn send_heartbeat(&self) {
+        match &self.agents {
+            Agents::Proposer(proposer) | Agents::Coordinator { proposer, .. } => {
+                proposer.send_heartbeat();
+            }
+            Agents::Acceptor(acceptor) => {
+                acceptor.send_heartbeat();
+            }
+            Agents::Learner(learner) => {
+                learner.send_heartbeat();
+            }
+        }
+    }
 }
 
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
@@ -146,7 +160,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
         let failure_delta = 10; // TODO: Make this dynamic
         let failure_detector = Arc::new(failure_detector::FailureDetectorResource::new(
-            node.node_id.clone(),
+            &node,
             &nodes,
             failure_delta,
         ));
@@ -362,6 +376,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     }
                 }
                 MessagePayload::Executed(_) => proposer.handle_message(&message),
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Proposer: {:?}",
@@ -381,6 +407,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         ignore_msg
                     }
                 }
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Acceptor: {:?}",
@@ -392,6 +430,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
             Agents::Learner(learner) => match message.payload {
                 MessagePayload::Learn(_) => learner.handle_message(&message),
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Learner: {:?}",
@@ -421,17 +471,16 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
                 MessagePayload::Learn(_) => learner.handle_message(&message),
 
-                MessagePayload::Heartbeat(payload) => {
-                    logger::log_debug(&format!(
-                        "[Coordinator] Handling HEARTBEAT: sender: {:?}, timestamp={}",
-                        payload.sender, payload.timestamp
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
                     ));
-                    self.failure_detector
-                        .heartbeat(payload.sender.clone().node_id);
+                    self.failure_detector.heartbeat(message.sender.node_id);
 
                     NetworkMessage {
                         sender: self.node.clone(),
-                        payload: MessagePayload::Heartbeat(payload),
+                        payload: MessagePayload::Heartbeat,
                     }
                 }
                 _ => {
@@ -459,7 +508,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         todo!()
     }
 
-    fn failure_service(&self) {
+    fn failure_service(&self) -> Option<u64> {
         // TODO : What to do with leader change
         // TODO : Also need to handle change in timeout
         let new_lead = self.failure_detector.checker();
@@ -469,5 +518,10 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 self.proposer().become_leader();
             }
         }
+        new_lead
+    }
+
+    fn send_heartbeat(&self) {
+        self.send_heartbeat();
     }
 }

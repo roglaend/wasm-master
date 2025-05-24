@@ -75,7 +75,7 @@ interface proposer-agent {
 
         run-paxos-loop: func() -> option<list<client-response>>;
 
-        failure-service: func();
+        send-heartbeat: func();
     }
 }
 
@@ -96,6 +96,8 @@ interface acceptor-agent {
         handle-message: func(message: network-message) -> network-message;
     
         retry-learn: func(slot: slot);
+        
+        send-heartbeat: func();
     }
 }
 
@@ -129,5 +131,7 @@ interface learner-agent {
         handle-message: func(message: network-message) -> network-message;
     
         run-paxos-loop: func();
+        
+        send-heartbeat: func();
     }
 }
