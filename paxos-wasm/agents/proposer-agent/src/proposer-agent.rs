@@ -920,7 +920,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             payload: MessagePayload::Heartbeat,
         };
 
-        logger::log_warn(&format!(
+        logger::log_info(&format!(
             "[Proposer Agent] Sending heartbeat to all nodes: {:?}",
             self.all_nodes
         ));

@@ -381,6 +381,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                     }
                 }
                 MessagePayload::Executed(_) => proposer.handle_message(&message),
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Proposer: {:?}",
@@ -400,6 +412,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                         ignore_msg
                     }
                 }
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Acceptor: {:?}",
@@ -411,6 +435,18 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
             Agents::Learner(learner) => match message.payload {
                 MessagePayload::Learn(_) => learner.handle_message(&message),
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
+                        "[Coordinator] Handling HEARTBEAT: sender: {:?}",
+                        message.sender.node_id,
+                    ));
+                    self.failure_detector.heartbeat(message.sender.node_id);
+
+                    NetworkMessage {
+                        sender: self.node.clone(),
+                        payload: MessagePayload::Heartbeat,
+                    }
+                }
                 _ => {
                     logger::log_warn(&format!(
                         "[Coordinator] Received irrelevant message type for Learner: {:?}",
@@ -440,8 +476,8 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
                 MessagePayload::Learn(_) => learner.handle_message(&message),
 
-                MessagePayload::Heartbeat(payload) => {
-                    logger::log_warn(&format!(
+                MessagePayload::Heartbeat => {
+                    logger::log_info(&format!(
                         "[Coordinator] Handling HEARTBEAT: sender: {:?}",
                         message.sender.node_id,
                     ));
@@ -449,7 +485,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
                     NetworkMessage {
                         sender: self.node.clone(),
-                        payload: MessagePayload::Heartbeat(payload),
+                        payload: MessagePayload::Heartbeat,
                     }
                 }
                 _ => {
@@ -477,7 +513,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         todo!()
     }
 
-    fn failure_service(&self) {
+    fn failure_service(&self) -> Option<u64> {
         // TODO : What to do with leader change
         // TODO : Also need to handle change in timeout
         let new_lead = self.failure_detector.checker();
@@ -487,6 +523,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
                 self.proposer().become_leader();
             }
         }
+        new_lead
     }
 
     fn send_heartbeat(&self) {

@@ -62,7 +62,7 @@ impl GuestFailureDetectorResource for MyFailureDetectorResource {
         // TODO : Get this back to host to increase the delta
         let _increase_delta = alive.keys().any(|node| suspected.get(node) == Some(&true));
 
-        logger::log_info(&format!("Current suspected nodes: {:?}", suspected.keys()));
+        logger::log_error(&format!("Current suspected nodes: {:?}", suspected.keys()));
         logger::log_info(&format!("Current alive nodes: {:?}", alive.keys()));
 
         // The failure detector has status for all nodes, and calls the leader detecotor

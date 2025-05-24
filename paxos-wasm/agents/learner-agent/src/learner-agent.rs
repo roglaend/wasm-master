@@ -369,7 +369,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             payload: MessagePayload::Heartbeat,
         };
 
-        logger::log_warn(&format!(
+        logger::log_info(&format!(
             "[Learner Agent] Sending heartbeat to proposers: {:?}",
             self.proposers
         ));

@@ -14,7 +14,7 @@ bindings::export!(MyRunner with_types_in bindings);
 
 use bindings::exports::paxos::default::runner::{Guest, GuestRunnerResource};
 use bindings::paxos::default::logger;
-use bindings::paxos::default::paxos_types::{Operation, Value};
+use bindings::paxos::default::paxos_types::{Operation, PaxosRole, Value};
 use bindings::paxos::default::{
     client_server::ClientServerResource,
     network_server::NetworkServerResource,
@@ -233,14 +233,58 @@ impl MyRunnerResource {
         }
     }
 
+    // Now handles the case of leader change and start client_server on new leader
+    // could prob be done cleaner but this works for now
     fn failure_check(&self) {
+        let mut new_lead = None;
         if self.config.heartbeats {
             let now = Instant::now();
             if now.duration_since(self.last_failure_check.get())
                 >= Duration::from_millis(self.config.heartbeat_interval_ms * 5)
             {
-                self.paxos.failure_service();
+                new_lead = self.paxos.failure_service();
                 self.last_failure_check.set(now);
+            }
+            if let Some(new_lead) = new_lead {
+                match self.node.role {
+                    PaxosRole::Proposer => {
+                        if new_lead == self.node.node_id {
+                            let host = self
+                                .node
+                                .address
+                                .split(':')
+                                .next()
+                                .expect("invalid node.address, expected ip:port");
+                            let addr = format!("{}:{}", host, self.config.client_server_port);
+                            logger::log_error(&format!(
+                                "[Runner] New leader detected, setting up client server on {}",
+                                &addr,
+                            ));
+                            self.client_svr.setup_listener(&addr);
+                        }
+                    }
+                    PaxosRole::Acceptor => {}
+                    PaxosRole::Learner => {}
+                    PaxosRole::Coordinator => {
+                        if new_lead == self.node.node_id {
+                            let host = self
+                                .node
+                                .address
+                                .split(':')
+                                .next()
+                                .expect("invalid node.address, expected ip:port");
+                            let addr = format!("{}:{}", host, self.config.client_server_port);
+                            logger::log_error(&format!(
+                                "[Runner] New leader detected, setting up client server on {}",
+                                &addr,
+                            ));
+                            self.client_svr.setup_listener(&addr);
+                        }
+                    }
+                    _ => {
+                        panic!("Unknown role");
+                    }
+                }
             }
         }
     }
