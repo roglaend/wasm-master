@@ -99,10 +99,12 @@ impl MetricsHelper {
         if new_batch >= self.stats_batch {
             let start = self.batch_start.borrow().unwrap();
             let elapsed = now.duration_since(start);
-            let th = new_batch as f64 / elapsed.as_secs_f64();
+            let elapsed_secs = elapsed.as_secs_f64();
+            let th = new_batch as f64 / elapsed_secs;
+            let elapsed_ms = elapsed_secs * 1_000.0;
             logger::log_error(&format!(
-                "[Runner] Throughput: last {} responses in {:?} → {:.2} rsp/sec",
-                new_batch, elapsed, th
+                "[Runner] Throughput: last {} responses in {:.3}ms → {:.2} rsp/sec",
+                new_batch, elapsed_ms, th
             ));
             // reset batch
             self.batch_count.set(0);
@@ -129,7 +131,7 @@ impl MetricsHelper {
                 let elapsed = end.duration_since(start);
                 let th = total as f64 / elapsed.as_secs_f64();
                 logger::log_error(&format!(
-                    "[Runner] FINAL THROUGHPUT: {} responses over {:?} → {:.2} rsp/sec",
+                    "[Runner] FINAL THROUGHPUT: {:.3} responses over {:?} → {:.2} rsp/sec",
                     total, elapsed, th
                 ));
             }

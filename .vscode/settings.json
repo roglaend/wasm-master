@@ -18,6 +18,7 @@
         "pollables",
         "preopens",
         "protos",
+        "psnap",
         "splitn",
         "Tunables",
         "wasi",

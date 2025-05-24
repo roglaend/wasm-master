@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use bincode::config::Configuration;
 use serde::{Deserialize, Serialize};
@@ -172,7 +173,7 @@ impl GuestProposerResource for MyProposerResource {
         config: RunConfig,
     ) -> Self {
         let storage_key = &format!("node{}-proposer", node_id);
-        let storage = StorageHelper::new(&storage_key, config.persistent_storage);
+        let storage = StorageHelper::new(&storage_key, config, config.persistent_storage);
 
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
@@ -515,67 +516,103 @@ impl GuestProposerResource for MyProposerResource {
     }
 }
 
-/// The small on‐disk shape we persist.
 #[derive(Deserialize, Serialize)]
-struct PersistentState {
+struct PersistentCurrentState {
     current_ballot: Ballot,
     adu: Slot,
 }
 
-/// Encapsulates all of our bincode + storage_resource calls.
 struct StorageHelper {
     store: StorageResource,
     enabled: bool,
     bincode_config: Configuration,
+
+    flush_state_count: usize,
+    flush_state_interval: Duration,
+
+    pending: RefCell<usize>,
+    last_flush: RefCell<Instant>,
 }
 
 impl StorageHelper {
-    fn new(key: &str, enabled: bool) -> Self {
+    fn new(key: &str, run_config: RunConfig, enabled: bool) -> Self {
+        let now = Instant::now();
         StorageHelper {
-            store: StorageResource::new(key),
+            store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
             bincode_config: bincode::config::standard(),
+
+            flush_state_count: run_config.storage_flush_change_count as usize,
+            flush_state_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            pending: RefCell::new(0),
+            last_flush: RefCell::new(now),
         }
     }
 
-    /// Overwrite the latest snapshot with our small `PersistentState`.
+    /// Called by the proposer every time we want to overwrite current-state.
+    /// Buffers up to `flush_state_count` calls or `flush_state_interval` duration.
     fn save_state(&self, current_ballot: Ballot, adu: Slot) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let ps = PersistentState {
+
+        let ps = PersistentCurrentState {
             current_ballot,
             adu,
         };
         let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config)
             .map_err(|e| format!("bincode encode: {}", e))?;
+
+        // Overwrite current state
         self.store
             .save_state(&blob)
-            .map_err(|e| format!("storage_resource.save_state: {}", e))
+            .map_err(|e| format!("storage.save_state: {}", e))?;
+
+        // Bump counter & maybe flush
+        {
+            let mut cnt = self.pending.borrow_mut();
+            *cnt += 1;
+
+            let now = Instant::now();
+            let elapsed = now.duration_since(*self.last_flush.borrow());
+            if *cnt >= self.flush_state_count || elapsed >= self.flush_state_interval {
+                *cnt = 0;
+                self.flush_state()?;
+            }
+        }
+
+        Ok(())
     }
 
-    /// Read back only the latest snapshot.
+    /// Performs the real fsync of current-state.bin
+    fn flush_state(&self) -> Result<(), String> {
+        *self.last_flush.borrow_mut() = Instant::now();
+        // fsync the file
+        self.store
+            .flush_state()
+            .map_err(|e| format!("storage.flush_state: {}", e))?;
+        logger::log_info("[Core Learner] flush_state: fsynced current-state");
+        Ok(())
+    }
+
+    /// On startup: load & decode exactly once
     fn load_state(&self, ballot: &Cell<Ballot>, adu: &Cell<Slot>) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        // Attempt to load; if there’s no snapshot file, start fresh.
         let blob = match self.store.load_state() {
             Ok(data) => data,
-            // treat "file not found" as "no state yet"
-            Err(e) if e.contains("read") => return Ok(()),
-            Err(e) => return Err(format!("storage_resource.load_state: {}", e)),
+            Err(e) if e.contains("no such file") => return Ok(()),
+            Err(e) => return Err(format!("storage.load_state: {}", e)),
         };
-        // decode_from_slice gives us back (T, usize)
-        let (ps, _bytes_read): (PersistentState, usize) =
+        let (ps, _): (PersistentCurrentState, usize) =
             bincode::serde::decode_from_slice(&blob, self.bincode_config)
                 .map_err(|e| format!("bincode decode: {}", e))?;
 
         ballot.set(ps.current_ballot);
         adu.set(ps.adu);
-
         logger::log_warn(&format!(
-            "[Proposer] Loaded state: current_ballot = {}, adu = {}",
+            "[Core Proposer] Loaded state: ballot={} adu={}",
             ps.current_ballot, ps.adu
         ));
         Ok(())

@@ -71,15 +71,26 @@ run_config:
   persistent_storage: true
   
   # ─── storage tuning ───────────────────────────────
+  # How many snapshots to load at startup.
+  storage_load_snapshots: 3
+  
+   # How many snapshots to keep in rotation.
+  storage_max_snapshots: 5
+
+  # How often to flush the current overwritten state. 
+  storage_flush_state_count: 10
+
+  # Force a flush at least every N ms in low-volume periods
+  storage_flush_state_interval_ms: 100
+
   # Buffer up to 100 “change” records before flushing to disk.
-  #   - You’ll only lose at most ~100 writes on a crash.
   storage_flush_change_count: 100
 
-  # Force a flush at least every 200 ms in low-volume periods.
+  # Force a flush at least every N ms in low-volume periods.
   storage_flush_change_interval_ms: 200
 
-  # Take a full snapshot every 5 000 slots.
+  # Take a full snapshot every N slots.
   storage_snapshot_slot_interval: 5000
 
-  # Force a snapshot at least every 2 000 ms if slot-threshold not yet hit.
+  # Force a snapshot at least every N ms if slot-threshold not yet hit.
   storage_snapshot_time_interval_ms: 2000

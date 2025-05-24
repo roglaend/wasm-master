@@ -124,6 +124,11 @@ impl Config {
             client_server_port: r["client_server_port"].as_i64().unwrap() as u16,
             persistent_storage: r["persistent_storage"].as_bool().unwrap(),
 
+            storage_load_snapshots: r["storage_load_snapshots"].as_i64().unwrap() as u64,
+            storage_max_snapshots: r["storage_max_snapshots"].as_i64().unwrap() as u64,
+            storage_flush_state_count: r["storage_flush_state_count"].as_i64().unwrap() as u64,
+            storage_flush_state_interval_ms: r["storage_flush_state_interval_ms"].as_i64().unwrap()
+                as u64,
             storage_flush_change_count: r["storage_flush_change_count"].as_i64().unwrap() as u64,
             storage_flush_change_interval_ms: r["storage_flush_change_interval_ms"]
                 .as_i64()

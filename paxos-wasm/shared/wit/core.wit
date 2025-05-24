@@ -129,31 +129,35 @@ interface leader-detector {
 interface storage {
     type bytes = list<u8>;
     type state-and-changes = tuple<list<bytes>, list<bytes>>;
-
+  
     resource storage-resource {
-        /// Creates a new handle for "state/<key>/…"
-        constructor(key: string);
+        /// key = "state/<key>/..", max_snapshots = N
+        constructor(key: string, max-snapshots: u64);
 
-        // Force flush any changes in the changelog writer buffer to disk.
-        flush-changes: func() -> result<_, string>;
-      
-        /// Atomically overwrite the latest snapshot, then truncate the changelog.
-        save-state-segment: func(state: bytes, timestamp: string) -> result<_, string>;
-
-        /// Append one change‐record to the changelog.
-        save-change: func(change: bytes) -> result<_, string>;
-
-        /// Read back “snapshot.bin” plus all the changelog entries.
-        load-state-and-changes: func() -> result<state-and-changes, string>;
-
-        /// Overwrite the latest snapshot without touching the changelog.
+        /// overwrite or create “snapshot-current.bin”
         save-state: func(state: bytes) -> result<_, string>;
-
-        /// Read back only the latest snapshot.
+        /// read back “snapshot-current.bin”
         load-state: func() -> result<bytes, string>;
+        /// fsync the current snapshot file + its directory
+        flush-state: func() -> result<_, string>;
 
-        /// Delete everything under "state/<key>/".
+        /// append one change‐record
+        save-change: func(change: bytes) -> result<_, string>;
+        /// push the writer’s buffer all the way to disk
+        flush-changes: func() -> result<_, string>;
+
+        /// atomically write “snapshot-<timestamp>.bin” then truncate changelog
+        checkpoint: func(state: bytes, timestamp: string) -> result<_, string>;
+        /// return [ snapshot-<x1>.bin, …, snapshot-<xN>.bin ] in timestamp order
+        list-snapshots: func() -> list<string>;
+        /// delete oldest until ≤ retain
+        prune-snapshots: func(retain: u64) -> result<_, string>;
+
+        /// load N archived snapshots, then the changelog
+        load-state-and-changes: func(num-snapshots: u64) -> result<state-and-changes, string>;
+
+        // Delete the contents of "state/<key>/.."
         delete: func() -> bool;
     }
-
-}
+  }
+  

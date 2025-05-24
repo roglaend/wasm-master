@@ -3,7 +3,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod bindings {
     wit_bindgen::generate!({
@@ -192,6 +192,7 @@ impl GuestLearnerResource for MyLearnerResource {
             first, last, count, new_adu
         ));
 
+        drop(learned_map);
         self.storage.maybe_snapshot(new_adu, &self.learned);
         LearnResult::Execute(out)
     }
@@ -205,31 +206,30 @@ impl GuestLearnerResource for MyLearnerResource {
     }
 
     fn load_state(&self) -> Result<(), String> {
-        self.storage
-            .load_and_replay_state(&self.learned, &self.adu)
+        self.storage.load_and_replay_state(&self.learned, &self.adu)
     }
 }
 
-/// On‐disk snapshot structure
 #[derive(Serialize, Deserialize)]
-struct PersistentState {
+struct PersistentSnapshotState {
     adu: Slot,
     learned: BTreeMap<Slot, Value>,
 }
 
-/// Wraps the WASI storage_resource and bincode serialization for the learner.
 struct StorageHelper {
     store: StorageResource,
     enabled: bool,
     bincode_config: Configuration,
+    load_snapshots: u64,
+    max_snapshots: u64,
 
-    flush_change_count: usize,
-    flush_change_interval_ms: u64,
+    // changelog + snapshots
+    change_flush_count: usize,
+    change_flush_interval: Duration,
+    change_pending: RefCell<usize>,
+    change_last_flush: RefCell<Instant>,
     snapshot_slot_interval: u64,
-    snapshot_time_interval_ms: u64,
-
-    pending_changes: RefCell<usize>,
-    last_flush: RefCell<Instant>,
+    snapshot_time_interval: Duration,
     last_snapshot_slot: Cell<Slot>,
     last_snapshot_time: RefCell<Instant>,
 }
@@ -238,34 +238,28 @@ impl StorageHelper {
     fn new(key: &str, run_config: RunConfig, enabled: bool) -> Self {
         let now = Instant::now();
         StorageHelper {
-            store: StorageResource::new(key),
+            store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
             bincode_config: bincode::config::standard(),
+            load_snapshots: run_config.storage_load_snapshots,
+            max_snapshots: run_config.storage_max_snapshots,
 
-            flush_change_count: run_config.storage_flush_change_count as usize,
-            flush_change_interval_ms: run_config.storage_flush_change_interval_ms,
+            change_flush_count: run_config.storage_flush_change_count as usize,
+            change_flush_interval: Duration::from_millis(
+                run_config.storage_flush_change_interval_ms,
+            ),
+            change_pending: RefCell::new(0),
+            change_last_flush: RefCell::new(now),
             snapshot_slot_interval: run_config.storage_snapshot_slot_interval,
-            snapshot_time_interval_ms: run_config.storage_snapshot_time_interval_ms,
-
-            pending_changes: RefCell::new(0),
-            last_flush: RefCell::new(now),
+            snapshot_time_interval: Duration::from_millis(
+                run_config.storage_snapshot_time_interval_ms,
+            ),
             last_snapshot_slot: Cell::new(0),
             last_snapshot_time: RefCell::new(now),
         }
     }
 
-    /// actually flush the BufWriter once, amortizing many writes
-    fn flush_changes(&self) {
-        if !self.enabled {
-            return;
-        }
-        self.store.flush_changes().expect("flush_changes");
-        *self.pending_changes.borrow_mut() = 0;
-        *self.last_flush.borrow_mut() = Instant::now();
-        logger::log_info("[Core Learner] flushed changelog");
-    }
-
-    /// called on _every_ change
+    /// Append one learned‐entry to the changelog, flushing at your configured cadence.
     fn save_change(&self, entry: &LearnedEntry) {
         if !self.enabled {
             return;
@@ -273,78 +267,92 @@ impl StorageHelper {
         let blob = bincode::serde::encode_to_vec(entry, self.bincode_config).unwrap();
         self.store.save_change(&blob).unwrap();
 
-        // bump our counter
-        let mut cnt = self.pending_changes.borrow_mut();
+        let mut cnt = self.change_pending.borrow_mut();
         *cnt += 1;
-
-        // maybe flush now?
         let now = Instant::now();
-        if *cnt >= self.flush_change_count
-            || now.duration_since(*self.last_flush.borrow()).as_millis()
-                >= self.flush_change_interval_ms as u128
-        {
-            drop(cnt);
+        let elapsed = now.duration_since(*self.change_last_flush.borrow());
+        if *cnt >= self.change_flush_count || elapsed >= self.change_flush_interval {
+            *cnt = 0;
             self.flush_changes();
         }
     }
 
-    /// called by learner when ADU advances
-    fn maybe_snapshot(&self, new_adu: Slot, learned: &RefCell<BTreeMap<Slot, Value>>) {
+    fn flush_changes(&self) {
         if !self.enabled {
+            return;
+        }
+        self.store.flush_changes().unwrap();
+        *self.change_last_flush.borrow_mut() = Instant::now();
+        logger::log_info("[Core Learner] flush_changes: fsynced changelog");
+    }
+
+    /// Called whenever ADU advances past `new_adu`: may snapshot+prune.
+    fn maybe_snapshot(&self, new_adu: Slot, learned: &RefCell<BTreeMap<Slot, Value>>) {
+        if !self.enabled || self.snapshot_slot_interval == 0 {
             return;
         }
 
         let now = Instant::now();
-        let last_slot = self.last_snapshot_slot.get();
-        let slot_ok = new_adu.saturating_sub(last_slot) >= self.snapshot_slot_interval;
-        let time_ok = now
-            .duration_since(*self.last_snapshot_time.borrow())
-            .as_millis()
-            >= self.snapshot_time_interval_ms as u128;
+        let last = self.last_snapshot_slot.get();
+        let slot_ok = new_adu.saturating_sub(last) >= self.snapshot_slot_interval;
+        let time_ok =
+            now.duration_since(*self.last_snapshot_time.borrow()) >= self.snapshot_time_interval;
 
         if slot_ok || time_ok {
-            // first, push any buffered changes down
             self.flush_changes();
-
-            self.save_state_segment(learned, new_adu);
-
-            // record
+            self.checkpoint_snapshot(new_adu, learned);
             self.last_snapshot_slot.set(new_adu);
             *self.last_snapshot_time.borrow_mut() = now;
         }
     }
 
-    fn save_state_segment(&self, learned: &RefCell<BTreeMap<Slot, Value>>, adu: Slot) {
-        if !self.enabled || self.snapshot_slot_interval == 0 {
-            return;
-        }
-        let now = Instant::now();
+    /// Build & write a timestamped snapshot, prune on‐disk & in‐memory.
+    fn checkpoint_snapshot(&self, adu: Slot, learned: &RefCell<BTreeMap<Slot, Value>>) {
+        let start = Instant::now();
 
-        // Take the last N entries
-        let mut trimmed = BTreeMap::new();
-        for (&slot, val) in learned
+        // trim to the last S slots
+        let trimmed: BTreeMap<_, _> = learned
             .borrow()
             .iter()
             .rev()
             .take(self.snapshot_slot_interval as usize)
-        {
-            trimmed.insert(slot, val.clone());
-        }
+            .map(|(&s, v)| (s, v.clone()))
+            .collect();
 
-        let ps = PersistentState {
+        // serialize + write to “snapshot-<ts>.bin”
+        let ps = PersistentSnapshotState {
             adu,
-            learned: trimmed,
+            learned: trimmed.clone(),
         };
         let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config).unwrap();
         let ts = Utc::now().to_rfc3339();
+        self.store.checkpoint(&blob, &ts).unwrap();
+        logger::log_info(&format!("[Core Learner] checkpoint_snapshot at {}", ts));
 
-        self.store.save_state_segment(&blob, &ts).unwrap();
+        // prune in‐memory to last (R×S) slots
+        if self.max_snapshots > 0 && self.snapshot_slot_interval > 0 {
+            let keep_span = self
+                .snapshot_slot_interval
+                .saturating_mul(self.max_snapshots);
+            let mut map = learned.borrow_mut();
+            if let Some(&max_slot) = map.keys().last() {
+                let threshold = max_slot.saturating_sub(keep_span);
+                map.retain(|&slot, _| slot > threshold);
+                logger::log_info(&format!(
+                    "[Core Learner] pruned in-memory learned to slots > {}, now {} entries",
+                    threshold,
+                    map.len()
+                ));
+            }
+        }
+        let elapsed_ms = start.elapsed().as_millis();
         logger::log_warn(&format!(
-            "[Core Learner] Snapshot in {}μs",
-            now.elapsed().as_micros()
+            "[Core Learner] checkpoint_snapshot took {} ms",
+            elapsed_ms
         ));
     }
 
+    /// On startup: load last snapshots + replay changelog, restoring both `learned` and `adu`.
     fn load_and_replay_state(
         &self,
         learned: &RefCell<BTreeMap<Slot, Value>>,
@@ -354,39 +362,44 @@ impl StorageHelper {
             return Ok(());
         }
 
-        // Fetch persisted bytes
-        let (snapshots, changes) = self.store.load_state_and_changes()?;
+        // Pull down up to R snapshots + all changes
+        let (snapshots, changes) = self
+            .store
+            .load_state_and_changes(self.load_snapshots)
+            .map_err(|e| format!("storage.load_state_and_changes: {}", e))?;
 
-        // Restore from the last snapshot only
-        let mut snapshot_adu = 0;
+        // Restore all loaded snapshots
         {
-            let mut map = learned.borrow_mut();
-            if let Some(last_blob) = snapshots.last() {
-                let (ps, _): (PersistentState, usize) =
-                    bincode::serde::decode_from_slice(last_blob, self.bincode_config)
+            let mut m = learned.borrow_mut();
+            m.clear();
+            for blob in &snapshots {
+                let (ps, _): (PersistentSnapshotState, _) =
+                    bincode::serde::decode_from_slice(blob, self.bincode_config)
                         .map_err(|e| e.to_string())?;
-                map.clear();
-                map.extend(ps.learned.clone());
-                snapshot_adu = ps.adu;
+                // override/insert all learned entries
+                for (slot, val) in ps.learned {
+                    m.insert(slot, val);
+                }
+                // track ADU from each snapshot; at the end it will be the last one
                 adu.set(ps.adu);
             }
         }
 
-        // Replay every change in the changelog
+        // Replay changelog
         {
-            let mut map = learned.borrow_mut();
+            let mut m = learned.borrow_mut();
             for blob in changes {
-                let (entry, _): (LearnedEntry, usize) =
+                let (entry, _): (LearnedEntry, _) =
                     bincode::serde::decode_from_slice(&blob, self.bincode_config)
                         .map_err(|e| e.to_string())?;
-                map.insert(entry.slot, entry.value);
+                m.insert(entry.slot, entry.value);
             }
         }
 
-        // Advance adu over any contiguous tail from the changelog
+        // Advance ADU over any contiguous tail
         let mut next = adu.get() + 1;
-        for (&slot, _) in learned.borrow().range(next..) {
-            if slot == next {
+        for &s in learned.borrow().keys().skip_while(|&&s| s <= adu.get()) {
+            if s == next {
                 next += 1;
             } else {
                 break;
@@ -394,20 +407,11 @@ impl StorageHelper {
         }
         adu.set(next.saturating_sub(1));
 
-        // Reset our “last snapshot” watermark so we don’t immediately re-snapshot
-        self.last_snapshot_slot.set(snapshot_adu);
-        *self.last_snapshot_time.borrow_mut() = Instant::now();
-
-        // Reset our flush counter so we’ll batch new writes cleanly
-        *self.pending_changes.borrow_mut() = 0;
-        *self.last_flush.borrow_mut() = Instant::now();
-
         logger::log_warn(&format!(
             "[Core Learner] Restored adu={} with {} entries",
             adu.get(),
             learned.borrow().len()
         ));
-
         Ok(())
     }
 }

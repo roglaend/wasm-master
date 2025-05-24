@@ -15,8 +15,12 @@ interface paxos-types {
         client-server-port: u16,        // The port the client connects to on the leaders address.
         persistent-storage: bool,       // Toggle the usage of persistent storage.
 
+        storage-load-snapshots: u64,            // How many snapshots to load at startup.
+        storage-max-snapshots: u64,             // How many snapshots to keep in rotation.
+        storage-flush-state-count: u64,         // How often to flush the current overwritten state
+        storage-flush-state-interval-ms: u64,   // Force a flush at least every N ms in low-volume periods
         storage-flush-change-count: u64,        // How many change‐records to buffer before flush
-        storage-flush-change-interval-ms: u64,  // How much time between forced flushes
+        storage-flush-change-interval-ms: u64,  // How much time between forced flushes of changes
         storage-snapshot-slot-interval: u64,    // How many slots between full snapshots
         storage-snapshot-time-interval-ms: u64  // Max time between snapshots, regardless of slot progress
 
