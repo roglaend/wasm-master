@@ -4,7 +4,7 @@ set -euo pipefail
 # ─── Tunables ────────────────────────────────────────────
 MODE="persistent" # "oneshot" or "persistent"
 LEADER="127.0.0.1:60000"
-TIMEOUT_SECS=60 # used only by client logic now
+TIMEOUT_SECS=120 # used only by client logic now
 TARGET="release" # "release or "debug"
 
 
@@ -13,9 +13,9 @@ BIN="./target/${TARGET}/modular-ws-client"
 # echo "Removing existing client log files..."'
 # rm -f "${LOG_DIR}/client"*.log
 
-TOTAL_REQUESTS=10000
+TOTAL_REQUESTS=100000
 NUM_PROCESSES=10
-LOGICAL_CLIENTS_PER_PROCESS=1
+LOGICAL_CLIENTS_PER_PROCESS=50
 
 BENCHMARK_NAME="crash-test"
 BENCHMARK_COUNT=$((NUM_PROCESSES * LOGICAL_CLIENTS_PER_PROCESS))

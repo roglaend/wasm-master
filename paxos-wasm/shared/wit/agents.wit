@@ -1,5 +1,5 @@
 interface proposer-agent {
-    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn, executed};
+    use paxos-types.{client-response, node, slot, ballot, client-request, value, proposal, prepare, promise, accept, accepted, run-config, paxos-phase, learn, retry-learns, executed};
     use proposer-types.{prepare-result, accept-result, proposal-status};
     use network-types.{network-message};
 
@@ -53,7 +53,7 @@ interface proposer-agent {
         /// Up to "batch_size" client‐responses queued for sending.
         collect-client-responses: func() -> list<client-response>;
 
-        retry-learn: func(slot: slot);
+        retry-learns: func(retry-learns: retry-learns);
 
         /// Handles incoming network messages relevant to the proposer.
         handle-message: func(message: network-message) -> network-message;
@@ -76,11 +76,13 @@ interface proposer-agent {
         run-paxos-loop: func() -> option<list<client-response>>;
 
         send-heartbeat: func();
+        
+        maybe-flush-state: func();
     }
 }
 
 interface acceptor-agent {
-    use paxos-types.{node, slot, ballot, value, run-config, learn};
+    use paxos-types.{node, slot, ballot, value, run-config, learn, retry-learns};
     use acceptor-types.{promise-result, accepted-result};
     use network-types.{network-message};
 
@@ -95,9 +97,13 @@ interface acceptor-agent {
 
         handle-message: func(message: network-message) -> network-message;
     
-        retry-learn: func(slot: slot);
+        retry-learns: func(retry-learns: retry-learns, sender: node);
+
+        run-paxos-loop: func();
         
         send-heartbeat: func();
+
+        maybe-flush-state: func();
     }
 }
 
@@ -131,7 +137,9 @@ interface learner-agent {
         handle-message: func(message: network-message) -> network-message;
     
         run-paxos-loop: func();
-        
+
         send-heartbeat: func();
+        
+        maybe-flush-state: func();
     }
 }

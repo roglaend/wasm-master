@@ -11,7 +11,8 @@ path = "src/acceptor.rs"
 chrono = "0.4.41"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-wit-bindgen = "0.41"
+bincode = { version = "2", features = ["serde"] }
+wit-bindgen = "0.42"
 
 # shared-utils = { path = "../../shared/utils" }
 

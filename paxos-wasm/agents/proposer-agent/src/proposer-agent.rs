@@ -21,7 +21,7 @@ use bindings::paxos::default::network_client::NetworkClientResource;
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
     Accept, Accepted, Ballot, ClientResponse, CmdResult, Executed, Learn, Node, PaxosPhase,
-    PaxosRole, Prepare, Promise, Proposal, RunConfig, Slot, Value,
+    PaxosRole, Prepare, Promise, Proposal, RetryLearns, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::proposer_types::{AcceptResult, PrepareResult, ProposalStatus};
 use bindings::paxos::default::{logger, network_client, proposer::ProposerResource};
@@ -415,7 +415,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let network_client = Arc::new(NetworkClientResource::new());
 
         match proposer.load_state() {
-            Ok(_) => logger::log_info("[Proposer Agent] Loaded state successfully."),
+            Ok(_) => logger::log_warn("[Proposer Agent] Loaded state successfully."),
             Err(e) => logger::log_warn(&format!(
                 "[Proposer Agent] Failed to load state. Ignore if first startup: {}",
                 e
@@ -625,7 +625,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             // should also have a better way to crash the node since adu with batch size
             // wont necessarily be incremented by 1
             // But do not know where its best to do this, since crashing at a specific slot when sending out
-            // would mean crash on the recovered node aswell for that slot
+            // would mean crash on the recovered node as well for that slot
             // if executed.adu == 1001 && self.proposer.is_leader() {
             //     panic!("Testing panic recovery");
             // }
@@ -691,44 +691,46 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         }
     }
 
-    fn retry_learn(&self, slot: Slot) {
-        // if it’s already been chosen/commit‐pending, just resend the Learn
-        if let Some(chosen) = self.get_proposal_by_status(slot, ProposalStatus::CommitPending) {
-            let learn = Learn {
-                slot,
-                value: chosen.value.clone(),
-            };
-            logger::log_warn(&format!(
-                "[Proposer Agent] Retrying LEARN for slot {} → {:?}",
-                slot, learn.value
-            ));
-            self.broadcast_learn(learn);
-            return;
-        }
+    fn retry_learns(&self, retry_learns: RetryLearns) {
+        for slot in retry_learns.slots {
+            // if it’s already been chosen/commit‐pending, just resend the Learn
+            if let Some(chosen) = self.get_proposal_by_status(slot, ProposalStatus::CommitPending) {
+                let learn = Learn {
+                    slot,
+                    value: chosen.value.clone(),
+                };
+                logger::log_warn(&format!(
+                    "[Proposer Agent] Retrying LEARN for slot {} → {:?}",
+                    slot, learn.value
+                ));
+                self.broadcast_learn(learn);
+                continue;
+            }
 
-        // otherwise if it’s still in flight, resend the Accept
-        if let Some(in_flight) = self.get_proposal_by_status(slot, ProposalStatus::InFlight) {
-            let accept = Accept {
-                slot: in_flight.slot,
-                ballot: in_flight.ballot,
-                value: in_flight.value.clone(),
-            };
-            logger::log_warn(&format!(
-                "[Proposer Agent] Retrying ACCEPT for slot {} → {:?}",
-                slot, accept.value
-            ));
-            // we can either call our accept_phase helper or simply fire-and-forget:
-            let _ = self.accept_phase(accept.value, accept.slot, accept.ballot, vec![]);
-            return;
-        }
+            // otherwise if it’s still in flight, resend the Accept
+            if let Some(in_flight) = self.get_proposal_by_status(slot, ProposalStatus::InFlight) {
+                let accept = Accept {
+                    slot: in_flight.slot,
+                    ballot: in_flight.ballot,
+                    value: in_flight.value.clone(),
+                };
+                logger::log_warn(&format!(
+                    "[Proposer Agent] Retrying ACCEPT for slot {} → {:?}",
+                    slot, accept.value
+                ));
+                // we can either call our accept_phase helper or simply fire-and-forget:
+                let _ = self.accept_phase(accept.value, accept.slot, accept.ballot, vec![]);
+                continue;
+            }
 
-        // TODO: Handle the case where a proposal has the Chosen status?
-        // TODO: Meaning it was never retrieved by the reserve_next_chosen_proposal function and therefore never sent to learners.
-        // Nothing known to retry
-        logger::log_warn(&format!(
-            "[Proposer Agent] No in-flight or commit-pending proposal for slot {}; nothing to retry",
-            slot
-        ));
+            // TODO: Handle the case where a proposal has the Chosen status?
+            // TODO: Meaning it was never retrieved by the reserve_next_chosen_proposal function and therefore never sent to learners.
+            // Nothing known to retry
+            logger::log_warn(&format!(
+                "[Proposer Agent] No in-flight or commit-pending proposal for slot {}; nothing to retry",
+                slot
+            ));
+        }
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -786,18 +788,20 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
-            MessagePayload::RetryLearn(slot) => {
+            MessagePayload::RetryLearns(retry_learns) => {
+                let slots = &retry_learns.slots;
+                let count = slots.len();
+                let first = slots.first().map_or("none".to_string(), |s| s.to_string());
                 logger::log_warn(&format!(
-                    "[Proposer Agent] Handling LEARN RETRY: slots={:?}",
-                    slot
+                    "[Proposer Agent Agent] Handling RETRY LEARNS: number of slots={} first slot={}",
+                    count, first,
                 ));
                 if !self.proposer.is_leader() {
-                    logger::log_warn(&format!(
-                        "[Proposer Agent] RetryLearn for slots {:?} received but not a leader. Ignoring",
-                        slot
+                    logger::log_info(&format!(
+                        "[Proposer Agent] RetryLearns, but not a leader. Ignoring",
                     ));
                 } else {
-                    self.retry_learn(slot);
+                    self.retry_learns(retry_learns);
                 }
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -909,5 +913,15 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         ));
         self.network_client
             .send_message_forget(&self.all_nodes, &heartbeat_msg);
+    }
+
+    /// Try to flush the on‐disk state, logging any error.
+    fn maybe_flush_state(&self) {
+        if let Err(e) = self.proposer.maybe_flush() {
+            logger::log_error(&format!(
+                "[Proposer Agent] failed to flush proposer state: {}",
+                e
+            ));
+        }
     }
 }

@@ -17,19 +17,17 @@ fn main() {
     build_and_plug(
         target_triple,
         &["proposer-agent"],
-        // &["proposer"],
-        &["proposer"],
+        &["proposer_storage"],
         "proposer_agent",
         "composed_proposer_agent",
     );
-    println!("Created temp_composed_proposer_agent");
+    println!("Created composed_proposer_agent");
 
     // Build composite acceptor agent:
     build_and_plug(
         target_triple,
         &["acceptor-agent"],
-        // &["acceptor"],
-        &["acceptor"],
+        &["acceptor_storage"],
         "acceptor_agent",
         "composed_acceptor_agent",
     );
@@ -39,24 +37,11 @@ fn main() {
     build_and_plug(
         target_triple,
         &["learner-agent"],
-        // &["learner", "kv_store"],
-        &["learner", "kv_store"],
+        &["learner_storage", "kv_store"],
         "learner_agent",
         "composed_learner_agent",
     );
     println!("Created composed_learner_agent");
-
-    // Re-plug the failure service composition:
-    // Plug "composed_failure_service" into the previously built temp_composed_proposer_agent
-    // to yield the final composed proposer agent.
-    // build_and_plug(
-    //     target_triple,
-    //     &[],
-    //     &["composed_failure_service"],
-    //     "temp_composed_proposer_agent",
-    //     "composed_proposer_agent",
-    // );
-    println!("Created composed_proposer_agent");
 
     println!("All compose jobs complete");
 }

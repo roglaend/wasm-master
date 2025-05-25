@@ -1,8 +1,10 @@
+use bincode::config::Configuration;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::time::{Duration, Instant};
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -28,7 +30,7 @@ use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{
     Accepted, Ballot, PValue, Promise, RunConfig, Slot, Value,
 };
-use bindings::paxos::default::storage;
+use bindings::paxos::default::storage::StorageResource;
 
 pub struct MyAcceptor;
 
@@ -38,7 +40,6 @@ impl Guest for MyAcceptor {
 
 pub struct MyAcceptorResource {
     config: RunConfig,
-    node_id: String,
 
     promises: RefCell<Vec<Ballot>>,
     accepted: RefCell<BTreeMap<Slot, PValue>>,
@@ -74,14 +75,10 @@ impl MyAcceptorResource {
 
 impl GuestAcceptorResource for MyAcceptorResource {
     fn new(node_id: String, config: RunConfig) -> Self {
-        let storage = StorageHelper::new(
-            &node_id,
-            500, // TODO: Get from config
-            config.persistent_storage,
-        );
+        let storage_key = &format!("node{}-acceptor", node_id);
+        let storage = StorageHelper::new(storage_key, config, config.persistent_storage);
         Self {
             config,
-            node_id,
             promises: RefCell::new(Vec::new()),
             accepted: RefCell::new(BTreeMap::new()),
             storage,
@@ -107,6 +104,13 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 "[Core Acceptor] Added a new promise for ballot {} (was {})",
                 ballot, highest_ballot
             ));
+
+            if let Err(e) = self.storage.save_current_state(&self.promises.borrow()) {
+                logger::log_error(&format!(
+                    "[Core Acceptor] failed to persist promises: {}",
+                    e
+                ));
+            }
         } else {
             logger::log_info(&format!(
                 "[Core Acceptor] Received idempotent prepare for slot {} with ballot {}", // TODO: Ignore this case?
@@ -138,25 +142,23 @@ impl GuestAcceptorResource for MyAcceptorResource {
             return AcceptedResult::Rejected(current_promised);
         }
 
+        // First check if we already have an accepted value for this slot
         let mut accepted_map = self.accepted.borrow_mut();
         if let Some(existing) = accepted_map.get(&slot) {
             // If the accepted proposal already exists:
             if existing.ballot == ballot && existing.value == Some(value.clone()) {
-                // Idempotent case: the same value is being re-accepted.  // TODO: Might not be needed, could maybe just ignore instead.
+                // Idempotent case: the same value is being re-accepted.
                 logger::log_info(&format!(
                     "[Core Acceptor] Re-accepted idempotently for slot {} with ballot {}",
                     slot, ballot
                 ));
-
                 return AcceptedResult::Accepted(Accepted {
                     slot,
                     ballot,
                     success: true,
                 });
             } else if existing.value == Some(value.clone()) {
-                // this could happen on leader failure where leader proposes values from promises to get them executed
-                // the leader could probably directly commit such a value but then we cant use them in the
-                // priority queue as we have now
+                // This could happen on leader failure where the same value is proposed again
                 return AcceptedResult::Accepted(Accepted {
                     slot,
                     ballot,
@@ -170,32 +172,36 @@ impl GuestAcceptorResource for MyAcceptorResource {
                 ));
                 return AcceptedResult::Rejected(existing.ballot);
             }
-        } else {
-            // No proposal has been accepted for this slot yet; accept the new proposal.
-            let p_value = PValue {
-                slot,
-                ballot,
-                value: Some(value.clone()),
-            };
-            accepted_map.insert(slot, p_value.clone());
-            logger::log_info(&format!(
-                "[Core Acceptor] Accepted proposal for slot {} with ballot {}",
-                slot, ballot
-            ));
-            drop(accepted_map);
-
-            self.storage
-                .save_change(&p_value)
-                .expect("Failed to save change");
-            self.storage
-                .maybe_snapshot(slot, &self.promises, &self.accepted);
-
-            return AcceptedResult::Accepted(Accepted {
-                slot,
-                ballot,
-                success: true,
-            });
         }
+
+        // No proposal has been accepted for this slot yet; accept the new proposal.
+        let p_value = PValue {
+            slot,
+            ballot,
+            value: Some(value.clone()),
+        };
+        accepted_map.insert(slot, p_value.clone());
+        logger::log_info(&format!(
+            "[Core Acceptor] Accepted proposal for slot {} with ballot {}",
+            slot, ballot
+        ));
+        drop(accepted_map);
+
+        // Persist the single change
+        if let Err(e) = self.storage.save_change(&p_value) {
+            logger::log_error(&format!("[Core Acceptor] failed to persist change: {}", e));
+        }
+
+        // Maybe snapshot every Nth slot
+        if let Err(e) = self.storage.maybe_snapshot(slot, &self.accepted) {
+            logger::log_error(&format!("[Core Acceptor] failed during snapshot: {}", e));
+        }
+
+        AcceptedResult::Accepted(Accepted {
+            slot,
+            ballot,
+            success: true,
+        })
     }
 
     fn get_accepted(&self, slot: Slot) -> Option<PValue> {
@@ -226,116 +232,275 @@ impl GuestAcceptorResource for MyAcceptorResource {
 
         res
     }
+
+    fn maybe_flush(&self) -> Result<(), String> {
+        self.storage.maybe_flush_current_state()?;
+        self.storage.maybe_flush_changes()?;
+        Ok(())
+    }
 }
 
-/// The on‐disk shape of a snapshot.
-#[derive(Deserialize, Serialize)]
-struct PersistentState {
+#[derive(Serialize, Deserialize)]
+struct PersistentCurrentState {
     promises: Vec<Ballot>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistentSnapshotState {
     accepted: BTreeMap<Slot, PValue>,
 }
 
-/// Encapsulates *all* of the serde/json + storage calls for the Acceptor.
 struct StorageHelper {
-    key: String,
-    snapshot_interval: usize,
+    store: StorageResource,
     enabled: bool,
+    run_config: RunConfig,
+    bincode_config: Configuration,
+
+    // current-state
+    state_flush_interval: Duration,
+    state_pending: RefCell<u64>,
+    state_last_flush: RefCell<Instant>,
+
+    // changelog
+    change_flush_interval: Duration,
+    change_pending: RefCell<u64>,
+    change_last_flush: RefCell<Instant>,
+
+    // snapshots
+    snapshot_slot_offset: u64,
+    last_snapshot_slot: Cell<Slot>,
 }
 
 impl StorageHelper {
-    fn new(node_id: &str, snapshot_interval: usize, enabled: bool) -> Self {
-        Self {
-            key: format!("{}-acceptor", node_id),
-            snapshot_interval,
+    fn new(key: &str, run_config: RunConfig, enabled: bool) -> Self {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let offset = (hasher.finish() as u64) % run_config.storage_snapshot_slot_interval;
+
+        let now = Instant::now();
+        StorageHelper {
+            store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
+            run_config: run_config,
+            bincode_config: bincode::config::standard(),
+
+            // promises path tuning
+            state_flush_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            state_pending: RefCell::new(0),
+            state_last_flush: RefCell::new(now),
+
+            // accepted path tuning
+            change_flush_interval: Duration::from_millis(
+                run_config.storage_flush_change_interval_ms,
+            ),
+            change_pending: RefCell::new(0),
+            change_last_flush: RefCell::new(now),
+
+            snapshot_slot_offset: offset,
+            last_snapshot_slot: Cell::new(0),
         }
     }
 
-    fn merge_snapshots(
-        &self,
-        snaps: &[String],
-        promises: &RefCell<Vec<Ballot>>,
-        accepted: &RefCell<BTreeMap<Slot, PValue>>,
-    ) -> Result<(), String> {
+    /// Write out the new promises vector, buffering fsyncs.
+    fn save_current_state(&self, promises: &Vec<Ballot>) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let mut p = promises.borrow_mut();
-        let mut a = accepted.borrow_mut();
-        for json in snaps {
-            let partial: PersistentState =
-                serde_json::from_str(json).map_err(|e| format!("Bad snapshot JSON: {}", e))?;
-            p.extend(partial.promises);
-            a.extend(partial.accepted);
+        let blob = bincode::serde::encode_to_vec(
+            &PersistentCurrentState {
+                promises: promises.clone(),
+            },
+            self.bincode_config,
+        )
+        .map_err(|e| format!("bincode encode promises: {}", e))?;
+
+        self.store
+            .save_state(&blob)
+            .map_err(|e| format!("storage.save_state promises: {}", e))?;
+
+        *self.state_pending.borrow_mut() += 1;
+        self.maybe_flush_current_state()
+    }
+
+    fn maybe_flush_current_state(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let mut pending = self.state_pending.borrow_mut();
+        if *pending == 0 {
+            return Ok(());
+        }
+
+        let elapsed = self.state_last_flush.borrow().elapsed();
+        if *pending >= self.run_config.storage_flush_state_count
+            || elapsed >= self.state_flush_interval
+        {
+            self.flush_current_state()?;
+            *pending = 0;
         }
         Ok(())
     }
 
-    fn apply_changes(
-        &self,
-        changes: &[String],
-        accepted: &RefCell<BTreeMap<Slot, PValue>>,
-    ) -> Result<(), String> {
+    /// fsync the promises file (current-state.bin)
+    fn flush_current_state(&self) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let mut a = accepted.borrow_mut();
-        for json in changes {
-            let p_value: PValue =
-                serde_json::from_str(json).map_err(|e| format!("Bad change JSON: {}", e))?;
-            a.insert(p_value.slot, p_value);
+        *self.state_last_flush.borrow_mut() = Instant::now();
+        self.store
+            .flush_state()
+            .map_err(|e| format!("storage.flush_state promises: {}", e))?;
+        logger::log_info("[Core Acceptor] flush_current_state: fsynced current-state");
+        Ok(())
+    }
+
+    /// Read back the promises vector
+    fn load_current_state(&self, promises: &RefCell<Vec<Ballot>>) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        match self.store.load_state() {
+            Ok(blob) => {
+                let (ps, _): (PersistentCurrentState, usize) =
+                    bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                        .map_err(|e| format!("bincode decode promises: {}", e))?;
+                let mut p = promises.borrow_mut();
+                *p = ps.promises;
+                logger::log_warn(&format!("[Core Acceptor] Loaded {} promises", p.len()));
+                Ok(())
+            }
+            Err(e) if e.contains("no such file") => Ok(()),
+            Err(e) => Err(format!("storage.load_state promises: {}", e)),
+        }
+    }
+
+    // Save a new entry to the changelog
+    fn save_change(&self, pv: &PValue) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let blob = bincode::serde::encode_to_vec(pv, self.bincode_config)
+            .map_err(|e| format!("bincode encode changes: {}", e))?;
+        self.store.save_change(&blob)?;
+
+        *self.change_pending.borrow_mut() += 1;
+        self.maybe_flush_changes()
+    }
+
+    fn maybe_flush_changes(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let mut pending = self.change_pending.borrow_mut();
+        if *pending == 0 {
+            return Ok(());
+        }
+
+        let elapsed = self.change_last_flush.borrow().elapsed();
+        if *pending >= self.run_config.storage_flush_change_count
+            || elapsed >= self.change_flush_interval
+        {
+            self.flush_changes()?;
+            *pending = 0;
         }
         Ok(())
     }
 
-    fn save_state_segment(
+    fn flush_changes(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        self.store.flush_changes()?;
+        *self.change_last_flush.borrow_mut() = Instant::now();
+        logger::log_info("[Core Acceptor] flush_changes: fsynced changelog");
+        Ok(())
+    }
+
+    fn maybe_snapshot(
         &self,
-        promises: &RefCell<Vec<Ballot>>,
+        slot: Slot,
+        accepted: &RefCell<BTreeMap<Slot, PValue>>,
+    ) -> Result<(), String> {
+        if !self.enabled || self.run_config.storage_snapshot_slot_interval == 0 {
+            return Ok(());
+        }
+
+        let interval = self.run_config.storage_snapshot_slot_interval;
+        let offset = self.snapshot_slot_offset;
+        let last = self.last_snapshot_slot.get();
+
+        // only snapshot when slot ≡ offset (mod interval) AND we haven't already snapped this slot
+        if slot % interval == offset && slot > last {
+            self.flush_changes()?;
+            self.checkpoint_snapshot(accepted)?;
+            self.last_snapshot_slot.set(slot);
+        }
+
+        Ok(())
+    }
+
+    /// Archive a full snapshot of `accepted`, rotate on‐disk, and then prune in‐memory.
+    fn checkpoint_snapshot(
+        &self,
         accepted: &RefCell<BTreeMap<Slot, PValue>>,
     ) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        let now = Instant::now();
-        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+        let start = Instant::now();
 
-        // Trim to last `snapshot_interval` entries
-        let mut a_trim = BTreeMap::new();
-        for (&slot, v) in accepted.borrow().iter().rev().take(self.snapshot_interval) {
-            a_trim.insert(slot, v.clone());
+        // Build a trimmed snapshot of the last `snapshot_slot_interval` slots
+        let trimmed: BTreeMap<_, _> = accepted
+            .borrow()
+            .iter()
+            .rev()
+            .take(self.run_config.storage_snapshot_slot_interval as usize)
+            .map(|(&s, pv)| (s, pv.clone()))
+            .collect();
+
+        // Serialize and write a new on‐disk snapshot, rotating older ones
+        let blob = bincode::serde::encode_to_vec(
+            &PersistentSnapshotState {
+                accepted: trimmed.clone(),
+            },
+            self.bincode_config,
+        )
+        .map_err(|e| format!("bincode encode snapshot: {}", e))?;
+
+        let ts = Utc::now().to_rfc3339();
+        self.store.checkpoint(&blob, &ts)?;
+        logger::log_info(&format!("[Core Acceptor] checkpoint_snapshot at {}", ts));
+
+        // Prune in‐memory `accepted` to the last R × S slots
+        if self.run_config.storage_max_snapshots > 0
+            && self.run_config.storage_snapshot_slot_interval > 0
+        {
+            let keep_span = self
+                .run_config
+                .storage_snapshot_slot_interval
+                .saturating_mul(self.run_config.storage_max_snapshots);
+            let mut map = accepted.borrow_mut();
+            if let Some(&max_slot) = map.keys().last() {
+                let threshold = max_slot.saturating_sub(keep_span);
+                map.retain(|&slot, _| slot > threshold);
+                logger::log_info(&format!(
+                    "[Core Acceptor] pruned in-memory accepted to slots > {}, now {} entries",
+                    threshold,
+                    map.len()
+                ));
+            }
         }
-
-        let snapshot = PersistentState {
-            promises: promises.borrow().clone(),
-            accepted: a_trim,
-        };
-        let json =
-            serde_json::to_string(&snapshot).map_err(|e| format!("serialize snapshot: {}", e))?;
-
-        storage::save_state_segment(&self.key, &json, &timestamp)?;
-
+        let elapsed_ms = start.elapsed().as_millis();
         logger::log_warn(&format!(
-            "[Core Acceptor] Saved snapshot in {} micros",
-            now.elapsed().as_micros()
+            "[Core Acceptor] checkpoint_snapshot took {} ms",
+            elapsed_ms
         ));
         Ok(())
     }
 
-    fn save_change(&self, p_value: &PValue) -> Result<(), String> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let now = Instant::now();
-        let json =
-            serde_json::to_string(p_value).map_err(|e| format!("serialize change: {}", e))?;
-        storage::save_change(&self.key, &json)?;
-        logger::log_info(&format!(
-            "[Core Acceptor] Saved change in {} micros",
-            now.elapsed().as_micros()
-        ));
-        Ok(())
-    }
-
+    /// On startup or reset: load promises + accepted
     fn load_and_combine_state(
         &self,
         promises: &RefCell<Vec<Ballot>>,
@@ -344,39 +509,45 @@ impl StorageHelper {
         if !self.enabled {
             return Ok(());
         }
-        let now = Instant::now();
-        let (snaps, changes) = storage::load_state_and_changes(&self.key)?;
-        self.merge_snapshots(&snaps, promises, accepted)?;
-        self.apply_changes(&changes, accepted)?;
-        logger::log_warn(&format!(
-            "[Core Acceptor] Loaded {} snapshots + {} changes in {}ms",
-            snaps.len(),
-            changes.len(),
-            now.elapsed().as_millis()
-        ));
-        Ok(())
-    }
 
-    /// If we’ve crossed another snapshot boundary, persist one now.
-    fn maybe_snapshot(
-        &self,
-        slot: Slot,
-        promises: &RefCell<Vec<Ballot>>,
-        accepted: &RefCell<BTreeMap<Slot, PValue>>,
-    ) {
-        if !self.enabled {
-            return;
-        }
-        let iv = self.snapshot_interval as Slot;
-        if iv == 0 {
-            return;
-        }
-        // e.g. boundary at 500, 1000, 1500…
-        if slot % iv == 0 {
-            // we chose a simple “every Nth slot” rule here
-            if let Err(e) = self.save_state_segment(promises, accepted) {
-                logger::log_error(&format!("Snapshot failed: {}", e));
+        self.load_current_state(promises)?;
+
+        let (snapshots, changes) = self
+            .store
+            .load_state_and_changes(self.run_config.storage_load_snapshots)
+            .map_err(|e| format!("storage.load_state_and_changes: {}", e))?;
+
+        // apply all loaded snapshots
+        {
+            let mut a = accepted.borrow_mut();
+            a.clear();
+            for blob in &snapshots {
+                let (psnap, _): (PersistentSnapshotState, usize) =
+                    bincode::serde::decode_from_slice(blob, self.bincode_config)
+                        .map_err(|e| format!("bincode decode snapshot: {}", e))?;
+                for (slot, pv) in psnap.accepted {
+                    a.insert(slot, pv);
+                }
             }
         }
+
+        // replay changelog
+        {
+            let mut a = accepted.borrow_mut();
+            for blob in changes {
+                let (pv, _): (PValue, usize) =
+                    bincode::serde::decode_from_slice(&blob, self.bincode_config)
+                        .map_err(|e| format!("bincode decode change: {}", e))?;
+                a.insert(pv.slot, pv);
+            }
+        }
+
+        logger::log_warn(&format!(
+            "[Core Acceptor] Restored {} promises + {} accepted",
+            promises.borrow().len(),
+            accepted.borrow().len()
+        ));
+
+        Ok(())
     }
 }

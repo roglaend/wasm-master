@@ -9,7 +9,7 @@ default-members = [
   "paxos-wasm/runners",
   # "paxos-wasm/composed-grpc",  
   # "paxos-wasm/modular-grpc",
-  "paxos-wasm/modular-ws",
+  # "paxos-wasm/modular-ws",
   "paxos-wasm/modular-ws-client",
   "paxos-wasm/runner-ws",
 

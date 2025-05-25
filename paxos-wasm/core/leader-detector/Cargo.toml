@@ -8,4 +8,4 @@ crate-type = ["cdylib"]
 path = "src/leader-detector.rs"
 
 [dependencies]
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"

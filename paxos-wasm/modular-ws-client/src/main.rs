@@ -6,13 +6,13 @@ use clap::{Parser, ValueEnum};
 use tokio::time::sleep;
 use wasmtime::Engine;
 use wasmtime::component::{Component, Linker};
-use wasmtime_wasi::add_to_linker_async;
 
 mod bindings;
 mod paxos_wasm;
 
 use bindings::paxos::default::network_types::Value;
 use paxos_wasm::{ComponentRunStates, PaxosWasmtime};
+use wasmtime_wasi::p2::add_to_linker_async;
 
 /// Choose either the stateless one-shot API or the stateful resource API.
 #[derive(Clone, ValueEnum, Debug)]
@@ -117,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             summarize("Oneshot Latencies", &lats);
         }
         ClientMode::Persistent => {
+            // ————— Persistent —————
             let num_logical_clients = args.num_logical_clients;
             let requests_per_client = args.num_requests as u64;
 
@@ -213,14 +214,14 @@ async fn run_logical_client(
             }
         }
 
-        let (replies, sucess) = resource
+        let (replies, success) = resource
             .call_try_receive(&mut *store, handle, &leader)
             .await?;
 
         // success returns true if we tried to receive successfully
         // if false, conncetion is closed. For now this only happens
         // when the leader restarts, so we retry the last request
-        if !sucess {
+        if !success {
             // if we wait to litle, the leader may not be ready, this is a temp fix
             // ideally call send request in a loop until it returns true
             sleep(Duration::from_millis(100)).await;
@@ -256,5 +257,10 @@ async fn run_logical_client(
     }
 
     resource.call_close(&mut *store, handle, &leader).await?;
+
+    let total_time = start.elapsed();
+    let throughput = seen.len() as f64 / total_time.as_secs_f64();
+    println!("\nPersistent throughput: {:.2} req/sec\n", throughput);
+    summarize("Persistent Latencies", &lats);
     Ok((client_id, lats))
 }

@@ -1,232 +1,235 @@
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::{
+    cell::RefCell,
+    fs::{self, File, OpenOptions},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
+};
 
 mod bindings {
     wit_bindgen::generate!({
         path: "../../shared/wit",
         world: "storage-world",
-        additional_derives: [
-        PartialEq,
-        serde::Deserialize,
-        serde::Serialize,
-    ],
+        additional_derives: [ Clone, PartialEq ],
     });
 }
-
 bindings::export!(MyStorage with_types_in bindings);
 
-use bindings::exports::paxos::default::storage::Guest;
-
-// TODO: Change format from json to a binary one.
-// TODO: Can also create a helper consumer of Storage in pure rust that Cores can import and use to reduce boilerplate.
+use bindings::{
+    exports::paxos::default::storage::{Bytes, Guest, GuestStorageResource, StateAndChanges},
+    paxos::default::logger,
+};
 
 struct MyStorage;
-
-fn path_for(key: &str, suffix: &str, timestamp: Option<&str>) -> String {
-    if let Some(ts) = timestamp {
-        return format!("state/{}/snapshots/{}_{}", key, ts, suffix);
-    }
-    format!("state/{}/changes/{}", key, suffix)
+impl Guest for MyStorage {
+    type StorageResource = MyStorageResource;
 }
 
-fn load_changes_as_json(key: &str) -> Result<Vec<String>, String> {
-    let changes_path = path_for(key, "changelog.jsonl", None);
-
-    match fs::read_to_string(&changes_path) {
-        Ok(content) => Ok(content.lines().map(|l| l.to_string()).collect()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]), // empty log
-        Err(e) => Err(format!("Failed to read '{}': {}", &changes_path, e)),
-    }
+struct MyStorageResource {
+    base_dir: String,           // e.g. "state"
+    key: String,                // e.g. "node7-learner"
+    snapshots_dir: String,      // base_dir/key/snapshots
+    changelog_path: String,     // base_dir/key/changelog.bin
+    current_state_path: String, // base_dir/key/current-state.bin
+    max_snapshots: u64,
+    writer: RefCell<BufWriter<File>>, // open changelog writer
+    state_file: RefCell<File>,
 }
 
-fn load_all_snapshots_as_json(key: &str) -> Result<Vec<String>, String> {
-    let snapshot_dir = format!("state/{}/snapshots", key);
+impl GuestStorageResource for MyStorageResource {
+    fn new(key: String, max_snapshots: u64) -> Self {
+        let base = "state".to_string();
+        let key_dir = format!("{}/{}", base, key);
+        let snapshots_dir = format!("{}/snapshots", &key_dir);
+        let changelog_path = format!("{}/changelog.bin", &key_dir);
+        let current_state_path = format!("{}/current-state.bin", &key_dir);
 
-    let entries = match fs::read_dir(&snapshot_dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]), // No snapshots yet
-        Err(e) => return Err(format!("Failed to read snapshot dir: {}", e)),
-    };
+        // ensure dirs
+        fs::create_dir_all(&snapshots_dir).expect("mkdir snapshots");
 
-    let mut snapshots = Vec::new();
+        // open changelog writer
+        let changelog_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&changelog_path)
+            .expect("open changelog");
+        let writer = RefCell::new(BufWriter::new(changelog_file));
 
-    for entry in entries {
-        let path: PathBuf = entry
-            .map_err(|e| format!("Failed to read snapshot entry: {}", e))?
-            .path();
+        let state_file = RefCell::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&current_state_path)
+                .expect("open current-state"),
+        );
 
-        if path.is_file() {
-            let content = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read file {:?}: {}", path, e))?;
-            snapshots.push(content);
+        MyStorageResource {
+            base_dir: base,
+            key,
+            snapshots_dir,
+            changelog_path,
+            current_state_path,
+            max_snapshots,
+            writer,
+            state_file,
         }
     }
 
-    snapshots.sort();
+    /// Overwrite the "current-state" meant for keeping the latest version of a single state.
+    fn save_state(&self, state: Bytes) -> Result<(), String> {
+        let mut f = self.state_file.borrow_mut();
+        f.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+        f.set_len(0).map_err(|e| e.to_string())?;
+        f.write_all(&state).map_err(|e| e.to_string())?;
+        logger::log_info(&format!(
+            "[Storage] save_state: wrote {} bytes",
+            state.len()
+        ));
+        Ok(())
+    }
 
-    Ok(snapshots)
-}
+    /// Read only the latest version of "current-state".
+    fn load_state(&self) -> Result<Bytes, String> {
+        let data = fs::read(&self.current_state_path).map_err(|e| e.to_string())?;
+        logger::log_info(&format!(
+            "[Storage] load_state: loaded {} bytes from '{}'",
+            data.len(),
+            self.current_state_path
+        ));
+        Ok(data)
+    }
 
-fn read_latest_snapshot(key: &str) -> Result<Vec<String>, String> {
-    let snapshot_dir = format!("state/{}/snapshots", key);
+    /// Force‐flush the latest "current-state"
+    fn flush_state(&self) -> Result<(), String> {
+        let f = self.state_file.borrow_mut();
+        f.sync_all().map_err(|e| e.to_string())?;
+        logger::log_info("[Storage] flush_state: file fsynced");
+        Ok(())
+    }
 
-    let entries = match fs::read_dir(&snapshot_dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]), // No snapshots yet
-        Err(e) => return Err(format!("Failed to read snapshot dir: {}", e)),
-    };
+    /// Append one change-record to the changelog.
+    fn save_change(&self, change: Bytes) -> Result<(), String> {
+        let len = change.len();
+        let mut w = self.writer.borrow_mut();
+        w.write_u32::<BigEndian>(len as u32)
+            .and_then(|_| w.write_all(&change))
+            .map_err(|e| e.to_string())?;
+        logger::log_info(&format!("[Storage] save_change: buffered {} bytes", len));
+        Ok(())
+    }
 
-    let mut snapshot_paths: Vec<PathBuf> = Vec::new();
+    /// Force‐flush any buffered changes in the changelog to disk.
+    fn flush_changes(&self) -> Result<(), String> {
+        let mut w = self.writer.borrow_mut();
+        w.flush().map_err(|e| e.to_string())?;
+        logger::log_info("[Storage] flush_changes(): writer flushed");
+        Ok(())
+    }
 
-    for entry in entries {
-        let path = entry
-            .map_err(|e| format!("Failed to read snapshot entry: {}", e))?
-            .path();
+    /// Atomically create/rotate a new snapshot and truncate changelog.
+    fn checkpoint(&self, state: Bytes, timestamp: String) -> Result<(), String> {
+        let filename = format!("snapshot-{}.bin", timestamp);
+        let tmp = format!("{}/{}.tmp", self.snapshots_dir, filename);
+        let final_path = format!("{}/{}", self.snapshots_dir, filename);
 
-        if path.is_file() {
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                if filename.contains("snapshot.json") {
-                    snapshot_paths.push(path);
+        // Write to tmp + fsync the file itself
+        {
+            let mut f = File::create(&tmp).map_err(|e| e.to_string())?;
+            f.write_all(&state).map_err(|e| e.to_string())?;
+            f.sync_all().map_err(|e| e.to_string())?;
+        }
+
+        // Atomic rename
+        fs::rename(&tmp, &final_path).map_err(|e| e.to_string())?;
+
+        // Truncate & fsync the changelog
+        {
+            let mut w = self.writer.borrow_mut();
+            w.flush().map_err(|e| e.to_string())?;
+            let mut raw = w.get_ref();
+            raw.set_len(0).map_err(|e| e.to_string())?;
+            raw.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+            raw.sync_all().map_err(|e| e.to_string())?;
+        }
+
+        // Prune on‐disk snapshots
+        self.prune_snapshots(self.max_snapshots)?;
+        Ok(())
+    }
+
+    /// Return [ snapshot-<x1>.bin, …, snapshot-<xN>.bin ] in timestamp order
+    fn list_snapshots(&self) -> Vec<String> {
+        // Try to read the directory; if it fails, return an empty list
+        let mut files = match fs::read_dir(&self.snapshots_dir) {
+            Ok(rd) => rd
+                // ignore any individual entry errors
+                .filter_map(|entry| entry.ok())
+                .filter_map(|de| {
+                    let name = de.file_name().into_string().ok()?;
+                    if name.starts_with("snapshot-") && name.ends_with(".bin") {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+
+        // Sort lexicographically (ISO timestamps will sort in chronological order)
+        files.sort_unstable();
+        files
+    }
+
+    /// delete oldest until ≤ retain
+    fn prune_snapshots(&self, retain: u64) -> Result<(), String> {
+        let mut snaps = self.list_snapshots();
+        while snaps.len() as u64 > retain {
+            let oldest = snaps.remove(0);
+            let path = format!("{}/{}", self.snapshots_dir, oldest);
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Read back the latest N snapshots and the changelog
+    fn load_state_and_changes(&self, num_snapshots: u64) -> Result<StateAndChanges, String> {
+        // Pick the last N snapshot files
+        let snaps = {
+            let all = self.list_snapshots();
+            let start = all.len().saturating_sub(num_snapshots as usize);
+            all.into_iter()
+                .skip(start)
+                .map(|name| {
+                    let path = format!("{}/{}", self.snapshots_dir, name);
+                    fs::read(&path).map_err(|e| e.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        // Read changelog entries
+        let mut changes = Vec::new();
+        if let Ok(mut f) = File::open(&self.changelog_path) {
+            loop {
+                match f.read_u32::<BigEndian>() {
+                    Ok(len) => {
+                        let mut buf = vec![0; len as usize];
+                        f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+                        changes.push(buf);
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e.to_string()),
                 }
             }
         }
+
+        Ok((snaps, changes))
     }
 
-    // Sort paths by filename lexicographically (timestamp order)
-    snapshot_paths.sort_by(|a, b| a.file_name().unwrap().cmp(b.file_name().unwrap()));
-
-    // Read only the latest snapshot if any exist
-    if let Some(latest_path) = snapshot_paths.last() {
-        let content = fs::read_to_string(latest_path)
-            .map_err(|e| format!("Failed to read file {:?}: {}", latest_path, e))?;
-        Ok(vec![content])
-    } else {
-        Ok(vec![])
+    /// Delete `state/<key>/`
+    fn delete(&self) -> bool {
+        let dir = format!("{}/{}", self.base_dir, self.key);
+        let ok = fs::remove_dir_all(&dir).is_ok();
+        logger::log_info(&format!("[Storage] delete: removed '{}', ok={}", dir, ok));
+        ok
     }
-}
-
-impl Guest for MyStorage {
-    fn save_state_segment(
-        key: String,
-        state_json: String,
-        time_stamp: String,
-    ) -> Result<(), String> {
-        let state_path = path_for(&key, &"snapshot.json", Some(&time_stamp));
-        let changes_path = path_for(&key, "changelog.jsonl", None);
-
-        if let Some(parent) = Path::new(&state_path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directories for '{}': {}", state_path, e))?;
-        }
-
-        let mut file = std::fs::File::create(&state_path)
-            .map_err(|e| format!("Failed to create file '{}': {}", state_path, e))?;
-
-        file.write_all(state_json.as_bytes())
-            .map_err(|e| format!("Failed to write to '{}': {}", state_path, e))?;
-
-        fs::File::create(&changes_path)
-            .map_err(|e| format!("Failed to truncate change log '{}': {}", changes_path, e))?;
-
-        Ok(())
-    }
-
-    fn save_change(key: String, change_json: String) -> Result<(), String> {
-        let path = path_for(&key, "changelog.jsonl", None);
-
-        if let Some(parent) = Path::new(&path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directories for '{}': {}", path, e))?;
-        }
-
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&path)
-            .map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
-
-        let line = format!("{}\n", change_json);
-        file.write_all(line.as_bytes())
-            .map_err(|e| format!("Failed to write to '{}': {}", path, e))?;
-        Ok(())
-    }
-
-    fn load_state_and_changes(key: String) -> Result<(Vec<String>, Vec<String>), String> {
-        // Maybe need to thik about if this is valid, since a reloaded node will only
-        // have latest snapshot, which only containts N + changes amount of state
-        // should be totally fine
-        let state_snapshots = read_latest_snapshot(&key)?;
-        let state_changes = load_changes_as_json(&key)?;
-        Ok((state_snapshots, state_changes))
-    }
-
-    fn save_state(key: String, state_json: String) -> Result<(), String> {
-        let path = format!("state/{}/snapshots/{}", key, "snapshot.json");
-
-        if let Some(parent) = Path::new(&path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directories for '{}': {}", path, e))?;
-        }
-
-        let mut file = std::fs::File::create(&path)
-            .map_err(|e| format!("Failed to create file '{}': {}", path, e))?;
-
-        file.write_all(state_json.as_bytes())
-            .map_err(|e| format!("Failed to write to '{}': {}", path, e))?;
-        Ok(())
-    }
-
-    fn load_state(key: String) -> Result<String, String> {
-        let path = format!("state/{}/snapshots/{}", key, "snapshot.json");
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
-        Ok(content)
-    }
-
-    fn delete(key: String) -> bool {
-        todo!()
-    }
-
-    // fn save(key: String, value: Vec<u8>) -> bool {
-    //     let path = format!("state/{}", key);
-    //     match fs::File::create(&path) {
-    //         Ok(mut file) => {
-    //             if let Err(e) = file.write_all(&value) {
-    //                 eprintln!("Failed to write to file: {}", e);
-    //                 return false;
-    //             }
-    //             true
-    //         }
-    //         Err(e) => {
-    //             eprintln!("Failed to create file: {}", e);
-    //             false
-    //         }
-    //     }
-    // }
-
-    // fn save_json(key: String, value: String) -> bool {
-    //     let path = format!("state/{}", key);
-    //     match fs::File::create(&path) {
-    //         Ok(mut file) => {
-    //             if let Err(e) = file.write_all(&value.as_bytes()) {
-    //                 eprintln!("Failed to write to file: {}", e);
-    //                 return false;
-    //             }
-    //             true
-    //         }
-    //         Err(e) => {
-    //             eprintln!("Failed to create file: {}", e);
-    //             false
-    //         }
-    //     }
-    // }
-
-    // fn load(key: String) -> Option<Vec<u8>> {
-    //     match fs::read(&key) {
-    //         Ok(content) => Some(content),
-    //         Err(_) => None,
-    //     }
-    // }
 }

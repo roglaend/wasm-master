@@ -11,12 +11,19 @@ interface paxos-types {
         exec-interval-ms: u64,          // The timeout period for which the learner forcefully sends executed even though not having batch size to send.
         retry-interval-ms: u64,         // The timeout period for which the learner issues a retry-learn message to either the acceptors or proposers.
         learn-max-gap: u64,             // The maximum gap between missing learn and highest seen learn before issuing a retry.
-        executed-batch-size: u64,       // The maximum number of executed results to send in one Executed message. 
+        message-batch-size: u64,        // The maximum number of batched elements to include in a single message. 
         client-server-port: u16,        // The port the client connects to on the leaders address.
         persistent-storage: bool,       // Toggle the usage of persistent storage.
         heartbeats: bool,               // Toggle the usage of heartbeats.
         heartbeat-interval-ms: u64,     // The interval in ms between heartbeats.
 
+        storage-load-snapshots: u64,            // How many snapshots to load at startup.
+        storage-max-snapshots: u64,             // How many snapshots to keep in rotation.
+        storage-flush-state-count: u64,         // How often to flush the current overwritten state.
+        storage-flush-state-interval-ms: u64,   // Force a flush at least every N ms in low-volume periods.
+        storage-flush-change-count: u64,        // How many change‐records to buffer before flush.
+        storage-flush-change-interval-ms: u64,  // How much time between forced flushes of changes.
+        storage-snapshot-slot-interval: u64,    // How many slots between full snapshots.
 
         // ... Add more?
     } 
@@ -140,6 +147,10 @@ interface paxos-types {
         value: value,
     }
 
+    record retry-learns {
+        slots: list<slot>,
+    }
+
     record execute-result {
         value: value,
         slot: slot,
@@ -242,7 +253,7 @@ interface learner-types {
     variant retry-learn-result {
         no-gap,
         skip(slot),
-        retry(slot),
+        retry(list<slot>),
     }
 
     record learner-state {
@@ -251,7 +262,7 @@ interface learner-types {
 }
 
 interface network-types {
-    use paxos-types.{slot, paxos-role, node, prepare, promise, accept, accepted, learn, value, executed, client-response};
+    use paxos-types.{slot, paxos-role, node, prepare, promise, accept, accepted, learn, retry-learns, value, executed, client-response};
 
     variant message-payload {
         ignore,                             // No-op.
@@ -262,19 +273,16 @@ interface network-types {
         accept(accept),                     // An accept request.
         accepted(accepted),                 // An accepted response.
         learn(learn),                       // A learn request.
-        // learn-ack(learn),                // A learn ack. // TODO: Use or not to use, with custom payload? 
-        heartbeat,               // Heartbeat.
+        heartbeat,                          // Heartbeat.
         executed(executed),                 // Contains list of executed values and adu.
-        retry-learn(slot),              // Retry learn for missing slot
-        benchmark(benchmark),           // Benchmark message
+        retry-learns(retry-learns),         // Retry learns for missing slots
+        benchmark(benchmark),               // Benchmark message
     }
 
     record benchmark {
         send-timestamp: u64,
         payload: string,
     }
-
-    // Timestamp is not used either, we really only need a ping message payload
 
     record network-message {
         sender: node,

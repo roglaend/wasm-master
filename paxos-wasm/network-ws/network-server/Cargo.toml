@@ -8,6 +8,6 @@ path = "src/network_server_tcp.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"
 wasi = "0.14.2"
 rand = "0.9"

@@ -21,4 +21,4 @@ tokio = { version = "1.44.1", features = [
 wasi = "0.14.2"
 
 paxos-wasm-utils = { path = "../../../paxos-wasm/shared/utils" }
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"

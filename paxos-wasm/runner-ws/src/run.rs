@@ -1,13 +1,11 @@
 use crate::config::Config;
 use crate::host_logger;
 use crate::paxos_wasm::PaxosWasmtime;
-use futures::future::join_all;
 use std::sync::Mutex;
+use std::time::Duration;
 use std::time::Instant;
-use std::{sync::Arc, time::Duration};
-use tokio::signal;
-use tokio::{sync::mpsc, task, time::sleep};
-use tracing::error;
+use tokio::{sync::mpsc, time::sleep};
+use tracing::{error, warn};
 use wasmtime::Engine;
 
 use once_cell::sync::Lazy;
@@ -22,7 +20,7 @@ fn reset_start_time() {
 
 fn elapsed_since_start() {
     let time = START_TIME.lock().unwrap();
-    println!(
+    warn!(
         "[Host] Time from detecting error to calling run on new component: {:?}",
         time.elapsed()
     );
@@ -57,7 +55,7 @@ pub async fn run_cluster(
 
     let mut tasks = Vec::new();
 
-    for node in cfg.cluster_nodes.clone() {
+    for node in cfg.cluster_nodes {
         let engine = engine.clone();
         let is_leader = node.node_id == cfg.leader_id;
         let run_config = cfg.run_config.clone();
@@ -86,14 +84,14 @@ pub async fn run_cluster(
                         {
                             Ok(paxos) => {
                                 if builder_tx.send(paxos).await.is_ok() {
-                                    println!(
+                                    warn!(
                                         "[Host] Node {}: Prebuilt new Paxos instance",
                                         builder_node.node_id
                                     );
                                 }
                             }
                             Err(e) => {
-                                eprintln!(
+                                error!(
                                     "[Host] Node {}: Error building Paxos: {:?}",
                                     builder_node.node_id, e
                                 );
@@ -108,11 +106,11 @@ pub async fn run_cluster(
             loop {
                 let mut paxos = match rx.recv().await {
                     Some(p) => {
-                        println!("[Host] Node {}: Got prebuilt paxos instance.", node.node_id);
+                        warn!("[Host] Node {}: Got prebuilt paxos instance.", node.node_id);
                         p
                     }
                     None => {
-                        eprintln!(
+                        error!(
                             "[Host] Node {}: Builder channel closed. Exiting loop.",
                             node.node_id
                         );
@@ -124,7 +122,7 @@ pub async fn run_cluster(
                     let node = node.clone();
                     let all_nodes = other_active_nodes.clone();
                     let run_config = run_config.clone();
-                    println!("[Host] Node {}: Starting paxos instance.", node.node_id);
+                    warn!("[Host] Node {}: Starting paxos instance.", node.node_id);
                     elapsed_since_start();
                     async move { paxos.run(node, all_nodes, is_leader, run_config).await }
                 })
@@ -132,24 +130,24 @@ pub async fn run_cluster(
 
                 match run_result {
                     Ok(Ok(_)) => {
-                        println!(
+                        warn!(
                             "[Host] Node {}: Paxos exited cleanly. Exiting node loop.",
                             node.node_id
                         );
                         // TODO: We are here if the Paxos instance exited cleanly, which it will if we are
-                        // hotreloading. Should not break, but rather start the update insteance in nexy loop tick.
+                        // hot-reloading. Should not break, but rather start the updated instance in next loop tick.
                         break;
                     }
                     Ok(Err(e)) => {
                         reset_start_time();
-                        println!(
+                        warn!(
                             "[Host] Node {}: Paxos error: {:?}. Retrying with new instance.",
                             node.node_id, e
                         );
                     }
                     Err(e) => {
                         reset_start_time();
-                        println!(
+                        warn!(
                             "[Host] Node {}: Paxos panicked: {:?}. Retrying with new instance.",
                             node.node_id, e
                         );

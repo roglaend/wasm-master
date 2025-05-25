@@ -16,7 +16,7 @@ use bindings::paxos::default::acceptor::AcceptorResource;
 use bindings::paxos::default::acceptor_types::{AcceptedResult, PromiseResult};
 use bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use bindings::paxos::default::paxos_types::{
-    Ballot, Learn, Node, PaxosRole, RunConfig, Slot, Value,
+    Ballot, Learn, Node, PaxosRole, RetryLearns, RunConfig, Slot, Value,
 };
 use bindings::paxos::default::{logger, network_client};
 
@@ -59,7 +59,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         let network_client = Arc::new(network_client::NetworkClientResource::new());
 
         match acceptor.load_state() {
-            Ok(_) => logger::log_info("[Acceptor Agent] Loaded state successfully."),
+            Ok(_) => logger::log_warn("[Acceptor Agent] Loaded state successfully."),
             Err(e) => logger::log_error(&format!(
                 "[Acceptor Agent] Failed to load state. Ignore if first startup: {}",
                 e
@@ -123,35 +123,37 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         }
     }
 
-    fn retry_learn(&self, slot: Slot) {
-        logger::log_info(&format!(
-            "[Acceptor Agent] Retrying learn for slot {}",
-            slot
-        ));
+    fn retry_learns(&self, retry_learns: RetryLearns, _sender: Node) {
+        for slot in retry_learns.slots {
+            logger::log_info(&format!(
+                "[Acceptor Agent] Retrying learn for slot {}",
+                slot
+            ));
 
-        // Have accepted value, which didn't reach learner.
-        // Or, no accepted value for this slot, missing from proposer.
-        // Either get accepted value or noop.
-        let value = self
-            .acceptor
-            .get_accepted(slot)
-            .and_then(|p| p.value)
-            .unwrap_or_else(|| Value {
-                command: None,
-                client_id: "".to_string(),
-                client_seq: 0,
-            });
+            // Have accepted value, which didn't reach learner.
+            // Or, no accepted value for this slot, missing from proposer.
+            // Either get accepted value or noop.
+            let value = self
+                .acceptor
+                .get_accepted(slot)
+                .and_then(|p| p.value)
+                .unwrap_or_else(|| Value {
+                    command: None,
+                    client_id: "".to_string(),
+                    client_seq: 0,
+                });
 
-        let learn = Learn { slot, value };
+            let learn = Learn { slot, value };
 
-        let learn_msg = NetworkMessage {
-            sender: self.node.clone(),
-            payload: MessagePayload::Learn(learn.clone()),
-        };
+            let learn_msg = NetworkMessage {
+                sender: self.node.clone(),
+                payload: MessagePayload::Learn(learn.clone()),
+            };
 
-        // Broadcasts to all learners, since if one learner need a noop, then they all should?
-        self.network_client
-            .send_message_forget(&self.learners, &learn_msg);
+            // Broadcasts to all learners, since if one learner need a noop, then they all should?
+            self.network_client
+                .send_message_forget(&self.learners, &learn_msg);
+        }
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -231,13 +233,15 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 };
                 response
             }
-            MessagePayload::RetryLearn(slot) => {
+            MessagePayload::RetryLearns(retry_learns) => {
+                let slots = &retry_learns.slots;
+                let count = slots.len();
+                let first = slots.first().map_or("none".to_string(), |s| s.to_string());
                 logger::log_warn(&format!(
-                    "[Acceptor Agent] Handling LEARN RETRY: slots={:?}",
-                    slot
+                    "[Acceptor Agent] Handling RETRY LEARNS: number of slots={} first slot={}",
+                    count, first,
                 ));
-
-                self.retry_learn(slot);
+                self.retry_learns(retry_learns, message.sender);
 
                 NetworkMessage {
                     sender: self.node.clone(),
@@ -259,6 +263,11 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         }
     }
 
+    fn run_paxos_loop(&self) {
+        // TODO: Do anything more here?
+        self.maybe_flush_state();
+    }
+
     fn send_heartbeat(&self) {
         let heartbeat_msg = NetworkMessage {
             sender: self.node.clone(),
@@ -271,5 +280,15 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         ));
         self.network_client
             .send_message_forget(&self.all_nodes, &heartbeat_msg);
+    }
+
+    /// Try to flush the on‐disk state, logging any error.
+    fn maybe_flush_state(&self) {
+        if let Err(e) = self.acceptor.maybe_flush() {
+            logger::log_error(&format!(
+                "[Acceptor Agent] failed to flush acceptor state: {}",
+                e
+            ));
+        }
     }
 }

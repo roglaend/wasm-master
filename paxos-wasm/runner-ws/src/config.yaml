@@ -1,7 +1,7 @@
 # ─── config.yaml ────────────────────────────────────────
 
 # logging
-log_level: error    # "debug", "info", "warning", "error"
+log_level: warning    # "debug", "info", "warning", "error"
 
 # all nodes in your entire deployment:
 nodes:
@@ -34,62 +34,60 @@ nodes:
   - node_id: 9
     address: "127.0.0.1:50059"
     role: "proposer"
-  # - node_id: 1
-  #   address: "127.0.0.1:50051"
-  #   role: "learner"
-  # - node_id: 2
-  #   address: "127.0.0.1:50052"
-  #   role: "learner"
-  # - node_id: 3
-  #   address: "127.0.0.1:50053"
-  #   role: "acceptor"
-  # - node_id: 4
-  #   address: "127.0.0.1:50054"
-  #   role: "acceptor"
-  # - node_id: 5
-  #   address: "127.0.0.1:50055"
-  #   role: "acceptor"
-  # - node_id: 6
-  #   address: "127.0.0.1:50056"
-  #   role: "proposer"
-  # - node_id: 7
-  #   address: "127.0.0.1:50057"
-  #   role: "proposer"
 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
-  1: [1,2,3]
+  # 1: [1,2,3]
 
-  2: [4,5,6]
+  # 2: [4,5,6]
 
-  3: [7,8,9]
+  # 3: [7,8,9]
 
-  # 1: [1]
-  # 2: [2]
-  # 3: [3]
-  # 4: [4]
-  # 5: [5]
-  # 6: [6]
-  # 7: [7]
-  # 8: [8]
-  # 9: [9]
+  1: [1]
+  2: [2]
+  3: [3]
+  4: [4]
+  5: [5]
+  6: [6]
+  7: [7]
+  8: [8]
+  9: [9]
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
   is_event_driven: true
   acceptors_send_learns: true
   learners_send_executed: true
-  prepare_timeout: 50
-  demo_client: false
-  demo_client_requests: 10000
+  prepare_timeout: 500
+  demo_client: true
+  demo_client_requests: 123450
   batch_size: 20
   tick_micros: 100
   exec_interval_ms: 100
-  retry_interval_ms: 500
-  learn_max_gap: 10
-  executed_batch_size: 10
+  retry_interval_ms: 100
+  learn_max_gap: 50
+  message_batch_size: 20
   client_server_port: 60000
-  persistent_storage: false
+  persistent_storage: true
   heartbeats: false
   heartbeat_interval_ms: 200
-# TODO: add configs for crashing, and hot reloading nodes
+  # TODO: add configs for crashing, and hot reloading nodes
+
+  # ─── storage tuning ───────────────────────────────
+  # How many snapshots to load at startup.
+  storage_load_snapshots: 5
+   # How many snapshots to keep in rotation.
+  storage_max_snapshots: 10
+
+  # How often to flush the current overwritten state. 
+  storage_flush_state_count: 100
+  # Force a flush at least every N ms in low-volume periods
+  storage_flush_state_interval_ms: 500
+
+  # Buffer up to N “change” records before flushing to disk.
+  storage_flush_change_count: 1000
+  # Force a flush at least every N ms in low-volume periods.
+  storage_flush_change_interval_ms: 1000
+
+  # Take a full snapshot every N slots.
+  storage_snapshot_slot_interval: 50000
