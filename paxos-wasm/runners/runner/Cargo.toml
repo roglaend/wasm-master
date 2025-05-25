@@ -8,5 +8,5 @@ path = "src/runner.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"
 rand = "0.9"

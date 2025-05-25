@@ -1,11 +1,11 @@
 use std::error::Error;
 use tokio::sync::Mutex;
-// use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::ResourceTable;
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 
-use crate::bindings::{self, PaxosClientWorldPre};
 use crate::bindings::paxos::default::paxos_types::Value;
+use crate::bindings::{self, PaxosClientWorldPre};
 // use crate::host_logger::{self, HostLogger};
 
 pub type PaxosError = Box<dyn Error + Send + Sync + 'static>;
@@ -52,11 +52,11 @@ impl PaxosWasmtime {
         engine: &Engine,
         paxos_client_pre: PaxosClientWorldPre<ComponentRunStates>,
     ) -> Result<Self, PaxosError> {
-
         let state = ComponentRunStates::new();
         let mut store = Store::new(engine, state);
 
-        let bindings = bindings::PaxosClientWorldPre::instantiate_async( &paxos_client_pre, &mut store).await?;
+        let bindings =
+            bindings::PaxosClientWorldPre::instantiate_async(&paxos_client_pre, &mut store).await?;
 
         Ok(Self {
             store: Mutex::new(store),
@@ -68,14 +68,14 @@ impl PaxosWasmtime {
         &self,
         leader_address: String,
         value: Value,
-    ) -> Result<Option<bindings::exports::paxos::default::paxos_client::ClientResponse>, PaxosError> {
+    ) -> Result<Option<bindings::exports::paxos::default::paxos_client::ClientResponse>, PaxosError>
+    {
         let mut store = self.store.lock().await;
-        let result = self.bindings.paxos_default_paxos_client().call_perform_request(
-            &mut *store,
-            &leader_address,
-            &value,
-        ).await?;
+        let result = self
+            .bindings
+            .paxos_default_paxos_client()
+            .call_perform_request(&mut *store, &leader_address, &value)
+            .await?;
         Ok(result)
     }
 }
-

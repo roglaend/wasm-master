@@ -8,8 +8,8 @@ proto = { path = "../shared/proto", package = "proto" }
 
 tonic = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-wasmtime = "31"
-wasmtime-wasi = "31"
+wasmtime = "33"
+wasmtime-wasi = "33"
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
 tempfile = "3"

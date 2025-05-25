@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wasmtime = "31"
-wasmtime-wasi = "31"
+wasmtime = "33"
+wasmtime-wasi = "33"
 
 [build-dependencies]
 paxos-wasm-utils = { path = "../shared/utils" }

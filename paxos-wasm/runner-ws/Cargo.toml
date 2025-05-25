@@ -13,8 +13,8 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-wasmtime = "31"
-wasmtime-wasi = "31"
+wasmtime = "33"
+wasmtime-wasi = "33"
 yaml-rust = "0.4"
 anyhow = "1"
 

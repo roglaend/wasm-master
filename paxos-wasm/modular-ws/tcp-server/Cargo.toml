@@ -10,4 +10,4 @@ path = "src/tcp-server.rs"
 [dependencies]
 rand = "0.9"
 wasi = "0.14.2"
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"

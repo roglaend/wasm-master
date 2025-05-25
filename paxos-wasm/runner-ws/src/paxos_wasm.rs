@@ -4,9 +4,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{
-    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
-};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
 
 use crate::bindings::paxos::default::network_types::NetworkMessage;
 use crate::bindings::paxos::default::{network_client, network_server};
@@ -104,7 +103,7 @@ impl PaxosWasmtime {
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
-        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::network_server::add_to_linker(&mut linker, |s| s)?;

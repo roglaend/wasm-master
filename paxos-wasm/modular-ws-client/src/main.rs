@@ -6,13 +6,13 @@ use clap::{Parser, ValueEnum};
 use tokio::time::sleep;
 use wasmtime::Engine;
 use wasmtime::component::{Component, Linker};
-use wasmtime_wasi::add_to_linker_async;
 
 mod bindings;
 mod paxos_wasm;
 
 use bindings::paxos::default::network_types::Value;
 use paxos_wasm::{ComponentRunStates, PaxosWasmtime};
+use wasmtime_wasi::p2::add_to_linker_async;
 
 /// Choose either the stateless one-shot API or the stateful resource API.
 #[derive(Clone, ValueEnum, Debug)]

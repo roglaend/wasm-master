@@ -59,7 +59,7 @@ run_config:
   acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 500
-  demo_client: false
+  demo_client: true
   demo_client_requests: 123450
   batch_size: 20
   tick_micros: 100
@@ -77,7 +77,7 @@ run_config:
   # How many snapshots to load at startup.
   storage_load_snapshots: 5
    # How many snapshots to keep in rotation.
-  storage_max_snapshots: 20
+  storage_max_snapshots: 10
 
   # How often to flush the current overwritten state. 
   storage_flush_state_count: 100
@@ -85,9 +85,9 @@ run_config:
   storage_flush_state_interval_ms: 500
 
   # Buffer up to N “change” records before flushing to disk.
-  storage_flush_change_count: 500
+  storage_flush_change_count: 1000
   # Force a flush at least every N ms in low-volume periods.
   storage_flush_change_interval_ms: 1000
 
   # Take a full snapshot every N slots.
-  storage_snapshot_slot_interval: 10000
+  storage_snapshot_slot_interval: 50000

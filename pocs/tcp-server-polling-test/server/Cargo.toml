@@ -18,4 +18,4 @@ tokio = { version = "1.44.1", features = [
     "time",
 ] }
 wasi = "0.14.2"
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"

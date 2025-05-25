@@ -13,7 +13,7 @@ bincode = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.5"
 wasi = "0.14.2"
-wit-bindgen = "0.41"
+wit-bindgen = "0.42"
 
 # shared-utils = { path = "../../shared/utils" }
 
