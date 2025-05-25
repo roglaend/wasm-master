@@ -135,9 +135,6 @@ impl Config {
                 .unwrap() as u64,
             storage_snapshot_slot_interval: r["storage_snapshot_slot_interval"].as_i64().unwrap()
                 as u64,
-            storage_snapshot_time_interval_ms: r["storage_snapshot_time_interval_ms"]
-                .as_i64()
-                .unwrap() as u64,
         };
 
         Ok(Config {

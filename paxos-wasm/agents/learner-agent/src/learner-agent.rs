@@ -96,9 +96,11 @@ impl MyLearnerAgentResource {
                     sender: self.node.clone(),
                     payload: MessagePayload::RetryLearns(retry_learns),
                 };
+                let count = slots.len();
+                let first = slots.first().map_or("none".to_string(), |s| s.to_string());
                 logger::log_warn(&format!(
-                    "[Learner Agent] Broadcasting RETRY LEARN for {} slots",
-                    slots.len()
+                    "[Learner Agent] Broadcasting RETRY LEARNS: {} slots, first slot={}",
+                    count, first,
                 ));
                 if self.config.acceptors_send_learns {
                     self.network_client
@@ -335,6 +337,8 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 _ = self.dispatch_executed(exec);
             }
         }
+
+        self.maybe_flush_state();
     }
 
     fn handle_message(&self, message: NetworkMessage) -> NetworkMessage {
@@ -376,6 +380,16 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
+        }
+    }
+
+    /// Try to flush the on‐disk state, logging any error.
+    fn maybe_flush_state(&self) {
+        if let Err(e) = self.learner.maybe_flush() {
+            logger::log_error(&format!(
+                "[Learner Agent] failed to flush learner state: {}",
+                e
+            ));
         }
     }
 }

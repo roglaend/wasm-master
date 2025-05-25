@@ -231,11 +231,13 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                 response
             }
             MessagePayload::RetryLearns(retry_learns) => {
+                let slots = &retry_learns.slots;
+                let count = slots.len();
+                let first = slots.first().map_or("none".to_string(), |s| s.to_string());
                 logger::log_warn(&format!(
-                    "[Acceptor Agent] Handling LEARN RETRY: slots={:?}",
-                    &retry_learns.slots
+                    "[Acceptor Agent] Handling RETRY LEARNS: number of slots={} first slot={}",
+                    count, first,
                 ));
-
                 self.retry_learns(retry_learns, message.sender);
 
                 NetworkMessage {
@@ -277,6 +279,21 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
+        }
+    }
+
+    fn run_paxos_loop(&self) {
+        // TODO: Do anything more here?
+        self.maybe_flush_state();
+    }
+
+    /// Try to flush the on‐disk state, logging any error.
+    fn maybe_flush_state(&self) {
+        if let Err(e) = self.acceptor.maybe_flush() {
+            logger::log_error(&format!(
+                "[Acceptor Agent] failed to flush acceptor state: {}",
+                e
+            ));
         }
     }
 }

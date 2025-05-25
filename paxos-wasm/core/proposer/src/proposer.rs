@@ -514,6 +514,10 @@ impl GuestProposerResource for MyProposerResource {
     fn load_state(&self) -> Result<(), String> {
         self.storage.load_state(&self.current_ballot, &self.adu)
     }
+
+    fn maybe_flush(&self) -> Result<(), String> {
+        self.storage.maybe_flush_state()
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -525,12 +529,11 @@ struct PersistentCurrentState {
 struct StorageHelper {
     store: StorageResource,
     enabled: bool,
+    run_config: RunConfig,
     bincode_config: Configuration,
 
-    flush_state_count: usize,
-    flush_state_interval: Duration,
-
-    pending: RefCell<usize>,
+    flush_interval: Duration,
+    pending: RefCell<u64>,
     last_flush: RefCell<Instant>,
 }
 
@@ -540,10 +543,10 @@ impl StorageHelper {
         StorageHelper {
             store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
+            run_config,
             bincode_config: bincode::config::standard(),
 
-            flush_state_count: run_config.storage_flush_change_count as usize,
-            flush_state_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            flush_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
             pending: RefCell::new(0),
             last_flush: RefCell::new(now),
         }
@@ -562,32 +565,38 @@ impl StorageHelper {
         };
         let blob = bincode::serde::encode_to_vec(&ps, self.bincode_config)
             .map_err(|e| format!("bincode encode: {}", e))?;
-
-        // Overwrite current state
         self.store
             .save_state(&blob)
             .map_err(|e| format!("storage.save_state: {}", e))?;
 
-        // Bump counter & maybe flush
-        {
-            let mut cnt = self.pending.borrow_mut();
-            *cnt += 1;
+        *self.pending.borrow_mut() += 1;
+        self.maybe_flush_state()
+    }
 
-            let now = Instant::now();
-            let elapsed = now.duration_since(*self.last_flush.borrow());
-            if *cnt >= self.flush_state_count || elapsed >= self.flush_state_interval {
-                *cnt = 0;
-                self.flush_state()?;
-            }
+    fn maybe_flush_state(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
         }
 
+        let mut pending = self.pending.borrow_mut();
+        if *pending == 0 {
+            return Ok(());
+        }
+
+        let elapsed = self.last_flush.borrow().elapsed();
+        if *pending >= self.run_config.storage_flush_state_count || elapsed >= self.flush_interval {
+            self.flush_state()?;
+            *pending = 0;
+        }
         Ok(())
     }
 
     /// Performs the real fsync of current-state.bin
     fn flush_state(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
         *self.last_flush.borrow_mut() = Instant::now();
-        // fsync the file
         self.store
             .flush_state()
             .map_err(|e| format!("storage.flush_state: {}", e))?;

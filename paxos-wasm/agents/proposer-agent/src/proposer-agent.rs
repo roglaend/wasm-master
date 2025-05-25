@@ -695,7 +695,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     value: chosen.value.clone(),
                 };
                 logger::log_warn(&format!(
-                    "[Proposer Agent] Retrying LEARN for slots {} → {:?}",
+                    "[Proposer Agent] Retrying LEARN for slot {} → {:?}",
                     slot, learn.value
                 ));
                 self.broadcast_learn(learn);
@@ -803,14 +803,16 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 }
             }
             MessagePayload::RetryLearns(retry_learns) => {
+                let slots = &retry_learns.slots;
+                let count = slots.len();
+                let first = slots.first().map_or("none".to_string(), |s| s.to_string());
                 logger::log_warn(&format!(
-                    "[Proposer Agent] Handling LEARN RETRY: slots={:?}",
-                    &retry_learns.slots
+                    "[Proposer Agent Agent] Handling RETRY LEARNS: number of slots={} first slot={}",
+                    count, first,
                 ));
                 if !self.proposer.is_leader() {
-                    logger::log_warn(&format!(
-                        "[Proposer Agent] RetryLearns for {} slots, but not a leader. Ignoring",
-                        &retry_learns.slots.len()
+                    logger::log_info(&format!(
+                        "[Proposer Agent] RetryLearns, but not a leader. Ignoring",
                     ));
                 } else {
                     self.retry_learns(retry_learns);
@@ -921,6 +923,16 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             if leader == self.node.node_id {
                 self.become_leader();
             }
+        }
+    }
+
+    /// Try to flush the on‐disk state, logging any error.
+    fn maybe_flush_state(&self) {
+        if let Err(e) = self.proposer.maybe_flush() {
+            logger::log_error(&format!(
+                "[Proposer Agent] failed to flush proposer state: {}",
+                e
+            ));
         }
     }
 }

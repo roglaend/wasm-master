@@ -115,6 +115,14 @@ impl MyPaxosCoordinatorResource {
             let _ = self.proposer().process_executed(&exec);
         }
     }
+
+    fn maybe_flush_states(&self) {
+        if self.config.persistent_storage {
+            self.proposer().maybe_flush_state();
+            self.acceptor().maybe_flush_state();
+            self.learner().maybe_flush_state();
+        }
+    }
 }
 
 impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
@@ -205,6 +213,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             } => {
                 self.maybe_retry_learn();
                 self.drive_learner();
+                self.maybe_flush_states();
 
                 if !proposer.is_leader() {
                     return None;
