@@ -75,9 +75,9 @@ run_config:
 
   # ─── storage tuning ───────────────────────────────
   # How many snapshots to load at startup.
-  storage_load_snapshots: 5
+  storage_load_snapshots: 10
    # How many snapshots to keep in rotation.
-  storage_max_snapshots: 10
+  storage_max_snapshots: 20
 
   # How often to flush the current overwritten state. 
   storage_flush_state_count: 100
@@ -85,9 +85,9 @@ run_config:
   storage_flush_state_interval_ms: 500
 
   # Buffer up to N “change” records before flushing to disk.
-  storage_flush_change_count: 1000
+  storage_flush_change_count: 500
   # Force a flush at least every N ms in low-volume periods.
   storage_flush_change_interval_ms: 1000
 
   # Take a full snapshot every N slots.
-  storage_snapshot_slot_interval: 50000
+  storage_snapshot_slot_interval: 10000
