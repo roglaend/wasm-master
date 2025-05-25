@@ -14,7 +14,7 @@ bindings::export!(MyRunner with_types_in bindings);
 
 use bindings::exports::paxos::default::runner::{Guest, GuestRunnerResource};
 use bindings::paxos::default::logger;
-use bindings::paxos::default::paxos_types::{Operation, Value};
+use bindings::paxos::default::paxos_types::{Operation, PaxosRole, Value};
 use bindings::paxos::default::{
     client_server::ClientServerResource,
     network_server::NetworkServerResource,
@@ -154,6 +154,11 @@ struct MyRunnerResource {
 
     demo_client: Option<DemoClientHelper>,
     metrics: MetricsHelper,
+
+    last_heartbeat: Cell<Instant>,
+    last_failure_check: Cell<Instant>,
+
+    constructor_called: Cell<Instant>,
 }
 
 impl Guest for MyRunner {
@@ -189,8 +194,6 @@ impl MyRunnerResource {
     }
 
     fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        // self.paxos.failure_service(); // TODO
-
         self.paxos.run_paxos_loop()
     }
 
@@ -210,10 +213,64 @@ impl MyRunnerResource {
 
         self.metrics.track(responses.len());
     }
+
+    fn send_heartbeat(&self) {
+        if self.config.heartbeats {
+            let now = Instant::now();
+            if now.duration_since(self.last_heartbeat.get())
+                >= Duration::from_millis(self.config.heartbeat_interval_ms)
+            {
+                self.paxos.send_heartbeat();
+                self.last_heartbeat.set(now);
+            }
+        }
+    }
+
+    // Now handles the case of leader change and start client_server on new leader
+    // could prob be done cleaner but this works for now
+    fn failure_check(&self) {
+        let mut new_lead = None;
+        if self.config.heartbeats {
+            let now = Instant::now();
+            let failure_check_interval = 5; //* Important Constant */
+            if now.duration_since(self.last_failure_check.get())
+                >= Duration::from_millis(self.config.heartbeat_interval_ms * failure_check_interval)
+            {
+                new_lead = self.paxos.failure_service();
+                self.last_failure_check.set(now);
+            }
+            if let Some(new_lead) = new_lead {
+                match self.node.role {
+                    PaxosRole::Proposer | PaxosRole::Coordinator => {
+                        if new_lead == self.node.node_id {
+                            let host = self
+                                .node
+                                .address
+                                .split(':')
+                                .next()
+                                .expect("invalid node.address, expected ip:port");
+                            let addr = format!("{}:{}", host, self.config.client_server_port);
+                            logger::log_error(&format!(
+                                "[Runner] New leader detected, setting up client server on {}",
+                                &addr,
+                            ));
+                            self.client_svr.setup_listener(&addr);
+                        }
+                    }
+                    PaxosRole::Acceptor => {}
+                    PaxosRole::Learner => {}
+                    _ => {
+                        panic!("Unknown role");
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl GuestRunnerResource for MyRunnerResource {
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
+        let constructor_called = Instant::now();
         let paxos = Arc::new(PaxosCoordinatorResource::new(
             &node,
             &nodes,
@@ -243,7 +300,7 @@ impl GuestRunnerResource for MyRunnerResource {
         let demo_client = if config.demo_client {
             Some(DemoClientHelper::new(
                 format!("client-{}", node.node_id),
-                Duration::from_secs(1),
+                Duration::from_secs(3),
             ))
         } else {
             None
@@ -269,14 +326,29 @@ impl GuestRunnerResource for MyRunnerResource {
             should_stop: AtomicBool::new(false),
             demo_client,
             metrics,
+            last_heartbeat: Cell::new(Instant::now()),
+            last_failure_check: Cell::new(Instant::now()),
+            constructor_called: Cell::new(constructor_called),
         }
     }
 
     fn run(&self) {
+        logger::log_error(&format!(
+            "[Runner] Time from constructor called to running main loop: {:?}",
+            {
+                let now = Instant::now();
+                now.duration_since(self.constructor_called.get())
+            }
+        ));
+
         let tick_duration = Duration::from_micros(self.config.tick_micros);
         let mut next_tick = Instant::now() + tick_duration;
 
         while !self.should_stop.load(Ordering::Relaxed) {
+            // only used if configured
+            self.send_heartbeat();
+            self.failure_check();
+
             self.process_clients();
             self.process_network();
 

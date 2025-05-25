@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
 
-use wasi::io::streams::{InputStream, OutputStream};
+use wasi::io::streams::{InputStream, OutputStream, StreamError};
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
 use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, ShutdownType, TcpSocket};
@@ -166,11 +166,6 @@ impl GuestPaxosClientResource for MyPaxosClientResource {
     }
 
     fn send_request(&self, leader_address: String, value: Value) -> bool {
-        if self.ensure_conn(&leader_address).is_err() {
-            return false;
-        }
-        let mut map = self.conns.borrow_mut();
-        let conn = map.get_mut(&leader_address).unwrap();
         let msg = NetworkMessage {
             sender: Node {
                 node_id: 0,
@@ -179,61 +174,129 @@ impl GuestPaxosClientResource for MyPaxosClientResource {
             },
             payload: MessagePayload::ClientRequest(value),
         };
-        let bytes = serializer::serialize(&msg);
-        conn.output.as_ref().unwrap().write(&bytes).is_ok()
+        let msg_bytes = serializer::serialize(&msg);
+
+        if let Err(e) = self.ensure_conn(&leader_address) {
+            println!("[Paxos Client] connect {} failed: {:?}", leader_address, e);
+            return false;
+        }
+
+        let mut remove = false;
+
+        {
+            let mut conns = self.conns.borrow_mut();
+            if let Some(conn) = conns.get_mut(&leader_address) {
+                if let Some(output) = conn.output.as_mut() {
+                    match output.blocking_write_and_flush(&msg_bytes) {
+                        Ok(()) => {}
+
+                        Err(StreamError::Closed) => {
+                            println!(
+                                "[Paxos Client] connection to {} closed; dropping connection",
+                                leader_address
+                            );
+                            remove = true;
+                        }
+
+                        Err(StreamError::LastOperationFailed(err)) => {
+                            remove = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Evict broken connection to allow reconnection on next attempt
+        if remove {
+            println!(
+                "[Paxos Client] connection to {} closed; dropping connection",
+                leader_address
+            );
+            if let Some(conn) = self.conns.borrow_mut().remove(&leader_address) {
+                conn.shutdown_both();
+            }
+            self.bufs.borrow_mut().remove(&leader_address);
+            return false;
+        }
+
+        true
     }
 
-    fn try_receive(&self, leader_address: String) -> Vec<ClientResponse> {
+    fn try_receive(&self, leader_address: String) -> (Vec<ClientResponse>, bool) {
         let mut out = Vec::new();
 
-        // Make sure we have a connection
         if self.ensure_conn(&leader_address).is_err() {
-            return out;
+            println!("[Paxos Client] Ensure conn from receive failed");
+            return (out, false);
         }
 
-        // Borrow connection and buffer
         let mut conns = self.conns.borrow_mut();
         let mut bufs = self.bufs.borrow_mut();
-        let conn = conns.get_mut(&leader_address).unwrap();
-        let buf = bufs.entry(leader_address.clone()).or_default();
-        let input = conn.input.as_mut().unwrap();
+        let mut remove = false;
 
-        // 1) Read whatever bytes are ready
-        if let Ok(chunk) = input.read(65536) {
-            if !chunk.is_empty() {
-                buf.extend_from_slice(&chunk);
+        if let Some(conn) = conns.get_mut(&leader_address) {
+            let buf = bufs.entry(leader_address.clone()).or_default();
+
+            // Check input stream
+            if let Some(input) = conn.input.as_mut() {
+                match input.read(65536) {
+                    Ok(chunk) => {
+                        if !chunk.is_empty() {
+                            buf.extend_from_slice(&chunk);
+                        }
+                    }
+                    Err(StreamError::Closed) => {
+                        println!(
+                            "[Paxos Client] input closed on {} — removing conn",
+                            leader_address
+                        );
+                        remove = true;
+                    }
+                    Err(StreamError::LastOperationFailed(e)) => {
+                        println!(
+                            "[Paxos Client] input read failed on {} — error {:?}, removing conn",
+                            leader_address, e
+                        );
+                        remove = true;
+                    }
+                }
+            }
+
+            // If connection is broken, drop it
+            if remove {
+                if let Some(conn) = conns.remove(&leader_address) {
+                    conn.shutdown_both();
+                }
+                bufs.remove(&leader_address);
+                return (out, false);
+            }
+
+            // Deserialize complete messages
+            let mut offset = 0;
+            while buf.len() >= offset + 4 {
+                let len = u32::from_be_bytes(buf[offset..offset + 4].try_into().unwrap()) as usize;
+                if buf.len() < offset + 4 + len {
+                    break;
+                }
+
+                let payload = buf[offset + 4..offset + 4 + len].to_vec();
+                offset += 4 + len;
+
+                let mut frame = (len as u32).to_be_bytes().to_vec();
+                frame.extend_from_slice(&payload);
+
+                let nm = serializer::deserialize(&frame);
+                if let MessagePayload::ClientResponse(resp) = nm.payload {
+                    out.push(resp);
+                }
+            }
+
+            if offset > 0 {
+                buf.drain(0..offset);
             }
         }
 
-        // 2) Extract all full frames
-        let mut offset = 0;
-        while buf.len() >= offset + 4 {
-            let len = u32::from_be_bytes(buf[offset..offset + 4].try_into().unwrap()) as usize;
-            if buf.len() < offset + 4 + len {
-                break;
-            }
-
-            // Pull out one complete message (excluding the 4-byte header)
-            let payload = buf[offset + 4..offset + 4 + len].to_vec();
-            offset += 4 + len;
-
-            // Reattach the length header so your existing serializer code still works
-            let mut frame = (len as u32).to_be_bytes().to_vec();
-            frame.extend_from_slice(&payload);
-
-            // Deserialize and collect any ClientResponse
-            let nm = serializer::deserialize(&frame);
-            if let MessagePayload::ClientResponse(resp) = nm.payload {
-                out.push(resp);
-            }
-        }
-
-        // 3) Discard any consumed bytes
-        if offset > 0 {
-            buf.drain(0..offset);
-        }
-
-        out
+        (out, true)
     }
 
     fn shutdown_send(&self, leader_address: String) {

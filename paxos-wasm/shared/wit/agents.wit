@@ -75,8 +75,8 @@ interface proposer-agent {
 
         run-paxos-loop: func() -> option<list<client-response>>;
 
-        failure-service: func();
-
+        send-heartbeat: func();
+        
         maybe-flush-state: func();
     }
 }
@@ -100,6 +100,8 @@ interface acceptor-agent {
         retry-learns: func(retry-learns: retry-learns, sender: node);
 
         run-paxos-loop: func();
+        
+        send-heartbeat: func();
 
         maybe-flush-state: func();
     }
@@ -136,6 +138,8 @@ interface learner-agent {
     
         run-paxos-loop: func();
 
+        send-heartbeat: func();
+        
         maybe-flush-state: func();
     }
 }

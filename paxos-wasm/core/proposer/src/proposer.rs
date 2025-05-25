@@ -234,7 +234,11 @@ impl GuestProposerResource for MyProposerResource {
 
     /// Enqueues a prioritized value, called after leader change or retry.
     fn enqueue_prioritized_request(&self, req: Value) {
-        self.prioritized_values.borrow_mut().push_back(req.clone());
+        let mut prioritized_values = self.prioritized_values.borrow_mut();
+        if prioritized_values.contains(&req) {
+            return;
+        }
+        prioritized_values.push_back(req.clone());
         logger::log_info(&format!(
             "[Core Proposer] Enqueued prioritized request with Value: {:?}",
             req

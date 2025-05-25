@@ -152,12 +152,13 @@ impl GuestClientServerResource for MyClientServerTcpResource {
                     Ok(_) => {
                         // Nothing to read. Can't be used to detect FIN/closed connection. Do nothing.
                     }
-                    Err(e) => {
-                        logger::log_error(&format!(
-                            "[Client Server] read error on chan {}: {:?}, dropping",
-                            chan, e
-                        ));
-                        to_drop.push(chan);
+                    Err(_e) => {
+                        // TODO: Annoying log when 500 clients are finished
+                        // logger::log_error(&format!(
+                        //     "[Client Server] read error on chan {}: {:?}, dropping",
+                        //     chan, e
+                        // ));
+                        // to_drop.push(chan);
                     }
                 }
             }

@@ -1,7 +1,7 @@
 # ─── config.yaml ────────────────────────────────────────
 
 # logging
-log_level: warning   # "debug", "info", "warning", "error"
+log_level: warning    # "debug", "info", "warning", "error"
 
 # all nodes in your entire deployment:
 nodes:
@@ -59,7 +59,7 @@ run_config:
   acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 500
-  demo_client: true
+  demo_client: false
   demo_client_requests: 123450
   batch_size: 20
   tick_micros: 100
@@ -69,10 +69,13 @@ run_config:
   message_batch_size: 20
   client_server_port: 60000
   persistent_storage: true
-  
+  heartbeats: false
+  heartbeat_interval_ms: 200
+  # TODO: add configs for crashing, and hot reloading nodes
+
   # ─── storage tuning ───────────────────────────────
   # How many snapshots to load at startup.
-  storage_load_snapshots: 10
+  storage_load_snapshots: 5
    # How many snapshots to keep in rotation.
   storage_max_snapshots: 20
 

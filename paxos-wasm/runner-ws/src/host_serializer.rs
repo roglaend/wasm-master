@@ -1,4 +1,4 @@
-use crate::bindings::paxos::default::network_types::{Heartbeat, MessagePayload, NetworkMessage};
+use crate::bindings::paxos::default::network_types::{MessagePayload, NetworkMessage};
 use crate::bindings::paxos::default::paxos_types::{
     Accept, Accepted, ClientResponse, CmdResult, ExecuteResult, Executed, KvPair, Learn, Node,
     Operation, PValue, PaxosRole, Prepare, Promise, RetryLearns, Value,
@@ -240,10 +240,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 l.slot, v.client_id, v.client_seq, op
             )
         }
-        MessagePayload::Heartbeat(h) => {
-            let sender_str = serialize_node(&h.sender);
-            format!("heartbeat,sender:{},timestamp:{}", sender_str, h.timestamp)
-        }
+        MessagePayload::Heartbeat => "heartbeat".into(),
         MessagePayload::RetryLearns(retries) => {
             let slots = retries
                 .slots
@@ -251,7 +248,7 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join("|");
-            format!("retry-learn,slots:{}", slots)
+            format!("retry-learns,slots:{}", slots)
         }
         MessagePayload::Executed(exec) => {
             let entries = exec
@@ -553,29 +550,9 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             }
         }
 
-        "heartbeat" => {
-            let mut sender_str = None;
-            let mut timestamp = None;
-            for p in &parts[1..] {
-                let mut kv = p.splitn(2, ':');
-                match (kv.next(), kv.next()) {
-                    (Some("sender"), Some(v)) => sender_str = Some(v),
-                    (Some("timestamp"), Some(v)) => timestamp = v.parse().ok(),
-                    _ => {}
-                }
-            }
-            if let (Some(s), Some(ts)) = (sender_str, timestamp) {
-                let sender = deserialize_node(s)?;
-                Ok(MessagePayload::Heartbeat(Heartbeat {
-                    sender,
-                    timestamp: ts,
-                }))
-            } else {
-                Err("bad heartbeat")
-            }
-        }
+        "heartbeat" => Ok(MessagePayload::Heartbeat),
 
-        "retry-learn" => {
+        "retry-learns" => {
             // expect exactly one more part: "slots:3|4|5"
             if parts.len() == 2 && parts[1].starts_with("slots:") {
                 let list = &parts[1]["slots:".len()..];
@@ -586,7 +563,7 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
                 }
                 Ok(MessagePayload::RetryLearns(RetryLearns { slots }))
             } else {
-                Err("bad retry-learn")
+                Err("bad retry-learns")
             }
         }
 

@@ -32,13 +32,12 @@ fi
 CMD="$WT"
 for cluster in "${CLUSTER_IDS[@]}"; do
   title="cluster $cluster"
-  CMD+=" new-tab --title \"$title\" bash -c \\\"\
+  CMD+=" new-tab --title \"$title\" bash -c 'ulimit -n 10000 && \
     ./target/$TARGET/$MODEL \
       --cluster-id $cluster \
-      --config $CONFIG\\\" \\;"
+      --config \"$CONFIG\"' \\;"
 done
-# strip trailing "\;"
-CMD=${CMD%\\;}
-
-echo "Launching local Paxos clusters in one WT window..."
+# strip the final ' \;'
+CMD=${CMD% \\;}
+echo "Launching local Paxos clusters in one WT window…"
 eval "$CMD"
