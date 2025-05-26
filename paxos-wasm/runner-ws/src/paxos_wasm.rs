@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::p2::bindings::cli::exit::Host;
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
 
@@ -18,7 +17,7 @@ use crate::bindings::paxos::default::logger::{self, Level};
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
 use crate::bindings::paxos::default::storage;
 use crate::host_logger::{self, HostLogger};
-use crate::host_storage::{self, HostStorage, StorageRequest};
+use crate::host_storage::{HostStorage, StorageRequest};
 
 pub struct ComponentRunStates {
     // These two are required basically as a standard way to enable the impl of WasiView
