@@ -6,5 +6,6 @@ wasmtime::component::bindgen! {{
     with: {
         "paxos:default/network-server/network-server-resource": crate::paxos_wasm::NetworkServerResource,
         "paxos:default/network-client/network-client-resource": crate::paxos_wasm::NetworkClientResource,
+        "paxos:default/storage/storage-resource": crate::paxos_wasm::StorageResource,
     }
 }}

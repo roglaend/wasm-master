@@ -15,7 +15,9 @@ use crate::host_network_server::NativeTcpServer;
 use crate::bindings;
 use crate::bindings::paxos::default::logger::{self, Level};
 use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
+use crate::bindings::paxos::default::storage;
 use crate::host_logger::{self, HostLogger};
+use crate::host_storage::{HostStorage, StorageRequest};
 
 pub struct ComponentRunStates {
     // These two are required basically as a standard way to enable the impl of WasiView
@@ -88,6 +90,12 @@ pub struct NetworkClientResource {
     pub client: NativeTcpClient,
 }
 
+pub struct StorageResource {
+    pub key: String,
+    pub max_snapshots: u64,
+    pub storage: Arc<HostStorage>,
+}
+
 pub struct PaxosWasmtime {
     pub store: Mutex<Store<ComponentRunStates>>,
     pub bindings: bindings::PaxosRunnerWorld,
@@ -108,6 +116,7 @@ impl PaxosWasmtime {
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::network_server::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::network_client::add_to_linker(&mut linker, |s| s)?;
+        bindings::paxos::default::storage::add_to_linker(&mut linker, |s| s)?;
 
         let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -250,5 +259,138 @@ impl logger::Host for ComponentRunStates {
 
     async fn log_error(&mut self, msg: String) {
         self.logger.log_error(msg);
+    }
+}
+
+impl storage::Host for ComponentRunStates {}
+
+impl storage::HostStorageResource for ComponentRunStates {
+    async fn new(
+        &mut self,
+        key: String,
+        max_snapshots: u64,
+    ) -> wasmtime::component::Resource<StorageResource> {
+        println!("State from host is being used");
+        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("Must have a parent")
+            .parent()
+            .expect("Workspace folder")
+            .to_owned();
+
+        let state_host_path = workspace_dir.join("paxos-wasm/logs/state");
+        let res = StorageResource {
+            key,
+            max_snapshots,
+            storage: HostStorage::new(state_host_path),
+        };
+        self.resource_table.push(res).unwrap()
+    }
+
+    async fn save_state(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+        state: Vec<u8>,
+    ) -> Result<(), String> {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage.enqueue(StorageRequest::SaveState {
+            key: res.key.clone(),
+            data: state,
+        });
+        Ok(())
+    }
+
+    async fn load_state(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+    ) -> Result<Vec<u8>, String> {
+        let res = self.resource_table.get(&this).unwrap();
+        println!("Loading state from host");
+        res.storage.load_current_state(&res.key).await
+    }
+
+    async fn flush_state(
+        &mut self,
+        _this: wasmtime::component::Resource<StorageResource>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn save_change(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+        change: Vec<u8>,
+    ) -> Result<(), String> {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage.enqueue(StorageRequest::SaveChange {
+            key: res.key.clone(),
+            data: change,
+        });
+        Ok(())
+    }
+
+    async fn flush_changes(
+        &mut self,
+        _this: wasmtime::component::Resource<StorageResource>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn checkpoint(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+        state: Vec<u8>,
+        timestamp: String,
+    ) -> Result<(), String> {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage.enqueue(StorageRequest::Checkpoint {
+            key: res.key.clone(),
+            data: state,
+            timestamp,
+            max_snapshots: res.max_snapshots,
+        });
+        Ok(())
+    }
+
+    async fn list_snapshots(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+    ) -> Vec<String> {
+        let res = self.resource_table.get(&this).unwrap();
+        let res = res.storage.list_snapshots(&res.key).await;
+        res
+    }
+
+    async fn prune_snapshots(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+        retain: u64,
+    ) -> Result<(), String> {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage.prune_snapshots(&res.key, retain).await
+    }
+
+    async fn load_state_and_changes(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+        num_snapshots: u64,
+    ) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), String> {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage
+            .load_state_and_changes(&res.key, num_snapshots)
+            .await
+    }
+
+    async fn delete(&mut self, this: wasmtime::component::Resource<StorageResource>) -> bool {
+        let res = self.resource_table.get(&this).unwrap();
+        res.storage.delete(&res.key)
+    }
+
+    async fn drop(
+        &mut self,
+        this: wasmtime::component::Resource<StorageResource>,
+    ) -> wasmtime::Result<()> {
+        self.resource_table.delete(this)?;
+        Ok(())
     }
 }

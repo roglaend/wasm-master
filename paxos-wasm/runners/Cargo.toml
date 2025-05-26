@@ -3,6 +3,9 @@ name = "runners"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+host_network = []
+
 [dependencies]
 wasmtime = "33"
 wasmtime-wasi = "33"
