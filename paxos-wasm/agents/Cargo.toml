@@ -1,10 +1,10 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "agents"
 version = "0.1.0"
 
 [dependencies]
 
 [build-dependencies]
-core = { path = "../core" }
-paxos-wasm-utils = { path = "../shared/utils" }
+core = {path = "../core"}
+paxos-wasm-utils = {path = "../shared/utils"}
