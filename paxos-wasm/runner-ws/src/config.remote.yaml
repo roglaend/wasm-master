@@ -6,52 +6,52 @@ log_level: warning    # "debug", "info", "warning", "error"
 # all nodes in your entire deployment:
 nodes:
   - node_id: 1
-    address: "127.0.0.1:50051"
+    address: "152.94.162.11:50051" 
     role: "learner"
   - node_id: 2
-    address: "127.0.0.1:50052"
+    address: "152.94.162.11:50052"
     role: "acceptor"
   - node_id: 3
-    address: "127.0.0.1:50053"
+    address: "152.94.162.11:50053"
     role: "proposer"
 
   - node_id: 4
-    address: "127.0.0.1:50054"
+    address: "152.94.162.12:50054"
     role: "learner"
   - node_id: 5
-    address: "127.0.0.1:50055"
+    address: "152.94.162.12:50055"
     role: "acceptor"
   - node_id: 6
-    address: "127.0.0.1:50056"
+    address: "152.94.162.12:50056"
     role: "proposer"
 
   - node_id: 7
-    address: "127.0.0.1:50057"
+    address: "152.94.162.13:50057"
     role: "learner"
   - node_id: 8
-    address: "127.0.0.1:50058"
+    address: "152.94.162.13:50058"
     role: "acceptor"
   - node_id: 9
-    address: "127.0.0.1:50059"
+    address: "152.94.162.13:50059"
     role: "proposer"
 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
-  # 1: [1,2,3]
+  1: [1,2,3]
 
-  # 2: [4,5,6]
+  2: [4,5,6]
 
-  # 3: [7,8,9]
+  3: [7,8,9]
 
-  1: [1]
-  2: [2]
-  3: [3]
-  4: [4]
-  5: [5]
-  6: [6]
-  7: [7]
-  8: [8]
-  9: [9]
+  # 1: [1]
+  # 2: [2]
+  # 3: [3]
+  # 4: [4]
+  # 5: [5]
+  # 6: [6]
+  # 7: [7]
+  # 8: [8]
+  # 9: [9]
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
