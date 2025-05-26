@@ -3,6 +3,9 @@ edition = "2021"
 name = "agents"
 version = "0.1.0"
 
+[features]
+host_storage = []
+
 [dependencies]
 
 [build-dependencies]

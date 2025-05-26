@@ -8,6 +8,10 @@ TARGET=release
 WT=wt.exe
 MODEL=runners-ws
 
+
+# STATEDIR="./paxos-wasm/logs/state"
+# rm -rf "${STATEDIR}/"
+
 # ─── find the line number that says "clusters:" ──────────────────
 clust_line=$(grep -n '^clusters:' "$CONFIG" | cut -d: -f1)
 if [[ -z "$clust_line" ]]; then
@@ -32,12 +36,13 @@ fi
 CMD="$WT"
 for cluster in "${CLUSTER_IDS[@]}"; do
   title="cluster $cluster"
-  CMD+=" new-tab --title \"$title\" bash -c 'ulimit -n 10000 && \
+  CMD+=" new-tab --title \"$title\" bash -c '\
+  ulimit -n 10000 && \
     ./target/$TARGET/$MODEL \
-      --cluster-id $cluster \
-      --config \"$CONFIG\"' \\;"
+    --cluster-id $cluster \
+    --config \"$CONFIG\"' \\;"
 done
-# strip the final ' \;'
-CMD=${CMD% \\;}
-echo "Launching local Paxos clusters in one WT window…"
+CMD=${CMD%\\;}
+
+echo "Launching local Paxos clusters in one WT window..."
 eval "$CMD"

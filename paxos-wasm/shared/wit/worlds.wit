@@ -89,6 +89,7 @@ world paxos-runner-world {
     import paxos-coordinator;
     
     import logger;
+    import storage;
 
     export runner;
 }
