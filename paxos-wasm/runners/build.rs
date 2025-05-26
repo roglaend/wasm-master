@@ -32,14 +32,14 @@ fn main() {
             "composed_failure_service",
         ];
         let socket = "paxos_coordinator";
-        let output = "tcp_composed_paxos_coordinator";
+        let output = "composed_paxos_coordinator";
         build_and_plug(target_triple, &build_list, &plugs, socket, output);
 
         let build_list = [];
         let plugs = [
             // "composed_network_server_tcp",
             "composed_client_server_tcp",
-            "tcp_composed_paxos_coordinator",
+            "composed_paxos_coordinator",
         ];
         let socket = "runner";
         let output = "final_composed_runner";
