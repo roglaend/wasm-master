@@ -48,8 +48,6 @@ world proposer-agent-world {
     import network-client;
     import logger;
 
-    import failure-detector;
-
     export proposer-agent;
 }
 
@@ -79,7 +77,6 @@ world paxos-coordinator-world {
 
     import failure-detector;
 
-    // import network-client;
     import logger; 
 
     export paxos-coordinator;
