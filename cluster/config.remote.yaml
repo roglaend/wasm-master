@@ -6,33 +6,33 @@ log_level: warning    # "debug", "info", "warning", "error"
 # all nodes in your entire deployment:
 nodes:
   - node_id: 1
-    address: "152.94.162.11:50051" 
+    address: "152.94.162.12:50051" 
     role: "learner"
   - node_id: 2
-    address: "152.94.162.11:50052"
+    address: "152.94.162.12:50052"
     role: "acceptor"
   - node_id: 3
-    address: "152.94.162.11:50053"
+    address: "152.94.162.12:50053"
     role: "proposer"
 
   - node_id: 4
-    address: "152.94.162.12:50054"
+    address: "152.94.162.13:50054"
     role: "learner"
   - node_id: 5
-    address: "152.94.162.12:50055"
+    address: "152.94.162.13:50055"
     role: "acceptor"
   - node_id: 6
-    address: "152.94.162.12:50056"
+    address: "152.94.162.13:50056"
     role: "proposer"
 
   - node_id: 7
-    address: "152.94.162.13:50057"
+    address: "152.94.162.14:50057"
     role: "learner"
   - node_id: 8
-    address: "152.94.162.13:50058"
+    address: "152.94.162.14:50058"
     role: "acceptor"
   - node_id: 9
-    address: "152.94.162.13:50059"
+    address: "152.94.162.14:50059"
     role: "proposer"
 
 # how those nodes are grouped into independent Paxos clusters
@@ -59,7 +59,7 @@ run_config:
   acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 100
-  demo_client: true
+  demo_client: false
   demo_client_requests: 123450
   batch_size: 20
   tick_micros: 100

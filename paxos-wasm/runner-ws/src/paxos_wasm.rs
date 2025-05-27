@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, Resource};
@@ -24,6 +23,7 @@ pub struct ComponentRunStates {
     pub wasi_ctx: WasiCtx,
     pub resource_table: ResourceTable,
     pub logger: Arc<HostLogger>,
+    pub state_host_path: PathBuf,
 }
 
 impl IoView for ComponentRunStates {
@@ -39,24 +39,36 @@ impl WasiView for ComponentRunStates {
 }
 
 impl ComponentRunStates {
-    pub fn new(node: Node, log_level: Level) -> Self {
+    /// New constructor that takes an optional logs directory (where logs and state will live).
+    pub fn new(node: &Node, log_level: Level, logs_dir: Option<&Path>) -> Self {
         let host_node = host_logger::HostNode {
             node_id: node.node_id,
             address: node.address.clone(),
             role: node.role,
         };
 
-        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("Must have a parent")
-            .parent()
-            .expect("Workspace folder")
-            .to_owned();
+        // If no custom logs_dir, default to workspace logs
+        let logs_dir: PathBuf = if let Some(dir) = logs_dir {
+            dir.to_path_buf()
+        } else {
+            let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("Must have a parent")
+                .parent()
+                .expect("Workspace folder")
+                .to_owned();
+            workspace_dir.join("logs")
+        };
 
-        let state_host_path = workspace_dir.join("paxos-wasm/logs/state");
-        fs::create_dir_all(&state_host_path)
+        // Create logs dir if needed
+        std::fs::create_dir_all(&logs_dir).expect("Failed to create logs dir");
+
+        // Put the state dir inside the logs dir
+        let state_host_path = logs_dir.join("state");
+        std::fs::create_dir_all(&state_host_path)
             .expect(&format!("Failed to create state dir {:?}", state_host_path));
 
+        // Setup Wasi preopened dir for state
         let mut builder = WasiCtxBuilder::new();
         builder.inherit_stdio();
         builder.inherit_env();
@@ -64,7 +76,7 @@ impl ComponentRunStates {
         builder.inherit_network();
         builder
             .preopened_dir(
-                workspace_dir.join("paxos-wasm/logs/state"),
+                &state_host_path,
                 "/state",
                 DirPerms::all(),
                 FilePerms::all(),
@@ -73,11 +85,15 @@ impl ComponentRunStates {
 
         let wasi_ctx = builder.build();
 
+        let logger = Arc::new(HostLogger::new_with_logs_dir(
+            host_node, &logs_dir, log_level,
+        ));
+
         ComponentRunStates {
             wasi_ctx,
             resource_table: ResourceTable::new(),
-
-            logger: Arc::new(HostLogger::new_from_workspace(host_node, log_level)),
+            logger,
+            state_host_path,
         }
     }
 }
@@ -104,10 +120,13 @@ pub struct PaxosWasmtime {
 impl PaxosWasmtime {
     pub async fn new(
         engine: &Engine,
-        node: bindings::paxos::default::paxos_types::Node,
+        node: &Node,
         log_level: Level,
+        wasm_path: String,
+        logs_dir: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let state = ComponentRunStates::new(node.clone(), log_level);
+        let _ = logs_dir;
+        let state = ComponentRunStates::new(node, log_level, logs_dir);
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
@@ -118,17 +137,7 @@ impl PaxosWasmtime {
         bindings::paxos::default::network_client::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::storage::add_to_linker(&mut linker, |s| s)?;
 
-        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("Must have a parent")
-            .parent()
-            .expect("Workspace folder")
-            .to_owned();
-
-        let composed_component = Component::from_file(
-            &engine,
-            workspace_dir.join("target/wasm32-wasip2/release/final_composed_runner.wasm"),
-        )?;
+        let composed_component = Component::from_file(&engine, PathBuf::from(&wasm_path))?;
 
         let final_bindings =
             bindings::PaxosRunnerWorld::instantiate_async(&mut store, &composed_component, &linker)
@@ -271,18 +280,11 @@ impl storage::HostStorageResource for ComponentRunStates {
         max_snapshots: u64,
     ) -> wasmtime::component::Resource<StorageResource> {
         println!("State from host is being used");
-        let workspace_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("Must have a parent")
-            .parent()
-            .expect("Workspace folder")
-            .to_owned();
-
-        let state_host_path = workspace_dir.join("paxos-wasm/logs/state");
+        let state_host_path = &self.state_host_path;
         let res = StorageResource {
             key,
             max_snapshots,
-            storage: HostStorage::new(state_host_path),
+            storage: HostStorage::new(state_host_path.clone()),
         };
         self.resource_table.push(res).unwrap()
     }

@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
         "accd",
+        "bbchain",
         "bindgen",
         "bufs",
         "byteorder",
@@ -16,6 +17,8 @@
         "pocs",
         "pollable",
         "pollables",
+        "preopen",
+        "preopened",
         "preopens",
         "protos",
         "psnap",

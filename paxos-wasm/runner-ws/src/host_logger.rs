@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, error, info, warn};
@@ -40,18 +40,11 @@ pub struct HostLogger {
 }
 
 impl HostLogger {
-    /// Create a new HostLogger for a given node.
-    /// It creates node-specific and global log files in a workspace "logs" directory.
-    pub fn new_from_workspace(node: HostNode, level: Level) -> Self {
-        // Compute the workspace directory.
-        let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let workspace_dir = binding.parent().expect("Failed to get workspace directory");
-        let logs_dir = workspace_dir.join("logs");
+    /// Create a new HostLogger that writes to a specified logs directory.
+    pub fn new_with_logs_dir(node: HostNode, logs_dir: &Path, level: Level) -> Self {
         std::fs::create_dir_all(&logs_dir).expect("Failed to create logs folder");
-
-        // Build file paths.
         let node_file_path = logs_dir.join(format!("node{}.log", node.node_id));
-        let node_file_path_str = node_file_path.to_str().expect("Invalid node file path");
+        let node_file_path_str = node_file_path.to_str().expect("Invalid log file path");
 
         Self::new(node, node_file_path_str, level)
     }

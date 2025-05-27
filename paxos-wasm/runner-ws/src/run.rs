@@ -1,6 +1,8 @@
+use crate::Args;
 use crate::config::Config;
 use crate::host_logger;
 use crate::paxos_wasm::PaxosWasmtime;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
@@ -11,6 +13,8 @@ use wasmtime::Engine;
 use once_cell::sync::Lazy;
 
 static START_TIME: Lazy<Mutex<Instant>> = Lazy::new(|| Mutex::new(Instant::now()));
+
+const MAX_RETRIES: i32 = 5;
 
 fn reset_start_time() {
     let mut time = START_TIME.lock().unwrap();
@@ -26,17 +30,13 @@ fn elapsed_since_start() {
     );
 }
 
-pub async fn run_cluster(
-    cluster_id: u64,
-    config_path: &str,
-    engine: &Engine,
-) -> anyhow::Result<()> {
-    let cfg = Config::load(config_path, cluster_id)?;
+pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
+    let cfg = Config::load(&args.config, args.cluster_id)?;
     host_logger::init_tracing_with(cfg.log_level);
 
     error!(
         "Cluster {}: {} nodes, leader={}",
-        cluster_id,
+        args.cluster_id,
         cfg.cluster_nodes.len(),
         cfg.leader_id,
     );
@@ -60,6 +60,8 @@ pub async fn run_cluster(
         let is_leader = node.node_id == cfg.leader_id;
         let run_config = cfg.run_config.clone();
         let log_level = cfg.log_level;
+        let wasm_path = args.wasm.clone();
+        let logs_dir = args.logs_dir.as_ref().map(|s| PathBuf::from(s));
 
         let other_active_nodes: Vec<_> = cfg
             .active_nodes
@@ -76,11 +78,19 @@ pub async fn run_cluster(
             let builder_tx = tx.clone();
             let builder_node = node.clone();
             let builder_engine = engine.clone();
+            let logs_dir = logs_dir.clone(); 
             tokio::spawn(async move {
+                let mut builder_retries = 0;
                 loop {
                     if builder_tx.capacity() > 0 {
-                        match PaxosWasmtime::new(&builder_engine, builder_node.clone(), log_level)
-                            .await
+                        match PaxosWasmtime::new(
+                            &builder_engine,
+                            &builder_node,
+                            log_level,
+                            wasm_path.clone(),
+                            logs_dir.as_deref()
+                        )
+                        .await
                         {
                             Ok(paxos) => {
                                 if builder_tx.send(paxos).await.is_ok() {
@@ -89,12 +99,21 @@ pub async fn run_cluster(
                                         builder_node.node_id
                                     );
                                 }
+                                builder_retries = 0; // Reset on success
                             }
                             Err(e) => {
                                 error!(
                                     "[Host] Node {}: Error building Paxos: {:?}",
                                     builder_node.node_id, e
                                 );
+                                builder_retries += 1;
+                                if builder_retries >= MAX_RETRIES {
+                                    error!(
+                                        "[Host] Node {}: Reached max builder retries ({}). Exiting builder task.",
+                                        builder_node.node_id, MAX_RETRIES
+                                    );
+                                    break;
+                                }
                             }
                         }
                     }
@@ -103,6 +122,7 @@ pub async fn run_cluster(
             });
 
             // Main loop — consume prebuilt instances, run them, retry on failure
+            let mut main_retries = 0;
             loop {
                 let mut paxos = match rx.recv().await {
                     Some(p) => {
@@ -134,8 +154,8 @@ pub async fn run_cluster(
                             "[Host] Node {}: Paxos exited cleanly. Exiting node loop.",
                             node.node_id
                         );
-                        // TODO: We are here if the Paxos instance exited cleanly, which it will if we are
-                        // hot-reloading. Should not break, but rather start the updated instance in next loop tick.
+                        // TODO: We are here if the Paxos instance exited cleanly, which it will if we are...
+                        // TODO: hot-reloading. Should not break, but rather start the updated instance in next loop tick.
                         break;
                     }
                     Ok(Err(e)) => {
@@ -154,7 +174,16 @@ pub async fn run_cluster(
                     }
                 }
 
-                // sleep(Duration::from_millis(100)).await;
+                main_retries += 1;
+                    if main_retries >= MAX_RETRIES {
+                        error!(
+                            "[Host] Node {}: Reached max main loop retries ({}). Giving up.",
+                            node.node_id, MAX_RETRIES
+                        );
+                        break;
+                    }
+
+                sleep(Duration::from_millis(100)).await;
             }
         }));
     }
