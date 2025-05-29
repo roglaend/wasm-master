@@ -29,7 +29,7 @@ struct Args {
     #[clap(long)]
     num_requests: usize,
 
-    #[clap(long, value_enum, default_value = "oneshot")]
+    #[clap(long, value_enum, default_value = "persistent")]
     mode: ClientMode,
 
     #[clap(long, default_value = "127.0.0.1:60000")]
@@ -43,6 +43,12 @@ struct Args {
 
     #[clap(long, default_value = "0")]
     client_id_offset: u64,
+
+    #[clap(
+        long,
+        default_value = "target/wasm32-wasip2/release/composed_paxos_ws_client.wasm"
+    )]
+    wasm: String,
 }
 
 fn summarize(label: &str, durations: &[Duration]) {
@@ -75,15 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cfg.async_support(true);
     let engine = Engine::new(&cfg)?;
 
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let component_wasm =
-        workspace.join("target/wasm32-wasip2/release/composed_paxos_ws_client.wasm");
-    let component = Component::from_file(&engine, component_wasm)?;
+    let component = Component::from_file(&engine, PathBuf::from(&args.wasm))?;
 
     let mut linker = Linker::<ComponentRunStates>::new(&engine);
     add_to_linker_async(&mut linker)?;
@@ -219,10 +217,10 @@ async fn run_logical_client(
             .await?;
 
         // success returns true if we tried to receive successfully
-        // if false, conncetion is closed. For now this only happens
+        // if false, connection is closed. For now this only happens
         // when the leader restarts, so we retry the last request
         if !success {
-            // if we wait to litle, the leader may not be ready, this is a temp fix
+            // if we wait too little, the leader may not be ready, this is a temp fix
             // ideally call send request in a loop until it returns true
             sleep(Duration::from_millis(100)).await;
             let req: bindings::paxos::default::paxos_types::Value = Value {
