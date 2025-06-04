@@ -13,7 +13,7 @@ BIN="./target/${TARGET}/modular-ws-client"
 # echo "Removing existing client log files..."'
 # rm -f "${LOG_DIR}/client"*.log
 
-TOTAL_REQUESTS=100000
+TOTAL_REQUESTS=1000000
 NUM_PROCESSES=10
 LOGICAL_CLIENTS_PER_PROCESS=50
 

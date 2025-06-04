@@ -621,14 +621,6 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
     fn process_executed(&self, executed: Executed) {
         if executed.adu > self.proposer.get_adu() {
             self.proposer.set_adu(executed.adu);
-            // TODO: Put this into config
-            // should also have a better way to crash the node since adu with batch size
-            // wont necessarily be incremented by 1
-            // But do not know where its best to do this, since crashing at a specific slot when sending out
-            // would mean crash on the recovered node as well for that slot
-            // if executed.adu == 1001 && self.proposer.is_leader() {
-            //     panic!("Testing panic recovery");
-            // }
         }
 
         if !self.proposer.is_leader() {

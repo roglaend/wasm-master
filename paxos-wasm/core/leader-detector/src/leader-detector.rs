@@ -1,9 +1,5 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -11,15 +7,14 @@ pub mod bindings {
         world: "leader-detector-world",
     });
 }
-
 bindings::export!(MyLeaderDetector with_types_in bindings);
 
 use crate::bindings::exports::paxos::default::leader_detector::{
     Guest, GuestLeaderDetectorResource,
 };
 use crate::bindings::paxos::default::logger;
-use bindings::paxos::default::paxos_types::Node;
-use bindings::paxos::default::paxos_types::PaxosRole;
+use bindings::paxos::default::paxos_types::{Node, PaxosRole};
+
 pub struct MyLeaderDetector;
 
 impl Guest for MyLeaderDetector {
@@ -27,87 +22,102 @@ impl Guest for MyLeaderDetector {
 }
 
 pub struct MyLeaderDetectorResource {
-    nodes: Vec<u64>,
-    suspected: Arc<Mutex<HashMap<u64, bool>>>,
-    leader: Cell<u64>,
+    proposers: Vec<u64>,
+    suspected: RefCell<HashMap<u64, bool>>,
+    last_leader: Cell<Option<u64>>,
+}
+
+impl MyLeaderDetectorResource {
+    // pick max ID of proposers where suspected==false
+    fn recompute_leader(&self) -> Option<u64> {
+        let suspected = self.suspected.borrow();
+        self.proposers
+            .iter()
+            .filter(|&&id| !suspected.get(&id).copied().unwrap_or(false))
+            .copied()
+            .max()
+    }
 }
 
 impl GuestLeaderDetectorResource for MyLeaderDetectorResource {
-    fn new(nodes: Vec<Node>, _local_node_id: Node) -> Self {
-        let mut suspected = HashMap::with_capacity(nodes.len());
+    fn new(all: Vec<Node>, _local: Node) -> Self {
+        let mut proposers = Vec::new();
+        let mut suspected = HashMap::new();
 
-        let mut relevant_nodes = Vec::new();
-        for node in &nodes {
+        // Collect only Coordinator/Proposer roles
+        for node in &all {
             if matches!(node.role, PaxosRole::Coordinator | PaxosRole::Proposer) {
+                proposers.push(node.node_id);
                 suspected.insert(node.node_id, false);
-                relevant_nodes.push(node.node_id);
             }
         }
-        let leader = find_max_false(&suspected);
-        logger::log_warn(&format!(
-            "[Leader Detector] Initialized with leader {}",
-            leader
-        ));
 
-        Self {
-            nodes: relevant_nodes,
-            suspected: Arc::new(Mutex::new(suspected)),
-            leader: Cell::new(leader),
+        // Compute initial leader
+        let initial = {
+            let mut max_id = None;
+            for &id in &proposers {
+                if max_id.map_or(true, |m| id > m) {
+                    max_id = Some(id);
+                }
+            }
+            max_id
+        };
+        if let Some(id) = initial {
+            logger::log_warn(&format!("[Leader Detector] Initialized with leader {}", id));
+        }
+
+        MyLeaderDetectorResource {
+            proposers,
+            suspected: RefCell::new(suspected),
+            last_leader: Cell::new(initial),
         }
     }
 
     fn suspect(&self, node: u64) -> Option<u64> {
-        if !self.nodes.contains(&node) {
-            // Leader detector does not care about non-relevant nodes
+        if !self.proposers.contains(&node) {
             return None;
         }
-        let mut suspected = self.suspected.lock().unwrap();
-        suspected.insert(node, true);
-        let leader = find_max_false(&suspected);
-        if leader != self.leader.get() {
-            logger::log_error(&format!(
-                "[Leader Detector] Leader is down - New leader is {}",
-                leader
-            ));
-            self.leader.set(leader);
-            Some(leader)
+
+        // Mark this node as suspected
+        self.suspected.borrow_mut().insert(node, true);
+
+        // Recompute highest‐ID alive
+        let new_leader = self.recompute_leader();
+        if new_leader != self.last_leader.get() {
+            if let Some(id) = new_leader {
+                logger::log_error(&format!(
+                    "[Leader Detector] Leader is down, new leader is {}",
+                    id
+                ));
+            }
+            self.last_leader.set(new_leader);
+            new_leader
         } else {
             None
         }
     }
 
     fn restore(&self, node: u64) -> Option<u64> {
-        if !self.nodes.contains(&node) {
-            // Leader detector does not care about non-relevant nodes
+        if !self.proposers.contains(&node) {
             return None;
         }
-        let mut suspected = self.suspected.lock().unwrap();
-        suspected.insert(node, false);
-        let leader = find_max_false(&suspected);
-        if leader != self.leader.get() {
-            logger::log_error(&format!(
-                "[Leader Detector] Leader restored - Restored leader is {}",
-                leader
-            ));
-            self.leader.set(leader);
-            Some(leader)
+
+        // Mark this node as not suspected
+        self.suspected.borrow_mut().insert(node, false);
+
+        // Recompute highest‐ID alive
+        let new_leader = self.recompute_leader();
+        if new_leader != self.last_leader.get() {
+            if let Some(id) = new_leader {
+                logger::log_warn(&format!(
+                    "[Leader Detector] Leader restored, new leader is {}",
+                    id
+                ));
+            }
+            self.last_leader.set(new_leader);
+            new_leader
         } else {
             None
         }
     }
-
-    fn nodes(&self) -> Vec<u64> {
-        self.nodes.clone()
-    }
-}
-
-/// Helper function that finds the maximum node id that is not suspected.
-/// Returns 0 if all nodes are suspected. // TODO: Return an option for clarity?
-fn find_max_false(suspected: &HashMap<u64, bool>) -> u64 {
-    suspected
-        .iter()
-        .filter(|&(_, &is_suspected)| !is_suspected)
-        .map(|(&id, _)| id)
-        .max()
-        .unwrap_or(0)
 }

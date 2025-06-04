@@ -1,8 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 pub mod bindings {
     wit_bindgen::generate!({
@@ -10,7 +9,6 @@ pub mod bindings {
         world: "failure-detector-world",
     });
 }
-
 bindings::export!(MyFailureDetector with_types_in bindings);
 
 use crate::bindings::exports::paxos::default::failure_detector::{
@@ -19,6 +17,13 @@ use crate::bindings::exports::paxos::default::failure_detector::{
 use bindings::paxos::default::paxos_types::Node;
 use bindings::paxos::default::{leader_detector, logger};
 
+#[derive(Clone, Copy, PartialEq)]
+enum FailureState {
+    Alive,
+    Suspected,
+    Dead,
+}
+
 pub struct MyFailureDetector;
 
 impl Guest for MyFailureDetector {
@@ -26,74 +31,105 @@ impl Guest for MyFailureDetector {
 }
 
 pub struct MyFailureDetectorResource {
-    node_id: u64,
-    nodes: Vec<u64>,
-    ld: Arc<leader_detector::LeaderDetectorResource>,
-    alive: Arc<Mutex<HashMap<u64, bool>>>,
-    suspected: Arc<Mutex<HashMap<u64, bool>>>,
+    local_id: u64,
+    all_nodes: Vec<Node>,
+    leader_detector: leader_detector::LeaderDetectorResource,
+    state_map: RefCell<HashMap<u64, FailureState>>,
+    seen: RefCell<HashMap<u64, bool>>,
 }
 
-// TODO: Change this to take in and use the Node type more than just the node_id
 impl GuestFailureDetectorResource for MyFailureDetectorResource {
-    fn new(node: Node, mut nodes: Vec<Node>, _delta: u64) -> Self {
-        let mut node_ids: Vec<u64> = nodes.iter().map(|node| node.node_id).collect();
-        // Add yourself to the list of nodes
-        node_ids.push(node.node_id);
+    fn new(local: Node, others: Vec<Node>, _delta: u64) -> Self {
+        let mut all = others.clone();
+        all.push(local.clone());
 
-        nodes.push(node.clone());
+        // TODO: Make use of delta
 
-        let ld = Arc::new(leader_detector::LeaderDetectorResource::new(&nodes, &node));
+        let ld = leader_detector::LeaderDetectorResource::new(&all, &local);
 
-        Self {
-            ld,
-            node_id: node.node_id,
-            nodes: node_ids,
-            alive: Arc::new(Mutex::new(HashMap::new())),
-            suspected: Arc::new(Mutex::new(HashMap::new())),
+        let mut map = HashMap::new();
+        for node in &all {
+            map.insert(node.node_id, FailureState::Alive);
+        }
+
+        MyFailureDetectorResource {
+            local_id: local.node_id,
+            all_nodes: all,
+            leader_detector: ld,
+            state_map: RefCell::new(map),
+            seen: RefCell::new(HashMap::new()),
         }
     }
 
     fn checker(&self) -> Option<u64> {
-        logger::log_info("[Failure Detector] Checker function called.");
-        let mut alive = self.alive.lock().unwrap();
-        let mut suspected = self.suspected.lock().unwrap();
+        logger::log_info("[Failure Detector] checker() called");
+        let mut states = self.state_map.borrow_mut();
+        let mut seen = self.seen.borrow_mut();
+        let mut new_leader = None;
 
-        // Check if any alive node is also suspected.
-        // TODO : Get this back to host to increase the delta
-        let _increase_delta = alive.keys().any(|node| suspected.get(node) == Some(&true));
+        for node in &self.all_nodes {
+            let id = node.node_id;
+            let current = *states.get(&id).unwrap_or(&FailureState::Alive);
 
-        logger::log_warn(&format!("Current suspected nodes: {:?}", suspected.keys()));
-        logger::log_info(&format!("Current alive nodes: {:?}", alive.keys()));
+            // If we saw a heartbeat from this node, mark it Alive (and possibly restore)
+            if seen.remove(&id).unwrap_or(false) {
+                if current != FailureState::Alive {
+                    logger::log_warn(&format!("[Failure Detector] Node {} restored", id));
+                    // Notify leader detector that this node is back up
+                    if let Some(l) = self.leader_detector.restore(id) {
+                        new_leader = Some(l);
+                    }
+                }
+                states.insert(id, FailureState::Alive);
 
-        // The failure detector has status for all nodes, and calls the leader detecotor
-        // to check if any of the suspected nodes turns into a new leader
-        let new_lead = self.nodes.iter().fold(None, |acc, node| {
-            if !alive.contains_key(node) && !suspected.contains_key(node) {
-                // Node not known to be alive or suspected.
-                suspected.insert(*node, true);
-                let lead = self.ld.suspect(*node);
-                alive.remove(node);
-                Some(lead)
-            } else if alive.contains_key(node) && suspected.contains_key(node) {
-                // Node is alive but also marked as suspected: restore it.
-                suspected.remove(node);
-                alive.remove(node);
-                Some(self.ld.restore(*node))
+            // No heartbeat, first miss: Suspected, second miss: Dead
             } else {
-                // In all other cases, remove the node from alive.
-                alive.remove(node);
-                acc
+                match current {
+                    FailureState::Alive => {
+                        logger::log_warn(&format!("[Failure Detector] Node {} suspected", id));
+                        states.insert(id, FailureState::Suspected);
+                    }
+                    FailureState::Suspected => {
+                        logger::log_error(&format!("[Failure Detector] Node {} dead", id));
+                        states.insert(id, FailureState::Dead);
+                        // Notify leader detector that this node is down
+                        if let Some(l) = self.leader_detector.suspect(id) {
+                            new_leader = Some(l);
+                        }
+                    }
+                    FailureState::Dead => {
+                        // Already dead
+                    }
+                }
             }
-        });
-        new_lead?
+        }
+
+        seen.clear();
+        new_leader
     }
 
-    fn heartbeat(&self, node: u64) {
-        let mut alive = self.alive.lock().unwrap();
-        alive.insert(node, true);
+    fn heartbeat(&self, from: u64) {
+        let mut seen = self.seen.borrow_mut();
+        seen.insert(from, true);
+        seen.insert(self.local_id, true);
+    }
 
-        // TODO: Quixfix for always ensuring yourself is alive
-        //* Is there a better way than this? - Filip */
-        alive.insert(self.node_id, true);
+    fn alive_nodes(&self) -> Vec<u64> {
+        let states = self.state_map.borrow();
+        self.all_nodes
+            .iter()
+            .filter_map(|n| {
+                if states
+                    .get(&n.node_id)
+                    .copied()
+                    .unwrap_or(FailureState::Alive)
+                    != FailureState::Dead
+                {
+                    Some(n.node_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }

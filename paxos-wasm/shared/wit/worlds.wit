@@ -88,8 +88,9 @@ world paxos-runner-world {
     import network-client;
     import paxos-coordinator;
     
-    import logger;
     import storage;
+    import logger;
+    import host-control;
 
     export runner;
 }

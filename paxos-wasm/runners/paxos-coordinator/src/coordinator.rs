@@ -521,16 +521,23 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     fn failure_service(&self) -> Option<u64> {
-        // TODO : What to do with leader change
-        // TODO : Also need to handle change in timeout
-        let new_lead = self.failure_detector.checker();
-        if let Some(leader) = new_lead {
-            logger::log_warn(&format!("Leader {} change initiated. New leader", &leader));
-            if leader == self.node.node_id {
-                self.proposer().become_leader();
+        let maybe_new_leader = self.failure_detector.checker();
+
+        // TODO: Also make use of alive_nodes on failure detector and tell agents which nodes are alive
+
+        if let Some(leader_id) = maybe_new_leader {
+            match self.node.role {
+                PaxosRole::Proposer | PaxosRole::Coordinator => {
+                    if leader_id == self.node.node_id && !self.proposer().is_leader() {
+                        self.proposer().become_leader();
+                    } else if leader_id != self.node.node_id && self.proposer().is_leader() {
+                        self.proposer().resign_leader();
+                    }
+                }
+                _ => {}
             }
         }
-        new_lead
+        maybe_new_leader
     }
 
     fn send_heartbeat(&self) {

@@ -1,6 +1,7 @@
 mod bindings;
 mod config;
 mod host_logger;
+mod host_control;
 mod paxos_wasm;
 mod run;
 

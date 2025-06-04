@@ -9,3 +9,4 @@ path = "src/proposer-agent.rs"
 
 [dependencies]
 wit-bindgen = "0.42"
+rand = "0.9"
