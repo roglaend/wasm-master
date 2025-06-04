@@ -4,8 +4,7 @@ use crate::host_logger;
 use crate::paxos_wasm::PaxosWasmtime;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::{sync::mpsc, time::sleep};
 use tracing::{error, warn};
 use wasmtime::Engine;
@@ -16,17 +15,19 @@ static START_TIME: Lazy<Mutex<Instant>> = Lazy::new(|| Mutex::new(Instant::now()
 
 const MAX_RETRIES: i32 = 5;
 
+// Total allowed downtime before forcing restart: (failure_check_interval × 2) − 1
+const TOTAL_TIMEOUT_INTERVALS: u64 = 9;
+const GRACE_INTERVALS: u64 = 2;
+const SHUTDOWN_TIMEOUT_INTERVALS: u64 = TOTAL_TIMEOUT_INTERVALS - GRACE_INTERVALS;
+
 fn reset_start_time() {
-    let mut time = START_TIME.lock().unwrap();
-    *time = Instant::now();
-    // println!("Start time reset.");
+    *START_TIME.lock().unwrap() = Instant::now();
 }
 
 fn elapsed_since_start() {
-    let time = START_TIME.lock().unwrap();
     warn!(
         "[Host] Time from detecting error to calling run on new component: {:?}",
-        time.elapsed()
+        START_TIME.lock().unwrap().elapsed()
     );
 }
 
@@ -41,73 +42,76 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
         cfg.leader_id,
     );
 
-    for n in &cfg.cluster_nodes {
-        let role = if n.node_id == cfg.leader_id {
+    for node in &cfg.cluster_nodes {
+        let role = if node.node_id == cfg.leader_id {
             "Leader"
         } else {
             "Node"
         };
         error!(
             "  • Node {} @{} ({:?} {})",
-            n.node_id, n.address, n.role, role,
+            node.node_id, node.address, node.role, role,
         );
     }
 
     let mut tasks = Vec::new();
+    let run_config_template = cfg.run_config.clone();
+    let wasm_path = args.wasm.clone();
+    let logs_dir_base = args.logs_dir.as_ref().map(PathBuf::from);
 
     for node in cfg.cluster_nodes {
         let engine = engine.clone();
         let is_leader = node.node_id == cfg.leader_id;
-        let run_config = cfg.run_config.clone();
+        let run_config = run_config_template.clone();
         let log_level = cfg.log_level;
-        let wasm_path = args.wasm.clone();
-        let logs_dir = args.logs_dir.as_ref().map(|s| PathBuf::from(s));
+        let node_wasm_path = wasm_path.clone();
+        let node_logs_dir = logs_dir_base.clone();
 
-        let other_active_nodes: Vec<_> = cfg
+        let other_active = cfg
             .active_nodes
-            .clone()
-            .into_iter()
-            .filter(|n| n.node_id != node.node_id)
-            .collect();
+            .iter()
+            .filter(|n2| n2.node_id != node.node_id)
+            .cloned()
+            .collect::<Vec<_>>();
 
         tasks.push(tokio::spawn(async move {
-            // Channel to transfer prebuilt Paxos instances
+            // Builder task: keep one Paxos instance ready.
             let (tx, mut rx) = mpsc::channel::<PaxosWasmtime>(1);
-
-            // Builder task
-            let builder_tx = tx.clone();
             let builder_node = node.clone();
             let builder_engine = engine.clone();
-            let logs_dir = logs_dir.clone(); 
+            let builder_wasm = node_wasm_path.clone();
+            let builder_logs = node_logs_dir.clone();
+            let builder_level = log_level;
+
             tokio::spawn(async move {
-                let mut builder_retries = 0;
+                let mut retries = 0;
                 loop {
-                    if builder_tx.capacity() > 0 {
+                    if tx.capacity() > 0 {
                         match PaxosWasmtime::new(
                             &builder_engine,
                             &builder_node,
-                            log_level,
-                            wasm_path.clone(),
-                            logs_dir.as_deref()
+                            builder_level,
+                            builder_wasm.clone(),
+                            builder_logs.as_deref(),
                         )
                         .await
                         {
                             Ok(paxos) => {
-                                if builder_tx.send(paxos).await.is_ok() {
+                                if tx.send(paxos).await.is_ok() {
                                     warn!(
                                         "[Host] Node {}: Prebuilt new Paxos instance",
                                         builder_node.node_id
                                     );
                                 }
-                                builder_retries = 0; // Reset on success
+                                retries = 0;
                             }
                             Err(e) => {
                                 error!(
                                     "[Host] Node {}: Error building Paxos: {:?}",
                                     builder_node.node_id, e
                                 );
-                                builder_retries += 1;
-                                if builder_retries >= MAX_RETRIES {
+                                retries += 1;
+                                if retries >= MAX_RETRIES {
                                     error!(
                                         "[Host] Node {}: Reached max builder retries ({}). Exiting builder task.",
                                         builder_node.node_id, MAX_RETRIES
@@ -121,12 +125,12 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
                 }
             });
 
-            // Main loop — consume prebuilt instances, run them, retry on failure
+            // Main loop: run instances, monitor, restart on failure
             let mut main_retries = 0;
             loop {
                 let mut paxos = match rx.recv().await {
                     Some(p) => {
-                        warn!("[Host] Node {}: Got prebuilt paxos instance.", node.node_id);
+                        warn!("[Host] Node {}: Got prebuilt Paxos instance.", node.node_id);
                         p
                     }
                     None => {
@@ -138,50 +142,125 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
                     }
                 };
 
-                let run_result = tokio::spawn({
-                    let node = node.clone();
-                    let all_nodes = other_active_nodes.clone();
-                    let run_config = run_config.clone();
-                    warn!("[Host] Node {}: Starting paxos instance.", node.node_id);
-                    elapsed_since_start();
-                    async move { paxos.run(node, all_nodes, is_leader, run_config).await }
-                })
-                .await;
+                let control = paxos.control_handle.clone();
+                let heartbeat_ms = run_config.heartbeat_interval_ms;
+                let shutdown_threshold = heartbeat_ms.saturating_mul(SHUTDOWN_TIMEOUT_INTERVALS);
+                let node_id = node.node_id;
 
-                match run_result {
-                    Ok(Ok(_)) => {
+                // Monitor: wait for first ping, then check timeout every heartbeat interval.
+                let mut monitor_handle = {
+                    let control = control.clone();
+                    tokio::spawn(async move {
+                        while control.last_ping_time().await.is_none() {
+                            sleep(Duration::from_millis(heartbeat_ms)).await;
+                        }
+                        loop {
+                            sleep(Duration::from_millis(heartbeat_ms)).await;
+                            if let Some(ts) = control.last_ping_time().await {
+                                let elapsed = Instant::now().duration_since(ts);
+                                if elapsed.as_millis() as u64 > shutdown_threshold {
+                                    warn!(
+                                        "[Host Monitor] Node {} hasn’t pinged in {:?}, requesting shutdown.",
+                                        node_id, elapsed
+                                    );
+                                    control.request_shutdown().await;
+                                    break;
+                                }
+                            }
+                        }
+                    })
+                };
+
+                // Runner: actually run the Paxos instance.
+                let mut run_handle = {
+                    let node = node.clone();
+                    let all_nodes = other_active.clone();
+                    let run_config = run_config.clone();
+                    tokio::spawn(async move {
+                        warn!("[Host] Node {}: Starting Paxos instance.", node.node_id);
+                        elapsed_since_start();
+                        paxos.run(node, all_nodes, is_leader, run_config).await
+                    })
+                };
+
+                // Wait for run() to finish or monitor to request shutdown
+                let shutdown_requested = {
+                    tokio::select! {
+                        run_res = &mut run_handle => {
+                            // Runner finished first
+                            if !monitor_handle.is_finished() {
+                                monitor_handle.abort();
+                            }
+                            match run_res {
+                                Ok(Ok(())) => {
+                                    warn!(
+                                        "[Host] Node {}: Paxos exited cleanly. Restarting loop.",
+                                        node.node_id
+                                    );
+                                    continue; // reload a fresh instance without incrementing retries
+                                }
+                                Ok(Err(e)) => {
+                                    reset_start_time();
+                                    warn!(
+                                        "[Host] Node {}: Paxos error: {:?}. Retrying.",
+                                        node.node_id, e
+                                    );
+                                    true
+                                }
+                                Err(join_err) => {
+                                    reset_start_time();
+                                    warn!(
+                                        "[Host] Node {}: Paxos panicked: {:?}. Retrying.",
+                                        node.node_id, join_err
+                                    );
+                                    true
+                                }
+                            }
+                        }
+                        _ = &mut monitor_handle => {
+                            // Monitor fired first
+                            true
+                        }
+                    }
+                };
+
+                if shutdown_requested {
+                    // Grace period before forced abort
+                    let grace_duration = Duration::from_millis(heartbeat_ms.saturating_mul(GRACE_INTERVALS));
+                    warn!(
+                        "[Host] Node {}: Shutdown requested; waiting {:?} before force‐abort.",
+                        node.node_id, grace_duration
+                    );
+                    sleep(grace_duration).await;
+
+                    if !run_handle.is_finished() {
                         warn!(
-                            "[Host] Node {}: Paxos exited cleanly. Exiting node loop.",
+                            "[Host] Node {}: Grace period elapsed; forcing runner abort.",
                             node.node_id
                         );
-                        // TODO: We are here if the Paxos instance exited cleanly, which it will if we are...
-                        // TODO: hot-reloading. Should not break, but rather start the updated instance in next loop tick.
-                        break;
+                        run_handle.abort();
                     }
-                    Ok(Err(e)) => {
-                        reset_start_time();
-                        warn!(
-                            "[Host] Node {}: Paxos error: {:?}. Retrying with new instance.",
-                            node.node_id, e
-                        );
+
+                    // Ensure monitor is stopped
+                    if !monitor_handle.is_finished() {
+                        monitor_handle.abort();
                     }
-                    Err(e) => {
-                        reset_start_time();
-                        warn!(
-                            "[Host] Node {}: Paxos panicked: {:?}. Retrying with new instance.",
-                            node.node_id, e
-                        );
-                    }
+
+                    reset_start_time();
+                    warn!(
+                        "[Host] Node {}: Runner terminated. Retrying with new instance.",
+                        node.node_id
+                    );
                 }
 
                 main_retries += 1;
-                    if main_retries >= MAX_RETRIES {
-                        error!(
-                            "[Host] Node {}: Reached max main loop retries ({}). Giving up.",
-                            node.node_id, MAX_RETRIES
-                        );
-                        break;
-                    }
+                if main_retries >= MAX_RETRIES {
+                    error!(
+                        "[Host] Node {}: Reached max main loop retries ({}). Giving up.",
+                        node.node_id, MAX_RETRIES
+                    );
+                    break;
+                }
 
                 sleep(Duration::from_millis(100)).await;
             }

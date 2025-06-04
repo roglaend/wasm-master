@@ -59,7 +59,7 @@ run_config:
   acceptors_send_learns: true
   learners_send_executed: true
   prepare_timeout: 100
-  demo_client: true
+  demo_client: false
   demo_client_requests: 123450
   batch_size: 20
   tick_micros: 100
@@ -68,8 +68,8 @@ run_config:
   learn_max_gap: 50
   message_batch_size: 20
   client_server_port: 60000
-  persistent_storage: false
-  heartbeats: false
+  persistent_storage: true
+  heartbeats: true
   heartbeat_interval_ms: 200
   # TODO: add configs for crashing, and hot reloading nodes
 

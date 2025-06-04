@@ -6,8 +6,10 @@ use wasmtime::{Engine, Store};
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
 
+use crate::bindings::paxos::default::host_control::HostCmd;
 use crate::bindings::paxos::default::network_types::NetworkMessage;
-use crate::bindings::paxos::default::{network_client, network_server};
+use crate::bindings::paxos::default::{host_control, network_client, network_server};
+use crate::host_control::HostControlHandler;
 use crate::host_network_client::NativeTcpClient;
 use crate::host_network_server::NativeTcpServer;
 
@@ -22,7 +24,9 @@ pub struct ComponentRunStates {
     // These two are required basically as a standard way to enable the impl of WasiView
     pub wasi_ctx: WasiCtx,
     pub resource_table: ResourceTable,
+
     pub logger: Arc<HostLogger>,
+    pub control: Arc<HostControlHandler>,
     pub state_host_path: PathBuf,
 }
 
@@ -89,10 +93,13 @@ impl ComponentRunStates {
             host_node, &logs_dir, log_level,
         ));
 
+        let control = Arc::new(HostControlHandler::new());
+
         ComponentRunStates {
             wasi_ctx,
             resource_table: ResourceTable::new(),
             logger,
+            control,
             state_host_path,
         }
     }
@@ -115,6 +122,8 @@ pub struct StorageResource {
 pub struct PaxosWasmtime {
     pub store: Mutex<Store<ComponentRunStates>>,
     pub bindings: bindings::PaxosRunnerWorld,
+
+    pub control_handle: Arc<HostControlHandler>,
 }
 
 impl PaxosWasmtime {
@@ -127,12 +136,15 @@ impl PaxosWasmtime {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let _ = logs_dir;
         let state = ComponentRunStates::new(node, log_level, logs_dir);
+        let control_handle = state.control.clone();
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
+        bindings::paxos::default::host_control::add_to_linker(&mut linker, |s| s)?;
+
         bindings::paxos::default::network_server::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::network_client::add_to_linker(&mut linker, |s| s)?;
         bindings::paxos::default::storage::add_to_linker(&mut linker, |s| s)?;
@@ -146,6 +158,7 @@ impl PaxosWasmtime {
         Ok(Self {
             store: Mutex::new(store),
             bindings: final_bindings,
+            control_handle,
         })
     }
 
@@ -168,6 +181,36 @@ impl PaxosWasmtime {
         resource.call_run(&mut *store, resource_handle).await?;
 
         Ok(())
+    }
+}
+
+impl logger::Host for ComponentRunStates {
+    // Delegate the log calls to our stored HostLogger.
+    async fn log_debug(&mut self, msg: String) {
+        self.logger.log_debug(msg);
+    }
+
+    async fn log_info(&mut self, msg: String) {
+        self.logger.log_info(msg);
+    }
+
+    async fn log_warn(&mut self, msg: String) {
+        self.logger.log_warn(msg);
+    }
+
+    async fn log_error(&mut self, msg: String) {
+        self.logger.log_error(msg);
+    }
+}
+
+impl host_control::Host for ComponentRunStates {
+    // Delegate to our embedded HostControlHandler
+    async fn ping(&mut self) {
+        self.control.record_ping().await
+    }
+
+    async fn get_command(&mut self) -> Option<HostCmd> {
+        self.control.get_command().await
     }
 }
 
@@ -216,6 +259,8 @@ impl network_server::HostNetworkServerResource for ComponentRunStates {
     }
 }
 
+impl network_client::Host for ComponentRunStates {}
+
 impl network_client::HostNetworkClientResource for ComponentRunStates {
     async fn new(&mut self) -> Resource<NetworkClientResource> {
         let client = self.resource_table.push(NetworkClientResource {
@@ -247,27 +292,6 @@ impl network_client::HostNetworkClientResource for ComponentRunStates {
     async fn drop(&mut self, rep: Resource<NetworkClientResource>) -> wasmtime::Result<()> {
         let _ = self.resource_table.delete(rep)?;
         Ok(())
-    }
-}
-
-impl network_client::Host for ComponentRunStates {}
-
-impl logger::Host for ComponentRunStates {
-    // Delegate the log calls to our stored HostLogger.
-    async fn log_debug(&mut self, msg: String) {
-        self.logger.log_debug(msg);
-    }
-
-    async fn log_info(&mut self, msg: String) {
-        self.logger.log_info(msg);
-    }
-
-    async fn log_warn(&mut self, msg: String) {
-        self.logger.log_warn(msg);
-    }
-
-    async fn log_error(&mut self, msg: String) {
-        self.logger.log_error(msg);
     }
 }
 

@@ -13,7 +13,6 @@ mod bindings {
 bindings::export!(MyRunner with_types_in bindings);
 
 use bindings::exports::paxos::default::runner::{Guest, GuestRunnerResource};
-use bindings::paxos::default::logger;
 use bindings::paxos::default::paxos_types::{Operation, PaxosRole, Value};
 use bindings::paxos::default::{
     client_server::ClientServerResource,
@@ -21,6 +20,7 @@ use bindings::paxos::default::{
     paxos_coordinator::PaxosCoordinatorResource,
     paxos_types::{ClientResponse, Node, RunConfig},
 };
+use bindings::paxos::default::{host_control, logger};
 
 struct DemoClientHelper {
     client_id: String,
@@ -266,6 +266,19 @@ impl MyRunnerResource {
             }
         }
     }
+
+    fn handle_host_control(&self) {
+        host_control::ping();
+
+        if let Some(cmd) = host_control::get_command() {
+            match cmd {
+                host_control::HostCmd::Shutdown => {
+                    // TODO: Actually handle graceful shutdown, but for now just quit
+                    self.should_stop.store(true, Ordering::Relaxed);
+                } // handle other future commands here…
+            }
+        }
+    }
 }
 
 impl GuestRunnerResource for MyRunnerResource {
@@ -345,6 +358,8 @@ impl GuestRunnerResource for MyRunnerResource {
         let mut next_tick = Instant::now() + tick_duration;
 
         while !self.should_stop.load(Ordering::Relaxed) {
+            self.handle_host_control();
+            
             // only used if configured
             self.send_heartbeat();
             self.failure_check();

@@ -68,8 +68,23 @@ interface runner {
     use paxos-types.{node, run-config};
     
     resource runner-resource {
-    constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
+        constructor(node: node, nodes: list<node>, is-leader: bool, config: run-config);
 
-    run: func();
+        run: func();
     }
 }
+
+interface host-control {
+    enum host-cmd {
+        shutdown, // gracefully exit soon
+        // Reconfigure: record new run‐config, etc. 
+        // ChangeLogLevel: record a new log level, etc.
+    }
+
+    // Called by the Runner on an interval to tell the Host “I’m still running.”
+    ping: func();
+  
+    // Poll the Host for any pending host-cmd.
+    get-command: func() -> option<host-cmd>;
+  }
+  
