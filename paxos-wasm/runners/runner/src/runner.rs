@@ -215,53 +215,55 @@ impl MyRunnerResource {
     }
 
     fn send_heartbeat(&self) {
-        if self.config.heartbeats {
-            let now = Instant::now();
-            if now.duration_since(self.last_heartbeat.get())
-                >= Duration::from_millis(self.config.heartbeat_interval_ms)
-            {
-                self.paxos.send_heartbeat();
-                self.last_heartbeat.set(now);
-            }
+        if !self.config.heartbeats {
+            return;
+        }
+
+        let now = Instant::now();
+        if now.duration_since(self.last_heartbeat.get())
+            >= Duration::from_millis(self.config.heartbeat_interval_ms)
+        {
+            self.paxos.send_heartbeat();
+            self.last_heartbeat.set(now);
         }
     }
 
     // Now handles the case of leader change and start client_server on new leader
-    // could prob be done cleaner but this works for now
     fn failure_check(&self) {
-        let mut new_lead = None;
-        if self.config.heartbeats {
-            let now = Instant::now();
-            let failure_check_interval = 5; //* Important Constant */
-            if now.duration_since(self.last_failure_check.get())
-                >= Duration::from_millis(self.config.heartbeat_interval_ms * failure_check_interval)
-            {
-                new_lead = self.paxos.failure_service();
-                self.last_failure_check.set(now);
-            }
-            if let Some(new_lead) = new_lead {
-                match self.node.role {
-                    PaxosRole::Proposer | PaxosRole::Coordinator => {
-                        if new_lead == self.node.node_id {
-                            let host = self
-                                .node
-                                .address
-                                .split(':')
-                                .next()
-                                .expect("invalid node.address, expected ip:port");
-                            let addr = format!("{}:{}", host, self.config.client_server_port);
-                            logger::log_error(&format!(
-                                "[Runner] New leader detected, setting up client server on {}",
-                                &addr,
-                            ));
-                            self.client_svr.setup_listener(&addr);
-                        }
+        if !self.config.heartbeats {
+            return;
+        }
+
+        let now = Instant::now();
+        let failure_check_interval = 5; //* Important Constant */
+        if now.duration_since(self.last_failure_check.get())
+            < Duration::from_millis(self.config.heartbeat_interval_ms * failure_check_interval)
+        {
+            return;
+        }
+        self.last_failure_check.set(now);
+
+        if let Some(new_leader) = self.paxos.failure_service() {
+            match self.node.role {
+                PaxosRole::Proposer | PaxosRole::Coordinator => {
+                    if new_leader == self.node.node_id {
+                        let host = self
+                            .node
+                            .address
+                            .split(':')
+                            .next()
+                            .expect("invalid node.address, expected ip:port");
+                        let addr = format!("{}:{}", host, self.config.client_server_port);
+                        logger::log_error(&format!(
+                            "[Runner] New leader detected, setting up client server on {}",
+                            &addr,
+                        ));
+                        self.client_svr.setup_listener(&addr);
                     }
-                    PaxosRole::Acceptor => {}
-                    PaxosRole::Learner => {}
-                    _ => {
-                        panic!("Unknown role");
-                    }
+                }
+                PaxosRole::Acceptor | PaxosRole::Learner => {}
+                _ => {
+                    panic!("Unknown role");
                 }
             }
         }
@@ -359,7 +361,7 @@ impl GuestRunnerResource for MyRunnerResource {
 
         while !self.should_stop.load(Ordering::Relaxed) {
             self.handle_host_control();
-            
+
             // only used if configured
             self.send_heartbeat();
             self.failure_check();

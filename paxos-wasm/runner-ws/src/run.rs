@@ -16,7 +16,7 @@ static START_TIME: Lazy<Mutex<Instant>> = Lazy::new(|| Mutex::new(Instant::now()
 const MAX_RETRIES: i32 = 5;
 
 // Total allowed downtime before forcing restart: (failure_check_interval × 2) − 1
-const TOTAL_TIMEOUT_INTERVALS: u64 = 9;
+const TOTAL_TIMEOUT_INTERVALS: u64 = 9; // Could be higher on real servers due to possible overlapping client-servers
 const GRACE_INTERVALS: u64 = 2;
 const SHUTDOWN_TIMEOUT_INTERVALS: u64 = TOTAL_TIMEOUT_INTERVALS - GRACE_INTERVALS;
 
@@ -259,7 +259,10 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
                         "[Host] Node {}: Reached max main loop retries ({}). Giving up.",
                         node.node_id, MAX_RETRIES
                     );
-                    break;
+                    loop {
+                        // Just sleep forever instead of quitting, so we can continue to see terminal output
+                        sleep(Duration::from_secs(60)).await;
+                    }
                 }
 
                 sleep(Duration::from_millis(100)).await;
