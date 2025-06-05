@@ -52,6 +52,10 @@ struct MyLearnerAgentResource {
     /// for executions
     exec_buffer: RefCell<VecDeque<ExecuteResult>>,
     last_exec_time: RefCell<Instant>,
+
+    tp_total_execs: RefCell<u64>,
+    tp_start_time: RefCell<Option<Instant>>,
+    tp_last_log_time: RefCell<Instant>,
 }
 
 impl MyLearnerAgentResource {
@@ -135,7 +139,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         let learner = Arc::new(LearnerResource::new(
             num_acceptors,
             &node.node_id.to_string(),
-            config,
+            &config,
         ));
         let kv_store = Arc::new(KvStoreResource::new());
         let network_client = Arc::new(network_client::NetworkClientResource::new());
@@ -163,6 +167,9 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
             exec_buffer: RefCell::new(VecDeque::new()),
             last_exec_time: RefCell::new(now),
             all_nodes: nodes,
+            tp_total_execs: RefCell::new(0),
+            tp_start_time: RefCell::new(None),
+            tp_last_log_time: RefCell::new(now),
         }
     }
 
@@ -179,6 +186,11 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
 
     // Record a learn (with quorum if needed).
     fn record_learn(&self, slot: Slot, value: Value, sender: Node) -> bool {
+        if self.tp_start_time.borrow().is_none() {
+            let now = Instant::now();
+            self.tp_start_time.replace(Some(now));
+            logger::log_info("[Learner Agent][TP] Starting throughput timer now.");
+        }
         let was_new = if self.config.acceptors_send_learns {
             let learn = Learn {
                 slot,
@@ -211,7 +223,33 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                     success: !matches!(cmd_res, CmdResult::NoOp),
                     cmd_result: cmd_res,
                 });
+
+                let plot_slots = 1000.0; // Plot every 2000th slot
+
+                if le.slot % plot_slots as u64 == 0 {
+                    let now = Instant::now();
+                    let last_log_time = *self.tp_last_log_time.borrow();
+                    let elapsed = now.duration_since(last_log_time).as_secs_f64();
+
+                    if elapsed > 0.0 {
+                        let tp = plot_slots / elapsed;
+                        logger::log_error(&format!("{}", tp));
+
+                        // logger::log_error(&format!(
+                        // "[Learner Agent][TP] Slot-based throughput: {:.2} ops/sec (1000 slots in {:.2} ms) at slot {}",
+                        // tp,
+                        // elapsed * 1000.0,
+                        // le.slot
+                        // ));
+
+                        self.tp_last_log_time.replace(now);
+                    }
+                }
             }
+
+            let count = entries.len() as u64;
+            *self.tp_total_execs.borrow_mut() += count;
+
             logger::log_info(&format!(
                 "[Learner Agent] Applied {} learns to KV-store; executed buffer now has {} entries",
                 entries.len(),
@@ -370,6 +408,19 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
                 }
 
                 ignore_msg
+            }
+
+            MessagePayload::Adu(_) => {
+                let adu_msg = NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Adu(self.get_adu()),
+                };
+                logger::log_error("Learner Agent] Received ADU message replying with ADU");
+
+                self.network_client
+                    .send_message_forget(&vec![message.sender], &adu_msg);
+
+                adu_msg
             }
 
             other_message => {

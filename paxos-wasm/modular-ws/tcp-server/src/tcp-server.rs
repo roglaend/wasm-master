@@ -154,32 +154,32 @@ impl GuestWsServerResource for MyTcpServerResource {
             PaxosRole::Proposer => {
                 logger::log_info("[Tcp Server] Initializing as Proposer runner.");
                 Runner::Proposer(Arc::new(proposer_agent::ProposerAgentResource::new(
-                    &node, &nodes, is_leader, config,
+                    &node, &nodes, is_leader, &config,
                 )))
             }
             PaxosRole::Acceptor => {
                 logger::log_info("[Tcp Server] Initializing as Acceptor agent.");
                 Runner::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
-                    &node, &nodes, config,
+                    &node, &nodes, &config,
                 )))
             }
             PaxosRole::Learner => {
                 logger::log_info("[Tcp Server] Initializing as Learner agent.");
                 Runner::Learner(Arc::new(learner_agent::LearnerAgentResource::new(
-                    &node, &nodes, config,
+                    &node, &nodes, &config,
                 )))
             }
             PaxosRole::Coordinator => {
                 logger::log_info("[Tcp Server] Initializing as Coordinator.");
                 Runner::Coordinator(Arc::new(paxos_coordinator::PaxosCoordinatorResource::new(
-                    &node, &nodes, is_leader, config,
+                    &node, &nodes, is_leader, &config,
                 )))
             }
             // Optionally, handle unexpected roles.
             _ => {
                 logger::log_warn("[Tcp Server] Unknown node role; defaulting to Acceptor agent.");
                 Runner::Acceptor(Arc::new(acceptor_agent::AcceptorAgentResource::new(
-                    &node, &nodes, config,
+                    &node, &nodes, &config,
                 )))
             }
         };

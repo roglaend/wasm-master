@@ -290,7 +290,7 @@ impl GuestRunnerResource for MyRunnerResource {
             &node,
             &nodes,
             is_leader,
-            config.clone(),
+            &config.clone(),
         ));
 
         let num_nodes = nodes.len() as u64;

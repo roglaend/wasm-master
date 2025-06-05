@@ -208,7 +208,14 @@ async fn run_logical_client(
         if let Some(time_sent) = sent.get(&last) {
             if time_sent.elapsed() > Duration::from_secs(3) {
                 // Timeout long taking request, dont care
+                println!(
+                    "[Client {}] seq={} timed out after {:?}",
+                    client_id,
+                    last,
+                    time_sent.elapsed()
+                );
                 sent.remove(&last);
+                seen.insert(last);
             }
         }
 
@@ -222,7 +229,8 @@ async fn run_logical_client(
         if !success {
             // if we wait too little, the leader may not be ready, this is a temp fix
             // ideally call send request in a loop until it returns true
-            sleep(Duration::from_millis(100)).await;
+            // need to be bigger than heartbeat interval
+            sleep(Duration::from_millis(300)).await;
             let req: bindings::paxos::default::paxos_types::Value = Value {
                 client_id: format!("client-{}", client_id),
                 client_seq: next - 1,
@@ -248,6 +256,7 @@ async fn run_logical_client(
                         client_id, seq, resp, dt
                     );
                     lats.push(dt);
+                    // continue;,
                 }
             }
         }

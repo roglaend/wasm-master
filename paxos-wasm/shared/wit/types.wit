@@ -16,6 +16,7 @@ interface paxos-types {
         persistent-storage: bool,       // Toggle the usage of persistent storage.
         heartbeats: bool,               // Toggle the usage of heartbeats.
         heartbeat-interval-ms: u64,     // The interval in ms between heartbeats.
+        crashes: list<list<u64>>,       // List of crash slots for each proposer node, e.g., [[1, 10000], [5, 100]] means node 1 crashes at slots 10000, node 5 at slot 100.
 
         storage-load-snapshots: u64,            // How many snapshots to load at startup.
         storage-max-snapshots: u64,             // How many snapshots to keep in rotation.
@@ -277,6 +278,7 @@ interface network-types {
         executed(executed),                 // Contains list of executed values and adu.
         retry-learns(retry-learns),         // Retry learns for missing slots
         benchmark(benchmark),               // Benchmark message
+        adu(u64),                           // Message for getting the highest seen slot of learner. Learner also respons with the same message.
     }
 
     record benchmark {

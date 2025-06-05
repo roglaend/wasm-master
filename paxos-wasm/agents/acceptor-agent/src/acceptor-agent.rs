@@ -43,7 +43,7 @@ impl MyAcceptorAgentResource {}
 
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), config));
+        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), &config));
 
         let learners: Vec<_> = nodes
             .iter()

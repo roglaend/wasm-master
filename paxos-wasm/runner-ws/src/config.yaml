@@ -5,44 +5,54 @@ log_level: warning    # "debug", "info", "warning", "error"
 
 # all nodes in your entire deployment:
 nodes:
+  # - node_id: 1
+  #   address: "127.0.0.1:50051"
+  #   role: "learner"
+  # - node_id: 2
+  #   address: "127.0.0.1:50052"
+  #   role: "acceptor"
+
+  # - node_id: 3
+  #   address: "127.0.0.1:50054"
+  #   role: "learner"
+  # - node_id: 4
+  #   address: "127.0.0.1:50055"
+  #   role: "acceptor"
+  # - node_id: 5
+  #   address: "127.0.0.1:50056"
+  #   role: "proposer"
+
+  # - node_id: 6
+  #   address: "127.0.0.1:50058"
+  #   role: "acceptor"
+  # - node_id: 7
+  #   address: "127.0.0.1:50059"
+  #   role: "proposer"
+
   - node_id: 1
     address: "127.0.0.1:50051"
     role: "learner"
   - node_id: 2
     address: "127.0.0.1:50052"
-    role: "acceptor"
+    role: "learner"
   - node_id: 3
     address: "127.0.0.1:50053"
-    role: "proposer"
-
+    role: "acceptor"
   - node_id: 4
     address: "127.0.0.1:50054"
-    role: "learner"
+    role: "acceptor"
   - node_id: 5
     address: "127.0.0.1:50055"
     role: "acceptor"
   - node_id: 6
     address: "127.0.0.1:50056"
     role: "proposer"
-
   - node_id: 7
     address: "127.0.0.1:50057"
-    role: "learner"
-  - node_id: 8
-    address: "127.0.0.1:50058"
-    role: "acceptor"
-  - node_id: 9
-    address: "127.0.0.1:50059"
     role: "proposer"
 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
-  # 1: [1,2,3]
-
-  # 2: [4,5,6]
-
-  # 3: [7,8,9]
-
   1: [1]
   2: [2]
   3: [3]
@@ -50,8 +60,8 @@ clusters:
   5: [5]
   6: [6]
   7: [7]
-  8: [8]
-  9: [9]
+  # # 8: [8]
+  # # 9: [9]
 
 # ─── run-loop tuning ───────────────────────────────────
 run_config:
@@ -70,14 +80,18 @@ run_config:
   client_server_port: 60000
   persistent_storage: true
   heartbeats: true
-  heartbeat_interval_ms: 200
-  # TODO: add configs for crashing, and hot reloading nodes
+  heartbeat_interval_ms: 100
+  crashes: # [node_id, crash_slot, crash_slot, ...] // can have many of these lists, but proposer only one that creahses for now
+  # - [7, 50000]
+  # - [1, 123456, 123457, 123458]
+
+  # Can add similar for "freezes"
 
   # ─── storage tuning ───────────────────────────────
   # How many snapshots to load at startup.
-  storage_load_snapshots: 10
+  storage_load_snapshots: 99999999
    # How many snapshots to keep in rotation.
-  storage_max_snapshots: 20
+  storage_max_snapshots: 999999999
 
   # How often to flush the current overwritten state. 
   storage_flush_state_count: 100

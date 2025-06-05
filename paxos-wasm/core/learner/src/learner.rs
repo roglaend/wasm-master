@@ -81,7 +81,7 @@ impl MyLearnerResource {
 impl GuestLearnerResource for MyLearnerResource {
     fn new(num_acceptors: u64, node_id: String, config: RunConfig) -> Self {
         let storage_key = &format!("node{}-learner", node_id);
-        let storage = StorageHelper::new(storage_key, config, config.persistent_storage);
+        let storage = StorageHelper::new(storage_key, config.clone(), config.persistent_storage);
         Self {
             config,
             num_acceptors,
@@ -258,13 +258,13 @@ impl StorageHelper {
 
         let now = Instant::now();
         StorageHelper {
-            store: StorageResource::new(key, run_config.storage_max_snapshots),
+            store: StorageResource::new(key, run_config.clone().storage_max_snapshots),
             enabled,
-            run_config,
+            run_config: run_config.clone(),
             bincode_config: bincode::config::standard(),
 
             change_flush_interval: Duration::from_millis(
-                run_config.storage_flush_change_interval_ms,
+                run_config.clone().storage_flush_change_interval_ms,
             ),
             change_pending: RefCell::new(0),
             change_last_flush: RefCell::new(now),
