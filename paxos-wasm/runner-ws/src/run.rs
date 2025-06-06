@@ -62,7 +62,7 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
     for node in cfg.cluster_nodes {
         let engine = engine.clone();
         let is_leader = node.node_id == cfg.leader_id;
-        let run_config = run_config_template.clone();
+        let mut run_config = run_config_template.clone();
         let log_level = cfg.log_level;
         let node_wasm_path = wasm_path.clone();
         let node_logs_dir = logs_dir_base.clone();
@@ -262,6 +262,15 @@ pub async fn run_cluster(args: &Args, engine: &Engine) -> anyhow::Result<()> {
                     loop {
                         // Just sleep forever instead of quitting, so we can continue to see terminal output
                         sleep(Duration::from_secs(60)).await;
+                    }
+                }
+                if let Some(entry) = run_config.crashes.iter_mut().find(|c| c.get(0) == Some(&node.node_id)) {
+                    if entry.len() > 1 {
+                        entry.remove(1);
+                        warn!(
+                            "[Host] Node {}: Removed used crash slot after restart, remaining = {:?}",
+                            node.node_id, entry
+                        );
                     }
                 }
 

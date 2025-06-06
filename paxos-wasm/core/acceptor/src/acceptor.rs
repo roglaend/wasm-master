@@ -76,7 +76,7 @@ impl MyAcceptorResource {
 impl GuestAcceptorResource for MyAcceptorResource {
     fn new(node_id: String, config: RunConfig) -> Self {
         let storage_key = &format!("node{}-acceptor", node_id);
-        let storage = StorageHelper::new(storage_key, config, config.persistent_storage);
+        let storage = StorageHelper::new(storage_key, config.clone(), config.persistent_storage);
         Self {
             config,
             promises: RefCell::new(Vec::new()),
@@ -281,17 +281,19 @@ impl StorageHelper {
         StorageHelper {
             store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
-            run_config: run_config,
+            run_config: run_config.clone(),
             bincode_config: bincode::config::standard(),
 
             // promises path tuning
-            state_flush_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            state_flush_interval: Duration::from_millis(
+                run_config.clone().storage_flush_state_interval_ms,
+            ),
             state_pending: RefCell::new(0),
             state_last_flush: RefCell::new(now),
 
             // accepted path tuning
             change_flush_interval: Duration::from_millis(
-                run_config.storage_flush_change_interval_ms,
+                run_config.clone().storage_flush_change_interval_ms,
             ),
             change_pending: RefCell::new(0),
             change_last_flush: RefCell::new(now),

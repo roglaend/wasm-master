@@ -88,10 +88,10 @@ impl Agent {
     }
 
     /// Runs the Paxos algorithm loop if needed.
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         match self {
             Agent::Proposer(agent) => {
-                let response = agent.run_paxos_loop();
+                let response = agent.handle_tick();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
                         logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
@@ -100,11 +100,11 @@ impl Agent {
                 response.clone()
             }
             Agent::Acceptor(_agent) => {
-                // let _ = agent.run_paxos_loop();
+                // let _ = agent.handle_tick();
                 None
             }
             Agent::Learner(agent) => {
-                let _ = agent.run_paxos_loop();
+                let _ = agent.handle_tick();
                 None
             }
         }
@@ -325,7 +325,7 @@ impl GuestWsServerResource for MyTcpServerResource {
                 // Streams go out of scope and are dropped here.
             }
 
-            let client_responses = self.agent.run_paxos_loop();
+            let client_responses = self.agent.handle_tick();
 
             if self.config.demo_client {
                 // Periodically submit a client request if enough time has elapsed.
@@ -410,7 +410,7 @@ impl GuestWsServerResource for MyTcpServerResource {
                 }
             }
 
-            // self.agent.run_paxos_loop();
+            // self.agent.handle_tick();
             // sleep(Duration::from_millis(1));
         }
     }

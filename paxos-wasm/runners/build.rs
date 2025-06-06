@@ -12,6 +12,8 @@ fn main() {
 
     let target_triple = "wasm32-wasip2";
 
+    build_wasm_components(target_triple, &["paxos-coordinator", "runner"]);
+
     if env::var("CARGO_FEATURE_HOST_NETWORK").is_ok() {
         let build_list = [];
         let plugs = [
@@ -77,6 +79,4 @@ fn main() {
         let output = "final_composed_runner";
         build_and_plug(target_triple, &build_list, &plugs, socket, output);
     }
-
-    build_wasm_components(target_triple, &["paxos-coordinator", "runner"]);
 }

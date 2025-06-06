@@ -73,7 +73,7 @@ interface proposer-agent {
         /// Relinquishes leadership.
         resign-leader: func() -> bool;
 
-        run-paxos-loop: func() -> option<list<client-response>>;
+        handle-tick: func() -> option<list<client-response>>;
 
         send-heartbeat: func();
         
@@ -99,7 +99,7 @@ interface acceptor-agent {
     
         retry-learns: func(retry-learns: retry-learns, sender: node);
 
-        run-paxos-loop: func();
+        handle-tick: func();
         
         send-heartbeat: func();
 
@@ -136,7 +136,7 @@ interface learner-agent {
         /// Processes incoming network messages (such as commit notifications and accepted responses).
         handle-message: func(message: network-message) -> network-message;
     
-        run-paxos-loop: func();
+        handle-tick: func();
 
         send-heartbeat: func();
         

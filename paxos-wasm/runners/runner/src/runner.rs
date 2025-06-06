@@ -193,8 +193,8 @@ impl MyRunnerResource {
         }
     }
 
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
-        self.paxos.run_paxos_loop()
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
+        self.paxos.handle_tick()
     }
 
     fn dispatch_responses(&self, responses: Vec<ClientResponse>) {
@@ -290,7 +290,7 @@ impl GuestRunnerResource for MyRunnerResource {
             &node,
             &nodes,
             is_leader,
-            config.clone(),
+            &config.clone(),
         ));
 
         let num_nodes = nodes.len() as u64;
@@ -379,7 +379,7 @@ impl GuestRunnerResource for MyRunnerResource {
                     );
                 }
 
-                if let Some(responses) = self.run_paxos_loop() {
+                if let Some(responses) = self.handle_tick() {
                     self.dispatch_responses(responses);
                 }
                 next_tick += tick_duration;

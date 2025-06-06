@@ -174,7 +174,7 @@ impl PaxosWasmtime {
         let resource = guest.runner_resource();
 
         let resource_handle = resource
-            .call_constructor(&mut *store, &node, &nodes, is_leader, run_config)
+            .call_constructor(&mut *store, &node, &nodes, is_leader, &run_config)
             .await?;
 
         // Call run

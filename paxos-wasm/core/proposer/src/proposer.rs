@@ -173,7 +173,7 @@ impl GuestProposerResource for MyProposerResource {
         config: RunConfig,
     ) -> Self {
         let storage_key = &format!("node{}-proposer", node_id);
-        let storage = StorageHelper::new(&storage_key, config, config.persistent_storage);
+        let storage = StorageHelper::new(&storage_key, config.clone(), config.persistent_storage);
 
         logger::log_info(&format!(
             "[Core Proposer] Initialized as {} node with {} acceptors and initial ballot {}.",
@@ -547,10 +547,12 @@ impl StorageHelper {
         StorageHelper {
             store: StorageResource::new(key, run_config.storage_max_snapshots),
             enabled,
-            run_config,
+            run_config: run_config.clone(),
             bincode_config: bincode::config::standard(),
 
-            flush_interval: Duration::from_millis(run_config.storage_flush_state_interval_ms),
+            flush_interval: Duration::from_millis(
+                run_config.clone().storage_flush_state_interval_ms,
+            ),
             pending: RefCell::new(0),
             last_flush: RefCell::new(now),
         }

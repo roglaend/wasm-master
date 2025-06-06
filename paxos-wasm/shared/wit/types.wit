@@ -7,7 +7,7 @@ interface paxos-types {
         demo-client: bool,              // Enables a simulated demo client by creating client requests at an interval in the respective server.
         demo-client-requests: u64,      // The number of demo client requests to create before stopping.
         batch-size: u64,                // The number commonly used to perform certain actions N times before continuing.
-        tick-micros: u64,               // The tickrate in micro seconds which is the minimum wait time in-between ticks and run_paxos_loop calls.
+        tick-micros: u64,               // The tickrate in micro seconds which is the minimum wait time in-between ticks and handle_tick calls.
         exec-interval-ms: u64,          // The timeout period for which the learner forcefully sends executed even though not having batch size to send.
         retry-interval-ms: u64,         // The timeout period for which the learner issues a retry-learn message to either the acceptors or proposers.
         learn-max-gap: u64,             // The maximum gap between missing learn and highest seen learn before issuing a retry.
@@ -16,6 +16,7 @@ interface paxos-types {
         persistent-storage: bool,       // Toggle the usage of persistent storage.
         heartbeats: bool,               // Toggle the usage of heartbeats.
         heartbeat-interval-ms: u64,     // The interval in ms between heartbeats.
+        crashes: list<list<u64>>,       // List of crash slots for each proposer node, e.g., [[1, 10000], [5, 100]] means node 1 crashes at slots 10000, node 5 at slot 100.
 
         storage-load-snapshots: u64,            // How many snapshots to load at startup.
         storage-max-snapshots: u64,             // How many snapshots to keep in rotation.
@@ -277,6 +278,7 @@ interface network-types {
         executed(executed),                 // Contains list of executed values and adu.
         retry-learns(retry-learns),         // Retry learns for missing slots
         benchmark(benchmark),               // Benchmark message
+        adu(slot),                          // Message for getting the highest seen slot of learner. Learner also respons with the same message.
     }
 
     record benchmark {

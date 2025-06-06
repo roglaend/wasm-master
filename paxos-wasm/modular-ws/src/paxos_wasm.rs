@@ -1,3 +1,6 @@
+use crate::bindings;
+use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
+use crate::host_logger::{self, HostLogger};
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -5,13 +8,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, ResourceAny};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{
-    DirPerms, FilePerms, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
-};
-
-use crate::bindings;
-use crate::bindings::paxos::default::paxos_types::{Node, RunConfig};
-use crate::host_logger::{self, HostLogger};
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
 
 pub struct ComponentRunStates {
     // These two are required basically as a standard way to enable the impl of WasiView
@@ -98,7 +96,7 @@ impl PaxosWasmtime {
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::<ComponentRunStates>::new(&engine);
 
-        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
         bindings::paxos::default::logger::add_to_linker(&mut linker, |s| s)?;
 
@@ -129,7 +127,7 @@ impl PaxosWasmtime {
         let resource = guest.ws_server_resource();
 
         let resource_handle = resource
-            .call_constructor(&mut store, &node, &nodes, is_leader, run_config)
+            .call_constructor(&mut store, &node, &nodes, is_leader, &run_config)
             .await?;
 
         Ok(Self {
