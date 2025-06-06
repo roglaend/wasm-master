@@ -263,7 +263,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         }
     }
 
-    fn run_paxos_loop(&self) {
+    fn handle_tick(&self) {
         // TODO: Do anything more here?
         self.maybe_flush_state();
     }

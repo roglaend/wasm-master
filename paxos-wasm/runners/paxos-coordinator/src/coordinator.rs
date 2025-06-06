@@ -204,17 +204,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     // Ticker called from runner
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         match &self.agents {
-            Agents::Proposer(proposer) => proposer.run_paxos_loop(),
+            Agents::Proposer(proposer) => proposer.handle_tick(),
 
             Agents::Acceptor(acceptor) => {
-                acceptor.run_paxos_loop();
+                acceptor.handle_tick();
                 None
             }
 
             Agents::Learner(learner) => {
-                learner.run_paxos_loop();
+                learner.handle_tick();
                 None
             }
 

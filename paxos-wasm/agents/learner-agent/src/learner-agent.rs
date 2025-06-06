@@ -347,7 +347,7 @@ impl GuestLearnerAgentResource for MyLearnerAgentResource {
         }
     }
 
-    fn run_paxos_loop(&self) {
+    fn handle_tick(&self) {
         // retry gaps/timeouts
         self.handle_evaluate_retry();
 

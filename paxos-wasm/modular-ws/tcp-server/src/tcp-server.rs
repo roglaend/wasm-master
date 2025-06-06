@@ -102,10 +102,10 @@ impl Runner {
 
     /// Runs the runner’s Paxos loop.
     /// (If a particular role does not need a continuous loop, you can adjust this behavior.)
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         match self {
             Runner::Proposer(runner) => {
-                let response = runner.run_paxos_loop();
+                let response = runner.handle_tick();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
                         logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
@@ -114,15 +114,15 @@ impl Runner {
                 response.clone()
             }
             Runner::Acceptor(_runner) => {
-                // let _ = runner.run_paxos_loop();
+                // let _ = runner.handle_tick();
                 None
             }
             Runner::Learner(runner) => {
-                let _ = runner.run_paxos_loop();
+                let _ = runner.handle_tick();
                 None
             }
             Runner::Coordinator(runner) => {
-                let response = runner.run_paxos_loop();
+                let response = runner.handle_tick();
                 if let Some(responses) = response.clone() {
                     for resp in responses {
                         logger::log_info(&format!("[TCP Server] Paxos response: {:?}", resp));
@@ -298,12 +298,12 @@ impl GuestWsServerResource for MyTcpServerResource {
 
                     if self.runner.is_leader() {
                         // leader runs every tick
-                        maybe_responses = self.runner.run_paxos_loop();
+                        maybe_responses = self.runner.handle_tick();
                     } else if self.last_non_leader_tick.borrow().elapsed()
                         >= self.non_leader_interval
                     {
                         // non-leaders only once per interval
-                        maybe_responses = self.runner.run_paxos_loop();
+                        maybe_responses = self.runner.handle_tick();
                         *self.last_non_leader_tick.borrow_mut() = Instant::now();
                     }
 

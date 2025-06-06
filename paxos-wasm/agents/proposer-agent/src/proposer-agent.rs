@@ -910,7 +910,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         false
     }
 
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
         match self.phase.get() {
             PaxosPhase::Start => {
