@@ -43,7 +43,7 @@ impl MyAcceptorAgentResource {}
 
 impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
     fn new(node: Node, nodes: Vec<Node>, config: RunConfig) -> Self {
-        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), config));
+        let acceptor = Arc::new(AcceptorResource::new(&node.node_id.to_string(), &config));
 
         let learners: Vec<_> = nodes
             .iter()
@@ -263,7 +263,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
         }
     }
 
-    fn run_paxos_loop(&self) {
+    fn handle_tick(&self) {
         // TODO: Do anything more here?
         self.maybe_flush_state();
     }

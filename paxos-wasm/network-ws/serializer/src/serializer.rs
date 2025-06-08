@@ -292,6 +292,10 @@ fn serialize_message_payload(mp: &MessagePayload) -> String {
                 b.send_timestamp, b.payload
             )
         }
+        MessagePayload::Adu(adu) => {
+            // Serialize ADU as a simple string
+            format!("adu,{}", adu)
+        }
     }
 }
 
@@ -690,6 +694,13 @@ fn deserialize_message_payload(s: &str) -> Result<MessagePayload, &'static str> 
             } else {
                 Err("bad benchmark message")
             }
+        }
+        "adu" => {
+            if parts.len() != 2 {
+                return Err("bad adu payload");
+            }
+            let adu = parts[1].parse::<u64>().map_err(|_| "invalid adu value")?;
+            Ok(MessagePayload::Adu(adu))
         }
 
         _ => Err("unknown payload"),

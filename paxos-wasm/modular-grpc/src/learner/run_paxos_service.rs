@@ -21,7 +21,7 @@ impl RunPaxosService {
                 debug!("[Run-Paxos Service] Calling wasm component to run a new paxos loop.");
                 // Calls into the the paxos run loop at an interval.
                 let _ = resource
-                    .call_run_paxos_loop(&mut *store, self.paxos_wasmtime.resource_handle)
+                    .call_handle_tick(&mut *store, self.paxos_wasmtime.resource_handle)
                     .await
                     .map_err(|e| Status::internal(format!("[Run-Paxos Service] Failed to call wasm component to run a new paxos loop: {:?}",
                             e)));

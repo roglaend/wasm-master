@@ -144,23 +144,23 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     fn new(node: Node, nodes: Vec<Node>, is_leader: bool, config: RunConfig) -> Self {
         let agents = match node.role {
             PaxosRole::Proposer => Agents::Proposer(Arc::new(
-                proposer_agent::ProposerAgentResource::new(&node, &nodes, is_leader, config),
+                proposer_agent::ProposerAgentResource::new(&node, &nodes, is_leader, &config),
             )),
             PaxosRole::Acceptor => Agents::Acceptor(Arc::new(
-                acceptor_agent::AcceptorAgentResource::new(&node, &nodes, config),
+                acceptor_agent::AcceptorAgentResource::new(&node, &nodes, &config),
             )),
             PaxosRole::Learner => Agents::Learner(Arc::new(
-                learner_agent::LearnerAgentResource::new(&node, &nodes, config),
+                learner_agent::LearnerAgentResource::new(&node, &nodes, &config),
             )),
             PaxosRole::Coordinator => {
                 let proposer = Arc::new(proposer_agent::ProposerAgentResource::new(
-                    &node, &nodes, is_leader, config,
+                    &node, &nodes, is_leader, &config,
                 ));
                 let acceptor = Arc::new(acceptor_agent::AcceptorAgentResource::new(
-                    &node, &nodes, config,
+                    &node, &nodes, &config,
                 ));
                 let learner = Arc::new(learner_agent::LearnerAgentResource::new(
-                    &node, &nodes, config,
+                    &node, &nodes, &config,
                 ));
                 Agents::Coordinator {
                     proposer,
@@ -204,17 +204,17 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
     }
 
     // Ticker called from runner
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         match &self.agents {
-            Agents::Proposer(proposer) => proposer.run_paxos_loop(),
+            Agents::Proposer(proposer) => proposer.handle_tick(),
 
             Agents::Acceptor(acceptor) => {
-                acceptor.run_paxos_loop();
+                acceptor.handle_tick();
                 None
             }
 
             Agents::Learner(learner) => {
-                learner.run_paxos_loop();
+                learner.handle_tick();
                 None
             }
 
@@ -380,6 +380,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
             Agents::Proposer(proposer) => match message.payload {
                 MessagePayload::Promise(_) => proposer.handle_message(&message),
                 MessagePayload::Accepted(_) => proposer.handle_message(&message),
+                MessagePayload::Adu(_) => proposer.handle_message(&message),
                 MessagePayload::RetryLearns(_) => {
                     if !self.config.acceptors_send_learns {
                         proposer.handle_message(&message)
@@ -442,6 +443,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
 
             Agents::Learner(learner) => match message.payload {
                 MessagePayload::Learn(_) => learner.handle_message(&message),
+                MessagePayload::Adu(_) => learner.handle_message(&message),
                 MessagePayload::Heartbeat => {
                     logger::log_info(&format!(
                         "[Coordinator] Handling HEARTBEAT: sender: {:?}",

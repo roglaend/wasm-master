@@ -109,6 +109,19 @@ impl Config {
 
         // parse run_config block
         let r = &doc["run_config"];
+        let crashes = r["crashes"]
+            .as_vec()
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_vec()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_i64().unwrap() as u64)
+                    .collect::<Vec<u64>>()
+            })
+            .collect::<Vec<Vec<u64>>>();
         let run_config = RunConfig {
             is_event_driven: r["is_event_driven"].as_bool().unwrap(),
             acceptors_send_learns: r["acceptors_send_learns"].as_bool().unwrap(),
@@ -126,7 +139,7 @@ impl Config {
             persistent_storage: r["persistent_storage"].as_bool().unwrap(),
             heartbeats: r["heartbeats"].as_bool().unwrap(),
             heartbeat_interval_ms: r["heartbeat_interval_ms"].as_i64().unwrap() as u64,
-
+            crashes,
             storage_load_snapshots: r["storage_load_snapshots"].as_i64().unwrap() as u64,
             storage_max_snapshots: r["storage_max_snapshots"].as_i64().unwrap() as u64,
             storage_flush_state_count: r["storage_flush_state_count"].as_i64().unwrap() as u64,

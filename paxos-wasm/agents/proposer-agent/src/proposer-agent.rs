@@ -56,6 +56,12 @@ pub struct MyProposerAgentResource {
     client_responses: RefCell<BTreeMap<Slot, ClientResponse>>,
 
     last_prepare_start: Cell<Option<Instant>>,
+
+    last_get_adu_start: Cell<Instant>,
+
+    has_recieved_adu: Cell<bool>, // QUICKFIXXXXXX
+
+    slot_crash_list: RefCell<Vec<Slot>>, // For testing purposes, to crash on specific slots.
 }
 
 impl MyProposerAgentResource {
@@ -157,6 +163,28 @@ impl MyProposerAgentResource {
             }
         }
         None
+    }
+
+    fn get_learner_adu(&self) {
+        // Get the ADU from the learner
+        let message = NetworkMessage {
+            sender: self.node.clone(),
+            payload: MessagePayload::Adu(0),
+        };
+
+        let now = Instant::now();
+
+        if now.duration_since(self.last_get_adu_start.get())
+            < Duration::from_millis(self.config.prepare_timeout)
+        {
+            return;
+        }
+
+        logger::log_error("Getting ADU from learners");
+
+        self.network_client
+            .send_message_forget(&self.learners, &message);
+        self.last_get_adu_start.set(Instant::now());
     }
 
     fn process_promises(
@@ -409,10 +437,17 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             num_acceptors,
             init_ballot,
             &node.node_id.to_string(),
-            config,
+            &config,
         ));
 
         let network_client = Arc::new(NetworkClientResource::new());
+
+        // load crash list for this node
+        let maybe_slot_crash_list = config.crashes.iter().find(|c| c[0] == node.node_id);
+        let mut crash_slot_list = vec![];
+        if let Some(crash_list) = maybe_slot_crash_list {
+            crash_slot_list = crash_list[1..].to_vec();
+        }
 
         match proposer.load_state() {
             Ok(_) => logger::log_warn("[Proposer Agent] Loaded state successfully."),
@@ -441,10 +476,13 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             promises: RefCell::new(BTreeMap::new()),
             in_flight_accepted: RefCell::new(BTreeMap::new()),
             last_prepare_start: Cell::new(None),
+            last_get_adu_start: Cell::new(Instant::now()),
             network_client,
 
             client_responses: RefCell::new(BTreeMap::new()),
             all_nodes: nodes,
+            slot_crash_list: RefCell::new(crash_slot_list),
+            has_recieved_adu: Cell::new(false),
         }
     }
 
@@ -582,7 +620,17 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         let mut to_accept = Vec::new();
         for _ in 0..self.config.batch_size {
             if let Some(prop) = self.create_proposal() {
-                to_accept.push(prop);
+                let crash_list = self.slot_crash_list.borrow_mut();
+
+                if crash_list.contains(&prop.slot) {
+                    logger::log_warn(&format!(
+                        "[Proposer Agent] Crashing on slot {} as per test configuration.",
+                        prop.slot
+                    ));
+                    panic!("Testing crash on slot {}", prop.slot);
+                } else {
+                    to_accept.push(prop);
+                }
             } else {
                 break;
             }
@@ -808,6 +856,15 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                     payload: MessagePayload::Ignore,
                 }
             }
+            MessagePayload::Adu(adu) => {
+                logger::log_error(&format!("[Proposer Agent] Received ADU: {}", adu));
+                self.proposer.set_adu(adu);
+                self.has_recieved_adu.set(true);
+                NetworkMessage {
+                    sender: self.node.clone(),
+                    payload: MessagePayload::Ignore,
+                }
+            }
             other_message => {
                 logger::log_warn(&format!(
                     "[Proposer Agent] Received irrelevant message type: {:?}",
@@ -853,12 +910,18 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
         false
     }
 
-    fn run_paxos_loop(&self) -> Option<Vec<ClientResponse>> {
+    fn handle_tick(&self) -> Option<Vec<ClientResponse>> {
         // Ticker called from host (when running modular models)
         match self.phase.get() {
             PaxosPhase::Start => {
                 logger::log_debug("[Proposer Agent] Run loop: Start phase.");
+
                 if self.proposer.is_leader() {
+                    if !self.has_recieved_adu.get() {
+                        self.get_learner_adu();
+                        return None; // Wait for ADU
+                    }
+
                     self.start_leader_loop();
                 }
                 None
