@@ -41,7 +41,7 @@ impl Guest for MyLearner {
 }
 
 struct MyLearnerResource {
-    config: RunConfig,
+    _config: RunConfig,
     num_acceptors: u64,
 
     slot_learns: RefCell<BTreeMap<Slot, HashMap<u64, Learn>>>, // TODO: Should be moved to learner agent to have consistent design
@@ -83,7 +83,7 @@ impl GuestLearnerResource for MyLearnerResource {
         let storage_key = &format!("node{}-learner", node_id);
         let storage = StorageHelper::new(storage_key, config.clone(), config.persistent_storage);
         Self {
-            config,
+            _config: config,
             num_acceptors,
             slot_learns: RefCell::new(BTreeMap::new()),
             learned: RefCell::new(BTreeMap::new()),

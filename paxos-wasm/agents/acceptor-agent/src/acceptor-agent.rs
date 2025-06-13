@@ -31,7 +31,7 @@ struct MyAcceptorAgentResource {
 
     node: Node,
     learners: Vec<Node>,
-    proposers: Vec<Node>,
+    _proposers: Vec<Node>,
 
     acceptor: Arc<AcceptorResource>,
     network_client: Arc<network_client::NetworkClientResource>,
@@ -71,7 +71,7 @@ impl GuestAcceptorAgentResource for MyAcceptorAgentResource {
             config,
             node,
             learners,
-            proposers,
+            _proposers: proposers,
             acceptor,
             network_client,
             all_nodes: nodes,

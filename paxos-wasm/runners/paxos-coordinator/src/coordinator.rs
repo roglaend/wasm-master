@@ -46,7 +46,7 @@ pub struct MyPaxosCoordinatorResource {
     config: RunConfig,
 
     node: Node,
-    nodes: Vec<Node>,
+    _nodes: Vec<Node>,
 
     agents: Agents,
 
@@ -181,7 +181,7 @@ impl GuestPaxosCoordinatorResource for MyPaxosCoordinatorResource {
         Self {
             config,
             node,
-            nodes,
+            _nodes: nodes,
             agents,
             failure_detector,
         }

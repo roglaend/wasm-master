@@ -7,13 +7,8 @@ default-members = [
   "paxos-wasm/core",
   "paxos-wasm/agents",
   "paxos-wasm/runners",
-  # "paxos-wasm/composed-grpc",  
-  # "paxos-wasm/modular-grpc",
-  # "paxos-wasm/modular-ws",
   "paxos-wasm/modular-ws-client",
   "paxos-wasm/runner-ws",
-
-  "pocs",
 ]
 
 members = [
@@ -41,11 +36,6 @@ members = [
   "paxos-wasm/runners/paxos-coordinator",
   "paxos-wasm/runners/runner",
 
-  "paxos-wasm/composed-grpc",
-  "paxos-wasm/composed-grpc/client",
-  "paxos-wasm/composed-grpc/client-cli",
-  "paxos-wasm/composed-grpc/command",
-
   "paxos-wasm/network-ws",
   "paxos-wasm/network-ws/serializer",
   "paxos-wasm/network-ws/network-server",
@@ -55,40 +45,42 @@ members = [
 
   "paxos-wasm/runner-ws",
 
-  # TODO: Enable when fixed
-  # "paxos-wasm/modular-grpc",
-  # "paxos-wasm/modular-grpc/client",
-
-  "paxos-wasm/modular-ws",
-  "paxos-wasm/modular-ws/client",
-  "paxos-wasm/modular-ws/tcp-server",
-  # "paxos-wasm/modular-ws/udp-server",
-
   "paxos-wasm/modular-ws-client",
   "paxos-wasm/modular-ws-client/paxos-ws-client",
 
   "paxos-wasm/shared/utils",
-  "paxos-wasm/shared/grpc",
   "paxos-wasm/shared/proto",
 
-  "pocs",
-  "pocs/tcp-server-polling-test",
-  "pocs/tcp-server-polling-test/server",
-  "pocs/tcp-server-polling-test/client",
-  "pocs/tcp-server-polling-test/handler",
-  "pocs/wasm-overhead/native",
-  "pocs/wasm-overhead/wasm",
 
 
   # ---------------------------------- #
 
 
+  # "pocs",
+  # "pocs/tcp-server-polling-test",
+  # "pocs/tcp-server-polling-test/server",
+  # "pocs/tcp-server-polling-test/client",
+  # "pocs/tcp-server-polling-test/handler",
+  # "pocs/wasm-overhead/native",
+  # "pocs/wasm-overhead/wasm",
   # "pocs/network-component/tcp-client",
   # "pocs/network-component/tcp-server",
 
 
   # ---------------------------------- #
 
+  # "archive/modular-ws",
+  # "archive/modular-ws/client",
+  # "archive/modular-ws/tcp-server",
+  # "archive/modular-ws/udp-server",
+
+  # "archive/composed-grpc",
+  # "archive/composed-grpc/client",
+  # "archive/composed-grpc/client-cli",
+  # "archive/composed-grpc/command",
+
+  # "archive/modular-grpc",
+  # "archive/modular-grpc/client",
 
   # "archive/shared/utils",
   # "archive/paxos-v0.0.1/proposer",

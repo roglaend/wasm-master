@@ -350,10 +350,7 @@ impl GuestRunnerResource for MyRunnerResource {
     fn run(&self) {
         logger::log_error(&format!(
             "[Runner] Time from constructor called to running main loop: {:?}",
-            {
-                let now = Instant::now();
-                now.duration_since(self.constructor_called.get())
-            }
+            Instant::now().duration_since(self.constructor_called.get())
         ));
 
         let tick_duration = Duration::from_micros(self.config.tick_micros);
@@ -361,32 +358,25 @@ impl GuestRunnerResource for MyRunnerResource {
 
         while !self.should_stop.load(Ordering::Relaxed) {
             self.handle_host_control();
-
-            // only used if configured
             self.send_heartbeat();
             self.failure_check();
 
             self.process_clients();
             self.process_network();
 
-            let now = Instant::now();
-            if now >= next_tick {
-                if let Some(helper) = &self.demo_client {
-                    helper.send_if_ready(
-                        &self.paxos,
-                        self.config.batch_size,
-                        self.config.demo_client_requests,
-                    );
-                }
-
-                if let Some(responses) = self.handle_tick() {
-                    self.dispatch_responses(responses);
-                }
-                next_tick += tick_duration;
+            if let Some(helper) = &self.demo_client {
+                helper.send_if_ready(
+                    &self.paxos,
+                    self.config.batch_size,
+                    self.config.demo_client_requests,
+                );
             }
 
-            // **Idle‐timeout check**: 1 s since last_response, print final throughput once
-            // only if we've ever had a response:
+            if let Some(responses) = self.handle_tick() {
+                self.dispatch_responses(responses);
+            }
+
+            let now = Instant::now();
             if let Some(last) = *self.metrics.last_response.borrow() {
                 let idle = now.duration_since(last);
                 if idle >= Duration::from_secs(1)
@@ -395,8 +385,10 @@ impl GuestRunnerResource for MyRunnerResource {
                     self.metrics.flush_global();
                 }
             }
-            // sleep "only" until our next tick
-            let sleep_for = next_tick.saturating_duration_since(Instant::now());
+
+            next_tick += tick_duration;
+
+            let sleep_for = next_tick.saturating_duration_since(now);
             if !sleep_for.is_zero() {
                 sleep(sleep_for);
             }

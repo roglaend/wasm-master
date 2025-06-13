@@ -59,7 +59,7 @@ pub struct MyProposerAgentResource {
 
     last_get_adu_start: Cell<Instant>,
 
-    has_recieved_adu: Cell<bool>, // QUICKFIXXXXXX
+    has_received_adu: Cell<bool>,
 
     slot_crash_list: RefCell<Vec<Slot>>, // For testing purposes, to crash on specific slots.
 }
@@ -482,7 +482,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             client_responses: RefCell::new(BTreeMap::new()),
             all_nodes: nodes,
             slot_crash_list: RefCell::new(crash_slot_list),
-            has_recieved_adu: Cell::new(false),
+            has_received_adu: Cell::new(false),
         }
     }
 
@@ -859,7 +859,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
             MessagePayload::Adu(adu) => {
                 logger::log_error(&format!("[Proposer Agent] Received ADU: {}", adu));
                 self.proposer.set_adu(adu);
-                self.has_recieved_adu.set(true);
+                self.has_received_adu.set(true);
                 NetworkMessage {
                     sender: self.node.clone(),
                     payload: MessagePayload::Ignore,
@@ -917,7 +917,7 @@ impl GuestProposerAgentResource for MyProposerAgentResource {
                 logger::log_debug("[Proposer Agent] Run loop: Start phase.");
 
                 if self.proposer.is_leader() {
-                    if !self.has_recieved_adu.get() {
+                    if !self.has_received_adu.get() {
                         self.get_learner_adu();
                         return None; // Wait for ADU
                     }

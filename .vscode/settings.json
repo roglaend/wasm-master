@@ -11,6 +11,7 @@
         "datagram",
         "datagrams",
         "Deque",
+        "fsyncs",
         "idempotently",
         "nonblocking",
         "oneshot",

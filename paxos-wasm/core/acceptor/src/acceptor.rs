@@ -39,7 +39,7 @@ impl Guest for MyAcceptor {
 }
 
 pub struct MyAcceptorResource {
-    config: RunConfig,
+    _config: RunConfig,
 
     promises: RefCell<Vec<Ballot>>,
     accepted: RefCell<BTreeMap<Slot, PValue>>,
@@ -78,7 +78,7 @@ impl GuestAcceptorResource for MyAcceptorResource {
         let storage_key = &format!("node{}-acceptor", node_id);
         let storage = StorageHelper::new(storage_key, config.clone(), config.persistent_storage);
         Self {
-            config,
+            _config: config,
             promises: RefCell::new(Vec::new()),
             accepted: RefCell::new(BTreeMap::new()),
             storage,

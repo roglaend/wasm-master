@@ -1,7 +1,8 @@
 
 ## Repository Structure
 
-This repository contains both early-stage experimental code and the final implementation of a Paxos-based system compiled to WebAssembly. Below is an overview of the file structure, with notes on what is relevant for the final implementation and what is legacy or experimental.
+This repository contains both early-stage experimental code and the final implementation of a Paxos-based system compiled to WebAssembly. 
+Below is an overview of the file structure, with notes on what is relevant for the final implementation and what is legacy or experimental.
 
 ---
 
@@ -10,13 +11,14 @@ This repository contains both early-stage experimental code and the final implem
 These folders were part of early development, experimentation, or learning phases and are **not used in the final system**:
 
 - **`archive/`**  
-  Contains old, unusable code primarily from the very beginning of the project.
+  Contains exploratory code and previously working models from various stages of the project, including approaches and tools that were either superseded by the final design or no longer function due to the system's evolved architecture.  
+  Where the ones of note are: "composed-grpc", "modular-grpc" and "modular-ws".
 
 - **`paxos-rust/`**  
-  Early Paxos prototyping in native Rust. This version was eventually abandoned in favor of the Wasm-based approach.
+  Early Paxos prototype implemented in native Rust. It was not finished to match the modularity and feature set of the final Wasm-based system.
 
 - **`pocs/`**  
-  Proof of concepts used for testing various ideas during early development stages.
+  Proof of concepts used for testing various ideas during development stages, which still works.
 
 - **`wasm-examples/`**  
   Examples from WebAssembly tutorials and documentation used to understand capabilities. Not part of the production system.
@@ -31,40 +33,40 @@ The following folders contain all the code and scripts used in the final system:
   Bash scripts for deploying and running the system on the [UIS BBChain cluster](https://www.bbchain.no/).
 
 - **`paxos-wasm/`**  
-  Core of the final implementation. This directory contains all WebAssembly components and supporting infrastructure:
+  The final implementation. This directory contains all WebAssembly components, supporting infrastructure and custom host application:
+
+    - **`core/`**  
+    Core Wasm components implemented: proposer, acceptor, learner, kv-store, failure-detector, leader-detector and storage.
 
   - **`agents/`**  
-    Wasm components for all the Paxos agent roles.
-
-  - **`core/`**  
-    Core logic implemented as Wasm components.
+    Wasm components for all the Paxos agent roles: proposer-agent, acceptor-agent and learner-agent.
 
   - **`runners/`**  
-    Includes both the coordinator and runner implementations.
+    Wasm components for both the Runner and Coordinator.
 
-  - **`network-ws/`** *(network – WASI sockets)*  
-    Wasm components for networking: client-server, network server, serializers, TCP client, and UDP client (not used in final setup).  
-    Also includes helpful scripts:
-    - `run-local.sh`: Launches the full local cluster.
-    - `run-demo-client`: Sends client requests to the system.
+  - **`network-ws/`**
+    Wasm components for networking using WASI Sockets: client-server, network-server, network-client, serializer.
+   
 
   - **`runner-ws/`**  
-    Host-side logic for instantiating and executing Wasm components.
+    Host-side logic for instantiating and executing Wasm components.  
+    Includes custom host implementations of WIT interfaces: host-control, network-server, network-client, serializer, storage.  
+    Include `config.yaml` to configure the the Paxos system.  
+    Also includes helpful scripts:  
+    - `run-local.sh`: Launches the full local cluster using windows terminal windows.
+    - `run-demo-client`: Sends client requests to the system.
 
   - **`paxos-ws-client/`**  
     Simulates real client behavior by sending Paxos requests to the cluster.
 
   - **`shared/`**  
-    Shared resources used across components — WIT interfaces, configuration files, and common types.
-
-  - _Other folders inside `paxos-wasm/`_  
-    Additional code that reflects the system’s evolution, including prior experiments (e.g., with gRPC networking). Not relevant to the final architecture.
+    Shared resources used across components — WIT interfaces, custom build helpers, example configuration files, proto file etc.
 
 
 
 ## Prerequisites
 
-Before building or running the project, ensure you have the following installed in your **WSL environment**:
+Before building or running the project, ensure you have the following installed in your **Linux environment**:
 
 ### 1. Rust & Cargo
 
@@ -100,29 +102,29 @@ For a better development experience in VSCode, install the **Rust Analyzer** ext
 
 From the root of the project:
 
-### Build Native Binaries
-
-```bash
-cargo build --release
-```
-
 ### Build WebAssembly Components
 
 ```bash
 cargo build
 ```
 
+### Build Native Binaries
+
+```bash
+cargo build --release
+```
+
 ---
 
 ## Demo & Running Instructions
 
-The configuration is already set up for running the **standalone** model.
+The configuration is already set up for running the **standalone** model with real clients.
 
 From the main folder (after building):
 
-### Run Nodes
+### Run Nodes (only for WSL deployments, for other Linux, see "cluster" folder)
 
-Launch 7 terminal tabs—each representing a Paxos node on `localhost`:
+Launch windows terminal tabs—each representing a Paxos node on `localhost`:
 
 ```bash
 paxos-wasm/runner-ws/run-local.sh
@@ -133,7 +135,7 @@ paxos-wasm/runner-ws/run-local.sh
 Start 500 logical clients across 10 physical processes. These clients send a total of **1,000,000 requests** to the leader node:
 
 ```bash
-paxos-wasm/runner-ws/rund-demo-client.sh
+paxos-wasm/runner-ws/run-demo-client.sh
 ```
 
 

@@ -3,32 +3,8 @@
 # logging
 log_level: warning    # "debug", "info", "warning", "error"
 
-# all nodes in your entire deployment:
+# all nodes in your entire deployment: "proposer", "acceptor", "learner", "coordinator"
 nodes:
-  # - node_id: 1
-  #   address: "127.0.0.1:50051"
-  #   role: "learner"
-  # - node_id: 2
-  #   address: "127.0.0.1:50052"
-  #   role: "acceptor"
-
-  # - node_id: 3
-  #   address: "127.0.0.1:50054"
-  #   role: "learner"
-  # - node_id: 4
-  #   address: "127.0.0.1:50055"
-  #   role: "acceptor"
-  # - node_id: 5
-  #   address: "127.0.0.1:50056"
-  #   role: "proposer"
-
-  # - node_id: 6
-  #   address: "127.0.0.1:50058"
-  #   role: "acceptor"
-  # - node_id: 7
-  #   address: "127.0.0.1:50059"
-  #   role: "proposer"
-
   - node_id: 1
     address: "127.0.0.1:50051"
     role: "learner"
@@ -37,7 +13,7 @@ nodes:
     role: "learner"
   - node_id: 3
     address: "127.0.0.1:50053"
-    role: "acceptor"
+    role: "learner"
   - node_id: 4
     address: "127.0.0.1:50054"
     role: "acceptor"
@@ -46,13 +22,21 @@ nodes:
     role: "acceptor"
   - node_id: 6
     address: "127.0.0.1:50056"
-    role: "proposer"
+    role: "acceptor"
   - node_id: 7
     address: "127.0.0.1:50057"
     role: "proposer"
+  - node_id: 8
+    address: "127.0.0.1:50058"
+    role: "proposer"
+  - node_id: 9
+    address: "127.0.0.1:50059"
+    role: "proposer"    # Last nodes has to be "proposer" or "coordinator"
 
+ 
 # how those nodes are grouped into independent Paxos clusters
 clusters:
+  # Standalone (only use one)
   1: [1]
   2: [2]
   3: [3]
@@ -60,17 +44,23 @@ clusters:
   5: [5]
   6: [6]
   7: [7]
-  # # 8: [8]
-  # # 9: [9]
+  8: [8]
+  9: [9]
 
-# ─── run-loop tuning ───────────────────────────────────
+  # Shared Wasmtime (only use one)
+  # 1: [1, 4, 7]
+  # 2: [2, 5, 8]
+  # 3: [3, 6, 9]
+
+
+# ─── run-config tuning ─────────────────────────────────── # Explanations in "types.wit" 
 run_config:
   is_event_driven: true
-  acceptors_send_learns: true
+  acceptors_send_learns: true 
   learners_send_executed: true
   prepare_timeout: 100
   demo_client: false
-  demo_client_requests: 123450
+  demo_client_requests: 100000
   batch_size: 20
   tick_micros: 100
   exec_interval_ms: 100
@@ -81,11 +71,9 @@ run_config:
   persistent_storage: true
   heartbeats: true
   heartbeat_interval_ms: 100
-  crashes: # [node_id, crash_slot, crash_slot, ...] // can have many of these lists, but proposer only one that creahses for now
+  crashes: # [node_id, crash_slot, crash_slot, ...] // can have many of these lists, but proposer only one that crashes for now
   # - [7, 50000]
   # - [1, 123456, 123457, 123458]
-
-  # Can add similar for "freezes"
 
   # ─── storage tuning ───────────────────────────────
   # How many snapshots to load at startup.

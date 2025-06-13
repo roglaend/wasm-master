@@ -7,7 +7,7 @@ use std::time::Duration;
 use wasi::io::streams::{InputStream, OutputStream, StreamError};
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{IpAddressFamily, IpSocketAddress, Ipv4SocketAddress};
-use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, ShutdownType, TcpSocket};
+use wasi::sockets::tcp::{ErrorCode as TcpErrorCode, TcpSocket};
 use wasi::sockets::tcp_create_socket::create_tcp_socket;
 
 mod bindings {
@@ -65,7 +65,7 @@ fn read_with_timeout(input: &mut InputStream, timeout: Duration) -> Result<Vec<u
 
 /// A persistent TCP connection plus its streams.
 pub struct Connection {
-    socket: TcpSocket,
+    _socket: TcpSocket, // Have to be stored.
     input: Option<InputStream>,
     output: Option<OutputStream>,
 }
@@ -73,7 +73,7 @@ pub struct Connection {
 impl Connection {
     pub fn new(socket: TcpSocket, input: InputStream, output: OutputStream) -> Self {
         Self {
-            socket,
+            _socket: socket,
             input: Some(input),
             output: Some(output),
         }
@@ -198,7 +198,7 @@ impl GuestPaxosClientResource for MyPaxosClientResource {
                             remove = true;
                         }
 
-                        Err(StreamError::LastOperationFailed(err)) => {
+                        Err(StreamError::LastOperationFailed(_)) => {
                             remove = true;
                         }
                     }

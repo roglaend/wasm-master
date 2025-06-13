@@ -158,7 +158,7 @@ impl GuestClientServerResource for MyClientServerTcpResource {
                         //     "[Client Server] read error on chan {}: {:?}, dropping",
                         //     chan, e
                         // ));
-                        // to_drop.push(chan);
+                        to_drop.push(chan);
                     }
                 }
             }

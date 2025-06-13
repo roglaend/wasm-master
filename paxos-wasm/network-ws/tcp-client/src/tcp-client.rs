@@ -152,7 +152,7 @@ impl GuestNetworkClientResource for TcpClientResource {
             let addr = &node.address;
 
             if let Err(e) = self.ensure_conn(addr) {
-                // logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e)); // TODO
+                logger::log_warn(&format!("[TCP Client] connect {} failed: {:?}", addr, e));
                 continue;
             }
 
